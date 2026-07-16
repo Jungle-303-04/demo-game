@@ -31,7 +31,7 @@ export function getConfig(isProduction: boolean, dir: string) {
         modes: [
             { mapName: "main", teamMode: TeamMode.Solo, enabled: true },
             { mapName: "main", teamMode: TeamMode.Duo, enabled: true },
-            { mapName: "main", teamMode: TeamMode.Squad, enabled: true },
+            { mapName: "faction", teamMode: TeamMode.Solo, enabled: true },
         ],
         clientTheme: "main",
         passType: "pass_survivr1",
@@ -45,7 +45,7 @@ export function getConfig(isProduction: boolean, dir: string) {
             errorLogs: true,
         },
         database: {
-            enabled: true,
+            enabled: false,
             host: "127.0.0.1",
             user: "survev",
             password: "survev",

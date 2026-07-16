@@ -6,3 +6,5 @@ Upstream license: GNU General Public License version 3.0 or later
 
 원본 LICENSE 전문은 `upstream-survev/LICENSE`에 보존한다. 이 저장소의 Opsia 연동 어댑터,
 배포 매니페스트, 문서는 GPL-3.0-or-later로 배포한다. 계정과 외부 데이터베이스는 데모 배포에서 사용하지 않는다.
+
+수정된 upstream 파일: `upstream-survev/config.ts`는 faction 모드를 활성화하고 database를 비활성화한다.
