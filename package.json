@@ -1,0 +1,33 @@
+{
+  "name": "demo-game",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Opsia와 연동하는 GPL-3.0 라이브 데모 게임",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "node scripts/lint.mjs",
+    "test": "npm run build && node --test $(find dist/tests -name '*.test.js' -print)",
+    "test:unit": "npm run build && node --test $(find dist/tests/unit -name '*.test.js' -print)",
+    "test:e2e": "npm run build && node --test $(find dist/tests/e2e -name '*.test.js' -print)",
+    "start:game": "node dist/services/game-server/src/main.js",
+    "start:api": "node dist/services/api-server/src/main.js",
+    "start:orchestrator": "node dist/services/room-orchestrator/src/main.js",
+    "start:ops": "node dist/services/ops-console/src/main.js",
+    "botctl": "node dist/services/bot-runner/src/botctl.js",
+    "demo:reset": "node dist/scripts/demo-reset.js"
+  },
+  "dependencies": {
+    "prom-client": "^15.1.3",
+    "redis": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
+
