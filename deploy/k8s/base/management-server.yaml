@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: management-server
+  namespace: sandbox
+  labels: { app: management-server, app.kubernetes.io/part-of: demo-game }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: management-server } }
+  template:
+    metadata: { labels: { app: management-server, app.kubernetes.io/part-of: demo-game } }
+    spec:
+      serviceAccountName: management-server
+      containers:
+        - name: api-server
+          image: ghcr.io/jungle-303-04/demo-game/api-server:stable
+          env: [{ name: ORCHESTRATOR_URL, value: http://127.0.0.1:8082 }]
+          ports: [{ name: api, containerPort: 8081 }]
+          readinessProbe: { httpGet: { path: /healthz, port: api }, initialDelaySeconds: 2 }
+          resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 256Mi } }
+        - name: room-orchestrator
+          image: ghcr.io/jungle-303-04/demo-game/room-orchestrator:stable
+          env:
+            - { name: REDIS_URL, value: redis://redis:6379 }
+            - { name: NAMESPACE, value: sandbox }
+            - { name: GAME_STATEFULSET, value: game }
+            - { name: INITIAL_ROOMS, value: "3" }
+            - { name: GAME_ENDPOINT_TEMPLATE, value: "http://game-{ordinal}.game-headless.sandbox.svc.cluster.local:8001" }
+          ports: [{ name: registry, containerPort: 8082 }]
+          readinessProbe: { httpGet: { path: /healthz, port: registry }, initialDelaySeconds: 2 }
+          resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 256Mi } }
+        - name: bot-runner
+          image: ghcr.io/jungle-303-04/demo-game/bot-runner:stable
+          env:
+            - { name: OPSIA_ROOM_ENDPOINTS, value: "room-0=http://game-0.game-headless.sandbox.svc.cluster.local:8001,room-1=http://game-1.game-headless.sandbox.svc.cluster.local:8001,room-2=http://game-2.game-headless.sandbox.svc.cluster.local:8001" }
+          ports: [{ name: bots, containerPort: 8084 }]
+          readinessProbe: { httpGet: { path: /healthz, port: bots }, initialDelaySeconds: 2 }
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+        - name: ops-console
+          image: ghcr.io/jungle-303-04/demo-game/ops-console:stable
+          env:
+            - { name: ORCHESTRATOR_URL, value: http://127.0.0.1:8082 }
+            - { name: BOT_RUNNER_URL, value: http://127.0.0.1:8084 }
+          ports: [{ name: console, containerPort: 8085 }]
+          readinessProbe: { httpGet: { path: /healthz, port: console }, initialDelaySeconds: 2 }
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: management-server, namespace: sandbox, labels: { app: management-server } }
+spec:
+  selector: { app: management-server }
+  ports:
+    - { name: api, port: 8081, targetPort: api }
+    - { name: console, port: 8085, targetPort: console }

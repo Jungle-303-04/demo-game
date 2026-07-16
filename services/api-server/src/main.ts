@@ -18,7 +18,9 @@ const server = createServer(async (request, response) => {
       const room = await matchmaker.findGame(sessionId, nickname);
       // This service chooses a StatefulSet ordinal only. The participant then
       // uses that room's real survev `/api/find_game` + WebSocket protocol.
-      return send(response, 200, { room, playUrl: `${room.endpoint}/play/${room.roomId}` });
+      const host = String(request.headers["x-forwarded-host"] ?? request.headers.host ?? "localhost");
+      const protocol = String(request.headers["x-forwarded-proto"] ?? "http").split(",")[0];
+      return send(response, 200, { room, playUrl: `${protocol}://${host}/play/${room.roomId}` });
     }
     const match = url.pathname.match(/^\/(play|watch)\/(room-\d+)$/);
     if (request.method === "GET" && match) return send(response, 200, { mode: match[1], roomId: match[2], reconnectOverlay: "reconnecting", accountsEnabled: false });

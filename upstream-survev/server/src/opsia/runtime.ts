@@ -53,6 +53,11 @@ const inputWindows = new WeakMap<Game, Map<string, number[]>>();
 const inputCounters = new WeakMap<Game, { accepted: number; rejected: number }>();
 const memorySnapshots = new Map<string, LooseGameSnapshot>();
 const memoryLeases = new Map<string, { owner: string; expiresAt: number }>();
+// A dead pod leaves no graceful owner release. Keep the hand-off short enough
+// for the reconnect overlay, while refreshing well inside the ownership window.
+const leaseTtlSeconds = 10;
+const leaseRefreshMs = 2_000;
+const refreshLeaseScript = "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('EXPIRE', KEYS[1], ARGV[2]) end return 0";
 
 export const opsiaEnabled = (): boolean => process.env.OPSIA_ROOM === "true";
 export const opsiaStrict = (): boolean => process.env.STRICT_MODE === "true";
@@ -108,6 +113,7 @@ export const restorePlayer = (game: Game, player: Player, joinData: JoinTokenDat
         player.team?.removePlayer(player);
         team.addPlayer(player);
     }
+    player.name = state.name;
     player.pos.x = state.x;
     player.pos.y = state.y;
     player.health = state.health;
@@ -176,6 +182,9 @@ export class OpsiaSnapshotStore {
     private readonly leaseKey = `room:${opsiaRoomId()}:lease`;
     private client: RedisClientType | undefined;
     private leaseTimer: NodeJS.Timeout | undefined;
+    private ready = false;
+    private pendingPlayers: LoosePlayerState[] = [];
+    private pendingRestoreUntil = 0;
 
     async start(game: Game): Promise<void> {
         const redisUrl = process.env.REDIS_URL;
@@ -184,7 +193,7 @@ export class OpsiaSnapshotStore {
             this.client.on("error", (error) => jsonLog("error", "redis_error", { message: String(error) }));
             await this.client.connect();
         }
-        // A replacement pod can begin before its predecessor's five-second
+        // A replacement pod can begin before its predecessor's lease
         // lease has naturally expired. Wait rather than serving concurrently
         // or giving up the actual Game process.
         let acquired = false;
@@ -202,13 +211,37 @@ export class OpsiaSnapshotStore {
         const snapshot = await this.load();
         if (snapshot) {
             restoreGame(game, snapshot);
+            // `PlayerBarn` materializes a restored player only once its session
+            // reconnects. Preserve these projections while the public gateway
+            // keeps retrying, instead of a newly-empty Game overwriting Redis.
+            this.pendingPlayers = snapshot.players;
+            this.pendingRestoreUntil = Date.now() + 2 * 60_000;
             jsonLog("info", "snapshot_restored", { savedAt: snapshot.savedAt, players: snapshot.players.length });
         }
-        this.leaseTimer = setInterval(() => { void this.refreshLease(); }, 1000);
+        this.ready = true;
+        this.leaseTimer = setInterval(() => {
+            void this.refreshLease().catch((error) => {
+                // Do not keep serving after a failed ownership refresh. The
+                // parent manager will create a replacement Game which restores
+                // the last snapshot after it acquires the lease.
+                jsonLog("error", "room_lease_refresh_failed", { message: String(error) });
+                process.exit(1);
+            });
+        }, leaseRefreshMs);
     }
 
     async save(game: Game): Promise<void> {
+        // A child Game begins ticking before `start()` has acquired its lease.
+        // It must never publish that unowned empty state over the previous owner.
+        if (!this.ready) return;
         const snapshot = serializeGame(game);
+        const liveSessions = new Set(snapshot.players.map((player) => player.sessionId));
+        if (Date.now() < this.pendingRestoreUntil) {
+            this.pendingPlayers = this.pendingPlayers.filter((player) => !liveSessions.has(player.sessionId));
+            snapshot.players.push(...this.pendingPlayers);
+        } else {
+            this.pendingPlayers = [];
+        }
         if (this.client) {
             await this.client.set(this.snapshotKey, JSON.stringify(snapshot), { EX: 60 });
         } else {
@@ -218,6 +251,7 @@ export class OpsiaSnapshotStore {
     }
 
     async stop(): Promise<void> {
+        this.ready = false;
         if (this.leaseTimer) clearInterval(this.leaseTimer);
         if (this.client?.isOpen) {
             // Release only our own lease. This is a lifecycle cleanup, never a
@@ -233,6 +267,8 @@ export class OpsiaSnapshotStore {
     /** A console-requested logical room reset discards only this room's game
      * projection. Pod replacement never calls this method. */
     async clearSnapshot(): Promise<void> {
+        this.pendingPlayers = [];
+        this.pendingRestoreUntil = 0;
         if (this.client) {
             await this.client.del(this.snapshotKey);
         } else {
@@ -243,25 +279,27 @@ export class OpsiaSnapshotStore {
 
     private async acquireLease(): Promise<void> {
         if (this.client) {
-            const result = await this.client.set(this.leaseKey, this.owner, { NX: true, EX: 5 });
+            const result = await this.client.set(this.leaseKey, this.owner, { NX: true, EX: leaseTtlSeconds });
             if (result !== "OK") throw new Error("room_lease_not_acquired");
             return;
         }
         const existing = memoryLeases.get(this.leaseKey);
         if (existing && existing.expiresAt > Date.now() && existing.owner !== this.owner) throw new Error("room_lease_not_acquired");
-        memoryLeases.set(this.leaseKey, { owner: this.owner, expiresAt: Date.now() + 5000 });
+        memoryLeases.set(this.leaseKey, { owner: this.owner, expiresAt: Date.now() + leaseTtlSeconds * 1000 });
     }
 
     private async refreshLease(): Promise<void> {
         if (this.client) {
-            const currentOwner = await this.client.get(this.leaseKey);
-            if (currentOwner !== this.owner) throw new Error("room_lease_lost");
-            await this.client.expire(this.leaseKey, 5);
+            const refreshed = await this.client.eval(refreshLeaseScript, {
+                keys: [this.leaseKey],
+                arguments: [this.owner, String(leaseTtlSeconds)],
+            });
+            if (Number(refreshed) !== 1) throw new Error("room_lease_lost");
             return;
         }
         const current = memoryLeases.get(this.leaseKey);
         if (!current || current.owner !== this.owner) throw new Error("room_lease_lost");
-        current.expiresAt = Date.now() + 5000;
+        current.expiresAt = Date.now() + leaseTtlSeconds * 1000;
     }
 
     private async load(): Promise<LooseGameSnapshot | undefined> {

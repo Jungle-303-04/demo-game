@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: demo-game-gateway, namespace: sandbox }
+data:
+  default.conf: |
+    server {
+      listen 8080;
+      resolver 10.100.0.10 valid=10s ipv6=off;
+      client_max_body_size 1m;
+
+      location = /api/find-game {
+        proxy_pass http://management-server.sandbox.svc.cluster.local:8081;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      }
+
+      location ~ ^/(?:play|watch)/room-(?<room_ordinal>[0-2])(?:/|$) {
+        set $game_backend game-$room_ordinal.game-headless.sandbox.svc.cluster.local;
+        proxy_pass http://$game_backend:8001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+      }
+
+      location / {
+        proxy_pass http://management-server.sandbox.svc.cluster.local:8085;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: demo-game-gateway, namespace: sandbox, labels: { app: demo-game-gateway, app.kubernetes.io/part-of: demo-game } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: demo-game-gateway } }
+  template:
+    metadata: { labels: { app: demo-game-gateway, app.kubernetes.io/part-of: demo-game } }
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          ports: [{ name: http, containerPort: 8080 }]
+          volumeMounts: [{ name: config, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf, readOnly: true }]
+          readinessProbe: { httpGet: { path: /, port: http }, initialDelaySeconds: 2 }
+          resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 256Mi } }
+      volumes: [{ name: config, configMap: { name: demo-game-gateway } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: demo-game-gateway, namespace: sandbox, labels: { app: demo-game-gateway } }
+spec:
+  type: LoadBalancer
+  selector: { app: demo-game-gateway }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: demo-game-gateway, namespace: sandbox }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: demo-game-gateway } }

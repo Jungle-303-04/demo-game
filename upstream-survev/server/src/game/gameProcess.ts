@@ -20,6 +20,10 @@ class ServerGame extends Game {
     private opsiaReady = !opsiaEnabled();
     private opsiaStore: OpsiaSnapshotStore | undefined;
 
+    isOpsiaReady(): boolean {
+        return this.opsiaReady;
+    }
+
     async initializeOpsia(): Promise<void> {
         if (opsiaEnabled()) {
             this.opsiaStore = new OpsiaSnapshotStore();
@@ -30,6 +34,7 @@ class ServerGame extends Game {
     }
 
     async snapshotOpsia(): Promise<void> {
+        if (!this.opsiaReady) return;
         await this.opsiaStore?.save(this);
     }
 
@@ -324,7 +329,7 @@ let lastOpsiaSaveAt = 0;
 setGameInterval(() => {
     const startedAt = performance.now();
     game?.update();
-    if (game && opsiaEnabled()) {
+    if (game && opsiaEnabled() && game.isOpsiaReady()) {
         const now = Date.now();
         const tickMs = performance.now() - startedAt;
         if (now - lastOpsiaSnapshotAt >= 500) {

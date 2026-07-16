@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../../base]
+images:
+  - name: ghcr.io/jungle-303-04/demo-game/game-server
+    newName: 183548421506.dkr.ecr.ap-northeast-2.amazonaws.com/demo-game-game-server
+    newTag: v20260717-3
+  - name: ghcr.io/jungle-303-04/demo-game/api-server
+    newName: 183548421506.dkr.ecr.ap-northeast-2.amazonaws.com/demo-game-api-server
+    newTag: v20260717-1
+  - name: ghcr.io/jungle-303-04/demo-game/bot-runner
+    newName: 183548421506.dkr.ecr.ap-northeast-2.amazonaws.com/demo-game-bot-runner
+    newTag: v20260717-1
+  - name: ghcr.io/jungle-303-04/demo-game/ops-console
+    newName: 183548421506.dkr.ecr.ap-northeast-2.amazonaws.com/demo-game-ops-console
+    newTag: v20260717-4
+  - name: ghcr.io/jungle-303-04/demo-game/room-orchestrator
+    newName: 183548421506.dkr.ecr.ap-northeast-2.amazonaws.com/demo-game-room-orchestrator
+    newTag: v20260717-1

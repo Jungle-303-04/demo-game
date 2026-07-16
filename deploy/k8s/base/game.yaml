@@ -15,7 +15,12 @@ spec:
     metadata:
       labels: { app: game-server, app.kubernetes.io/part-of: demo-game }
     spec:
-      terminationGracePeriodSeconds: 8
+      terminationGracePeriodSeconds: 30
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: game-server } }
       containers:
         - name: game-server
           image: ghcr.io/jungle-303-04/demo-game/game-server:stable
@@ -30,7 +35,7 @@ spec:
             - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
           ports: [{ containerPort: 8001, name: http }]
           resources:
-            requests: { cpu: 100m, memory: 128Mi }
-            limits: { cpu: 500m, memory: 512Mi }
-          readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 3 }
-          livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 10 }
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { cpu: "1500m", memory: 2Gi }
+          readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 5, periodSeconds: 2, failureThreshold: 30 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 30, periodSeconds: 10 }

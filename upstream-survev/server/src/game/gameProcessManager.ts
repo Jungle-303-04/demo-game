@@ -24,6 +24,7 @@ export enum ProcState {
 
 class GameProcess {
     process: ChildProcess;
+    config: ServerGameConfig;
 
     gameData: GameData = {
         id: "",
@@ -55,6 +56,7 @@ class GameProcess {
 
     constructor(manager: GameProcessManager, id: string, config: ServerGameConfig) {
         this.manager = manager;
+        this.config = config;
         this.process = fork(procFile, [], {
             serialization: "advanced",
         });
@@ -133,6 +135,7 @@ class GameProcess {
     }
 
     create(id: string, config: ServerGameConfig) {
+        this.config = config;
         this.send({
             type: ProcessMsgType.Create,
             id,
@@ -292,14 +295,15 @@ export class GameProcessManager {
 
             this.processes.push(gameProc);
 
-            gameProc.process.on("exit", () => {
+            gameProc.process.once("exit", () => {
+                const shouldRecover = process.env.OPSIA_ROOM === "true" && !gameProc!.gameData.stopped;
+                const config = gameProc!.config;
                 this.killProcess(gameProc!);
-            });
-            gameProc.process.on("close", () => {
-                this.killProcess(gameProc!);
-            });
-            gameProc.process.on("disconnect", () => {
-                this.killProcess(gameProc!);
+                if (shouldRecover) {
+                    setTimeout(() => {
+                        if (!this.processes.some((candidate) => !candidate.gameData.stopped)) this.newGame(config);
+                    }, 1000);
+                }
             });
             this.logger.info("Created new process with PID", gameProc.process.pid);
         } else {
@@ -313,6 +317,7 @@ export class GameProcessManager {
     }
 
     killProcess(gameProc: GameProcess, signal: NodeJS.Signals = "SIGTERM"): void {
+        if (!this.processes.includes(gameProc)) return;
         for (const [, socket] of this.sockets) {
             const data = socket.getUserData();
             if (data.closed) continue;
@@ -321,7 +326,7 @@ export class GameProcessManager {
         }
 
         // send SIGTERM, if still hasn't terminated after 5 seconds, send SIGKILL >:3
-        gameProc.process.kill(signal);
+        if (!gameProc.process.killed) gameProc.process.kill(signal);
         setTimeout(() => {
             if (!gameProc.process.killed) {
                 gameProc.process.kill("SIGKILL");
@@ -403,6 +408,10 @@ export class GameProcessManager {
 
     getOpsiaSnapshot(): OpsiaSnapshotData | undefined {
         return this.processes.find((proc) => !proc.gameData.stopped)?.opsiaSnapshot;
+    }
+
+    isOpsiaReady(): boolean {
+        return this.processes.some((proc) => proc.state === ProcState.Running && proc.gameData.canJoin && !proc.gameData.stopped);
     }
 
     resetOpsiaRoom(): boolean {

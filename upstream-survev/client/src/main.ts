@@ -396,6 +396,11 @@ export class Application {
             loadStaticDomImages();
 
             SDK.gameLoadComplete();
+            // `/watch/room-N` is an Opsia broadcast surface. It reuses the
+            // upstream PixiJS client rather than drawing a separate minimap.
+            if (/^\/watch\/room-\d+$/.test(window.location.pathname)) {
+                setTimeout(() => this.tryQuickStartGame(2), 0);
+            }
         }
     }
 
@@ -791,7 +796,11 @@ export class Application {
             return;
         }
         const hosts = matchData.hosts || [];
-        const roomPath = /^\/play\/room-\d+$/.test(location.pathname) ? location.pathname : "/play";
+        // The broadcast page is served at /watch/room-N, while the game WebSocket
+        // remains on survev's /play/room-N endpoint. This keeps the public
+        // spectator URL stable across a room-pod replacement.
+        const watchedRoom = location.pathname.match(/^\/(?:play|watch)\/room-\d+$/)?.[0];
+        const roomPath = watchedRoom?.replace(/^\/watch/, "/play") ?? "/play";
         $("#opsia-reconnect-overlay").remove();
         $("body").append('<div id="opsia-reconnect-overlay" style="position:fixed;z-index:99999;inset:0;display:grid;place-items:center;background:#06101bdd;color:#fff;font:600 18px sans-serif">게임 서버에 재연결 중…</div>');
         const urls: string[] = [];

@@ -6,12 +6,6 @@ resources:
   - redis.yaml
   - game.yaml
   - services.yaml
-  - api-server.yaml
-  - bot-runner.yaml
-  - ops-console.yaml
-  - room-orchestrator.yaml
-  - ingress.yaml
-  - monitoring.yaml
-  - alertmanager.yaml
   - rbac.yaml
-
+  - management-server.yaml
+  - gateway.yaml

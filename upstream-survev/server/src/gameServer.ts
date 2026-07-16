@@ -232,6 +232,11 @@ app.get("/health", (res) => {
 });
 
 app.get("/healthz", (res) => {
+    if (process.env.OPSIA_ROOM === "true" && !server.manager.isOpsiaReady()) {
+        res.writeStatus("503 Service Unavailable");
+        uwsHelpers.returnJson(res, { status: "initializing", roomId: process.env.ROOM_ID ?? "room-0", runtime: "survev-gameServer" });
+        return;
+    }
     uwsHelpers.returnJson(res, { status: "ok", roomId: process.env.ROOM_ID ?? "room-0", runtime: "survev-gameServer" });
 });
 
@@ -262,7 +267,7 @@ app.get("/summary", (res) => {
     const snapshot = server.manager.getOpsiaSnapshot();
     uwsHelpers.returnJson(res, {
         roomId: process.env.ROOM_ID ?? "room-0",
-        status: "running",
+        status: server.manager.isOpsiaReady() ? "running" : "initializing",
         players: snapshot?.players.length ?? 0,
         alive: snapshot?.players.filter((player) => player.alive).length ?? 0,
         podName: process.env.POD_NAME ?? "game-0",

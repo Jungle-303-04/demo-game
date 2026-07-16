@@ -18,8 +18,18 @@ test("real survev Game snapshot projection round-trips player, team, score, inve
   assert.deepEqual(restored, projected);
   assert.match(runtime, /game\.playerBarn\.players\.map/);
   assert.match(runtime, /player\.invManager\.set/);
+  assert.match(runtime, /player\.name = state\.name/);
   assert.match(runtime, /game\.grid\.updateObject\(player\)/);
   assert.match(game, /opsiaSessionId/);
+});
+
+test("replacement never lets an unleased empty Game overwrite Redis before sessions reconnect", async () => {
+  const runtime = await readFile(upstream("server/src/opsia/runtime.ts"), "utf8");
+  const process = await readFile(upstream("server/src/game/gameProcess.ts"), "utf8");
+  assert.match(runtime, /if \(!this\.ready\) return;/);
+  assert.match(runtime, /pendingRestoreUntil/);
+  assert.match(runtime, /snapshot\.players\.push\(\.\.\.this\.pendingPlayers\)/);
+  assert.match(process, /if \(!this\.opsiaReady\) return;/);
 });
 
 test("decoded survev InputMsg is rate-validated and strict mode disconnects the violating real Client", async () => {

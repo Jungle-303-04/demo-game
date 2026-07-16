@@ -1,10 +1,12 @@
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: redis
   namespace: sandbox
 spec:
+  serviceName: redis
   replicas: 1
+  persistentVolumeClaimRetentionPolicy: { whenDeleted: Retain, whenScaled: Retain }
   selector:
     matchLabels: { app: redis }
   template:
@@ -17,6 +19,13 @@ spec:
           args: ["--appendonly", "yes"]
           ports: [{ containerPort: 6379, name: redis }]
           readinessProbe: { exec: { command: ["redis-cli", "ping"] }, initialDelaySeconds: 2 }
+          volumeMounts: [{ name: data, mountPath: /data }]
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: gp2
+        resources: { requests: { storage: 2Gi } }
 ---
 apiVersion: v1
 kind: Service
@@ -26,4 +35,3 @@ metadata:
 spec:
   selector: { app: redis }
   ports: [{ name: redis, port: 6379, targetPort: redis }]
-
