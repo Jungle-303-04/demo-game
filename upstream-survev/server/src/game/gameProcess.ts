@@ -9,6 +9,7 @@ import type { Client } from "./client.ts";
 import { Game } from "./game.ts";
 import { type ProcessMsg, ProcessMsgType } from "./ipcTypes.ts";
 import { ClientSocket } from "./socket.ts";
+import { makeOpsSnapshot, OpsiaSnapshotStore, opsiaEnabled } from "../opsia/runtime.ts";
 
 let game: ServerGame | undefined;
 
@@ -16,7 +17,35 @@ let game: ServerGame | undefined;
  * Implements methods only used when the game is actually running on a server
  */
 class ServerGame extends Game {
+    private opsiaReady = !opsiaEnabled();
+    private opsiaStore: OpsiaSnapshotStore | undefined;
+
+    async initializeOpsia(): Promise<void> {
+        if (opsiaEnabled()) {
+            this.opsiaStore = new OpsiaSnapshotStore();
+            await this.opsiaStore.start(this);
+        }
+        this.opsiaReady = true;
+        this.updateData();
+    }
+
+    async snapshotOpsia(): Promise<void> {
+        await this.opsiaStore?.save(this);
+    }
+
+    async stopOpsia(): Promise<void> {
+        await this.opsiaStore?.stop();
+    }
+
+    async resetOpsia(): Promise<void> {
+        await this.opsiaStore?.clearSnapshot();
+        await this.stopOpsia();
+    }
+
     override updateData() {
+        // Do not admit join tokens until a replacement process has acquired the
+        // Redis lease and loaded its real Game projection.
+        if (!this.opsiaReady) return;
         sendMsg({
             type: ProcessMsgType.UpdateData,
             id: this.id,
@@ -140,9 +169,20 @@ function sendMsg(msg: ProcessMsg) {
     process.send!(msg);
 }
 
-process.on("disconnect", () => {
-    process.exit();
-});
+let stopping = false;
+const gracefulExit = async () => {
+    if (stopping) return;
+    stopping = true;
+    try {
+        await game?.snapshotOpsia();
+        await game?.stopOpsia();
+    } finally {
+        process.exit();
+    }
+};
+process.on("disconnect", () => { void gracefulExit(); });
+process.on("SIGTERM", () => { void gracefulExit(); });
+process.on("SIGINT", () => { void gracefulExit(); });
 
 const socketMsgs: Array<{
     socketId: string;
@@ -206,6 +246,10 @@ process.on("message", (msg: ProcessMsg) => {
 
     if (msg.type === ProcessMsgType.Create && !game) {
         game = new ServerGame(msg.id, msg.config);
+        void game.initializeOpsia().catch((error) => {
+            console.error("Opsia game initialization failed", error);
+            process.exit(1);
+        });
     }
 
     if (!game) return;
@@ -225,10 +269,26 @@ process.on("message", (msg: ProcessMsg) => {
             break;
         }
         case ProcessMsgType.SocketClose: {
-            const socket = socketIdToSocket.get(msg.socketId)!;
+            const socket = socketIdToSocket.get(msg.socketId);
+            // Logical room reset closes and clears every ProcessSocket before
+            // the queued close messages reach this handler.
+            if (!socket) break;
             socket._closed = true;
             game.clientBarn.handleSocketClose(socket);
             socketIdToSocket.delete(msg.socketId);
+            break;
+        }
+        case ProcessMsgType.OpsiaReset: {
+            const previous = game;
+            for (const socket of socketIdToSocket.values()) socket.close();
+            socketIdToSocket.clear();
+            void previous.resetOpsia().finally(() => {
+                game = new ServerGame(previous.id, previous.config);
+                void game.initializeOpsia().catch((error) => {
+                    console.error("Opsia room reset failed", error);
+                    process.exit(1);
+                });
+            });
             break;
         }
     }
@@ -259,8 +319,23 @@ if (platform() === "win32") {
     };
 }
 
+let lastOpsiaSnapshotAt = 0;
+let lastOpsiaSaveAt = 0;
 setGameInterval(() => {
+    const startedAt = performance.now();
     game?.update();
+    if (game && opsiaEnabled()) {
+        const now = Date.now();
+        const tickMs = performance.now() - startedAt;
+        if (now - lastOpsiaSnapshotAt >= 500) {
+            lastOpsiaSnapshotAt = now;
+            sendMsg({ type: ProcessMsgType.OpsiaSnapshot, snapshot: makeOpsSnapshot(game, tickMs) });
+        }
+        if (now - lastOpsiaSaveAt >= 1000) {
+            lastOpsiaSaveAt = now;
+            void game.snapshotOpsia().catch((error) => console.error("Opsia snapshot save failed", error));
+        }
+    }
 }, 1000 / Config.gameTps);
 
 setGameInterval(() => {

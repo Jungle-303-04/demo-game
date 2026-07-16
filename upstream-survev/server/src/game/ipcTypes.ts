@@ -12,6 +12,23 @@ export interface GameData {
     timeRunning: number;
 }
 
+export interface OpsiaSnapshotData {
+    roomId: string;
+    players: Array<{
+        sessionId: string;
+        nickname: string;
+        team: "red" | "blue";
+        x: number;
+        y: number;
+        alive: boolean;
+        score: number;
+    }>;
+    tickMs: number;
+    strictMode: boolean;
+    inputAccepted: number;
+    inputRejected: number;
+}
+
 export enum ProcessMsgType {
     Create,
     KeepAlive,
@@ -21,6 +38,8 @@ export enum ProcessMsgType {
     ClientSocketMsg,
     ServerSocketMsg,
     SocketClose,
+    OpsiaSnapshot,
+    OpsiaReset,
 }
 
 export interface CreateGameMsg {
@@ -77,6 +96,15 @@ export interface SocketCloseMsg {
     reason?: string;
 }
 
+export interface OpsiaSnapshotMsg {
+    type: ProcessMsgType.OpsiaSnapshot;
+    snapshot: OpsiaSnapshotData;
+}
+
+export interface OpsiaResetMsg {
+    type: ProcessMsgType.OpsiaReset;
+}
+
 export type ProcessMsg =
     | CreateGameMsg
     | KeepAliveMsg
@@ -85,4 +113,6 @@ export type ProcessMsg =
     | SocketOpenMsg
     | SocketClientMsg
     | SocketServerMsg
-    | SocketCloseMsg;
+    | SocketCloseMsg
+    | OpsiaSnapshotMsg
+    | OpsiaResetMsg;

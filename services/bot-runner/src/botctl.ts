@@ -8,6 +8,6 @@ if (command === "spawn") {
   const response = await fetch(`${base}/bots/spawn`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ count, room: option("--room"), mode, nickname: option("--nickname") }) });
   if (!response.ok) throw new Error(await response.text()); process.stdout.write(`${JSON.stringify(await response.json())}\n`);
 } else if (command === "kill") {
-  const response = await fetch(`${base}/bots/kill`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: option("--session") ?? option("--nickname") }) });
+  const response = await fetch(`${base}/bots/kill`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: option("--id") ?? option("--session") }) });
   if (!response.ok) throw new Error(await response.text()); process.stdout.write(`${JSON.stringify(await response.json())}\n`);
 } else throw new Error("usage: botctl spawn|kill");

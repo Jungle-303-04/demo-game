@@ -1,0 +1,19 @@
+{
+  // Demo-only key; accounts and external database stay disabled.
+  secrets: {
+    SURVEV_API_KEY: "opsia-demo-local-only"
+    SURVEV_IP_SECRET: "opsia-demo-local-only"
+  }
+  gameServer: {
+    host: "0.0.0.0"
+    port: 8001
+    thisRegion: "local"
+  }
+  regions: {
+    local: { https: false, address: "localhost:8001", l10n: "index-local" }
+  }
+  database: { enabled: false }
+  logging: { logDate: false, infoLogs: true, debugLogs: false, warnLogs: true, errorLogs: true }
+  debug: { allowBots: true, allowEditMsg: false, allowMockAccount: false }
+  modes: [{ mapName: "faction", teamMode: 1, enabled: true }]
+}

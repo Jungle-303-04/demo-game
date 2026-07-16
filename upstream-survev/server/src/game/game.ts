@@ -29,6 +29,8 @@ export interface JoinTokenData {
     findGameIp: string;
     loadout?: Loadout;
     quests?: string[];
+    /** Stable browser token used only by the in-game reconnect path. */
+    opsiaSessionId?: string;
     groupData: {
         autoFill: boolean;
         playerCount: number;
@@ -156,7 +158,7 @@ export class Game {
 
         this.now = now;
 
-        if (this.over) {
+        if (this.over && process.env.OPSIA_INFINITE !== "true") {
             this.stopTicker -= dt;
             if (this.stopTicker <= 0) {
                 this.stop();
@@ -167,7 +169,7 @@ export class Game {
         if (!this.started && !this.preventStart) {
             this.started = this.modeManager.isGameStarted();
             if (this.started) {
-                this.gas.advanceGasStage();
+                if (process.env.OPSIA_INFINITE !== "true") this.gas.advanceGasStage();
             } else {
                 const connected = this.playerBarn.players.reduce((a, b) => {
                     return a + (b.disconnected ? 0 : 1);
@@ -179,7 +181,7 @@ export class Game {
                 }
                 // after 30 seconds of no connected players on a game that didn't start
                 // we just force stop the game so it doesn't run forever...
-                if (this.noPlayersTicker > 30) {
+                if (this.noPlayersTicker > 30 && process.env.OPSIA_INFINITE !== "true") {
                     this.over = true;
                     this.stop();
                     return;
@@ -193,7 +195,10 @@ export class Game {
         // Update modules
         //
         this.profiler.addSample("gas");
-        this.gas.update(dt);
+        // The live demo deliberately has no closing gas. It still executes the
+        // upstream Gas object and exposes its phase in snapshots, but cannot
+        // eliminate a running room.
+        if (process.env.OPSIA_INFINITE !== "true") this.gas.update(dt);
         this.profiler.endSample();
 
         this.profiler.addSample("players");
@@ -328,6 +333,9 @@ export class Game {
     }
 
     get canJoin(): boolean {
+        if (process.env.OPSIA_INFINITE === "true") {
+            return this.aliveCount < this.map.mapDef.gameMode.maxPlayers && !this.stopped;
+        }
         return (
             this.aliveCount < this.map.mapDef.gameMode.maxPlayers
             && !this.over
@@ -336,6 +344,7 @@ export class Game {
     }
 
     checkGameOver() {
+        if (process.env.OPSIA_INFINITE === "true") return;
         if (this.over) return;
 
         const didGameEnd = this.started && this.modeManager.aliveCount() <= 1;
@@ -368,6 +377,7 @@ export class Game {
                 findGameIp: token.ip,
                 loadout: token.loadout,
                 quests: token.quests,
+                opsiaSessionId: token.opsiaSessionId,
             });
         }
     }

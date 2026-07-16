@@ -41,6 +41,7 @@ import { InventoryManager } from "../inventoryManager.ts";
 import { QuestManager } from "../questManager.ts";
 import { NoOpSocket } from "../socket.ts";
 import { WeaponManager } from "../weaponManager.ts";
+import { restorePlayer } from "../../opsia/runtime.ts";
 import type { Building } from "./building.ts";
 import { BaseGameObject, type DamageParams, type GameObject } from "./gameObject.ts";
 import type { Loot } from "./loot.ts";
@@ -203,6 +204,10 @@ export class PlayerBarn {
             joinData.loadout ? joinData.loadout : joinMsg.loadout,
             !joinData.loadout,
         );
+        // This is intentionally after the upstream constructor/activation:
+        // survev remains authoritative for creation, and Opsia only reapplies
+        // a loose Redis projection to a reconnecting real Player.
+        restorePlayer(this.game, player, joinData);
 
         return player;
     }
@@ -800,6 +805,10 @@ export class Player extends BaseGameObject {
     layer: number;
     aimLayer = 0;
     dead = false;
+    /** Countdown used only by the configured infinite demo Game mode. */
+    opsiaRespawnTicker = -1;
+    /** Browser reconnect identity; it never leaves the game process. */
+    opsiaSessionId = "";
     downed = false;
 
     downedCount = 0;
@@ -1451,6 +1460,34 @@ export class Player extends BaseGameObject {
 
     update(dt: number): void {
         if (this.dead) {
+            if (process.env.OPSIA_INFINITE === "true" && this.opsiaRespawnTicker >= 0) {
+                this.opsiaRespawnTicker -= dt;
+                if (this.opsiaRespawnTicker <= 0) {
+                    this.dead = false;
+                    this.downed = false;
+                    this.health = GameConfig.player.health;
+                    this.boost = 0;
+                    this.timeAlive = 0;
+                    const spawn = this.game.map.getSpawnPos(this.group, this.team);
+                    this.pos.x = spawn.x;
+                    this.pos.y = spawn.y;
+                    this.game.grid.updateObject(this);
+                    if (!this.game.playerBarn.livingPlayers.includes(this)) {
+                        this.game.playerBarn.livingPlayers.push(this);
+                    }
+                    if (this.team && !this.team.livingPlayers.includes(this)) {
+                        this.team.livingPlayers.push(this);
+                    }
+                    util.removeFrom(this.game.playerBarn.killedPlayers, this);
+                    this.game.playerBarn.aliveCountDirty = true;
+                    this.inventoryDirty = true;
+                    this.healthDirty = true;
+                    this.setDirty();
+                    this.game.logger.info(JSON.stringify({ level: "info", event: "player_respawned", roomId: process.env.ROOM_ID ?? "room-0", nickname: this.name }));
+                } else {
+                    return;
+                }
+            } else {
             if (!this.sentDeathEmote) {
                 this.sendDeathEmoteTicker -= dt;
                 if (this.sendDeathEmoteTicker <= 0) {
@@ -1459,6 +1496,7 @@ export class Player extends BaseGameObject {
                 }
             }
             return;
+            }
         }
 
         this.timeAlive += dt;
@@ -2627,6 +2665,7 @@ export class Player extends BaseGameObject {
         if (this.dead) return;
         if (this.downed) this.downed = false;
         this.dead = true;
+        if (process.env.OPSIA_INFINITE === "true") this.opsiaRespawnTicker = 3;
         this.killedIndex = this.game.playerBarn.nextKilledNumber++;
         this.boost = 0;
         this.actionType = GameConfig.Action.None;

@@ -76,7 +76,9 @@ export class Application {
     configLoaded = false;
     initialized = false;
     active = false;
-    sessionId = helpers.random64();
+    // A stable browser token is sent only to the real survev game-server's
+    // reconnect adapter. It is not an account and is never used by Opsia.
+    sessionId = localStorage.getItem("opsia-survev-session") || helpers.random64();
     contextListener = function(e: MouseEvent) {
         e.preventDefault();
     };
@@ -98,6 +100,7 @@ export class Application {
     }
 
     constructor() {
+        localStorage.setItem("opsia-survev-session", this.sessionId);
         this.account = new Account(this.config);
         this.loadoutMenu = new LoadoutMenu(this.account, this.localization);
         this.pass = new Pass(this.account, this.loadoutMenu, this.localization);
@@ -671,13 +674,14 @@ export class Application {
                 zones = [paramZone];
             }
 
-            const matchArgs: FindGameBody = {
+            const matchArgs: FindGameBody & { opsiaSessionId: string } = {
                 version,
                 region,
                 zones,
                 playerCount: 1,
                 autoFill: true,
                 gameModeIdx,
+                opsiaSessionId: this.sessionId,
             };
 
             const tryQuickStartGameImpl = () => {
@@ -787,10 +791,13 @@ export class Application {
             return;
         }
         const hosts = matchData.hosts || [];
+        const roomPath = /^\/play\/room-\d+$/.test(location.pathname) ? location.pathname : "/play";
+        $("#opsia-reconnect-overlay").remove();
+        $("body").append('<div id="opsia-reconnect-overlay" style="position:fixed;z-index:99999;inset:0;display:grid;place-items:center;background:#06101bdd;color:#fff;font:600 18px sans-serif">게임 서버에 재연결 중…</div>');
         const urls: string[] = [];
         for (let i = 0; i < hosts.length; i++) {
             urls.push(
-                `ws${matchData.useHttps ? "s" : ""}://${hosts[i]}/play?gameId=${matchData.gameId}`,
+                `ws${matchData.useHttps ? "s" : ""}://${hosts[i]}${roomPath}?gameId=${matchData.gameId}`,
             );
         }
         const joinGameImpl = (urls: string[], matchData: FindGameMatchData) => {
@@ -809,6 +816,7 @@ export class Application {
             );
         };
         joinGameImpl(urls, matchData);
+        setTimeout(() => $("#opsia-reconnect-overlay").fadeOut(250, function() { $(this).remove(); }), 1200);
     }
 
     onJoinGameError(err: FindGameError) {

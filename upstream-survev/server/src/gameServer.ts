@@ -1,14 +1,17 @@
 import { Cron } from "croner";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Counter, Gauge, Histogram, Registry } from "prom-client";
 import { App, SSLApp, type WebSocket } from "uWebSockets.js";
+import { z } from "zod";
 import pkgJson from "../../package.json" with { type: "json" };
 import { GameConfig } from "../../shared/gameConfig.ts";
 import * as net from "../../shared/net/net.ts";
 import { Config } from "./config.ts";
 import { GameProcessManager, type GameSocketData, ProcState } from "./game/gameProcessManager.ts";
+import type { OpsiaSnapshotData } from "./game/ipcTypes.ts";
 import { apiPrivateRouter } from "./utils/apiRouter.ts";
 import { GIT_VERSION } from "./utils/gitRevision.ts";
 import { logErrorToWebhook, ServerLogger } from "./utils/logger.ts";
@@ -21,6 +24,32 @@ import {
 } from "./utils/types.ts";
 import { uwsHelpers } from "./utils/uwsHelpers.ts";
 
+const zOpsiaFindGame = z.object({
+    region: z.string(),
+    zones: z.array(z.string()),
+    version: z.number(),
+    playerCount: z.number(),
+    autoFill: z.boolean(),
+    gameModeIdx: z.number(),
+    opsiaSessionId: z.string().min(16).max(128).optional(),
+}).passthrough();
+
+class OpsiaMetrics {
+    readonly registry = new Registry();
+    private readonly tick = new Histogram({ name: "tick_duration_ms", help: "survev Game.update duration", labelNames: ["room"] as const, registers: [this.registry], buckets: [1, 5, 10, 20, 40, 80, 160] });
+    private readonly online = new Gauge({ name: "players_online", help: "players in the real survev playerBarn", labelNames: ["room"] as const, registers: [this.registry] });
+    private readonly alive = new Gauge({ name: "players_alive", help: "living players in the real survev playerBarn", labelNames: ["room"] as const, registers: [this.registry] });
+    private readonly inputs = new Counter({ name: "player_input_rate_total", help: "decoded survev input outcomes", labelNames: ["room", "outcome"] as const, registers: [this.registry] });
+
+    observe(snapshot: OpsiaSnapshotData): void {
+        this.tick.labels(snapshot.roomId).observe(snapshot.tickMs);
+        this.online.labels(snapshot.roomId).set(snapshot.players.length);
+        this.alive.labels(snapshot.roomId).set(snapshot.players.filter((player) => player.alive).length);
+        if (snapshot.inputAccepted) this.inputs.labels(snapshot.roomId, "accepted").inc(snapshot.inputAccepted);
+        if (snapshot.inputRejected) this.inputs.labels(snapshot.roomId, "rejected").inc(snapshot.inputRejected);
+    }
+}
+
 process.on("uncaughtException", async (err) => {
     console.error(err);
 
@@ -32,10 +61,19 @@ process.on("uncaughtException", async (err) => {
 class GameServer {
     readonly logger = new ServerLogger("GameServer");
 
-    readonly region = Config.regions[Config.gameServer.thisRegion];
+    readonly region = Config.regions[Config.gameServer.thisRegion] ?? {
+        https: false,
+        address: `127.0.0.1:${Config.gameServer.port}`,
+        l10n: "index-local",
+    };
     readonly regionId = Config.gameServer.thisRegion;
 
     readonly manager = new GameProcessManager();
+    readonly metrics = new OpsiaMetrics();
+
+    constructor() {
+        this.manager.onOpsiaSnapshot((snapshot) => this.metrics.observe(snapshot));
+    }
 
     async findGame(body: FindGamePrivateBody): Promise<FindGamePrivateRes> {
         if (body.version !== GameConfig.protocolVersion) {
@@ -63,7 +101,40 @@ class GameServer {
         };
     }
 
+    async findOpsiaGame(body: z.infer<typeof zOpsiaFindGame>, host: string, ip: string) {
+        // A room-pod is always the live 50v50 faction game. The client still
+        // renders upstream's mode menu, but no request can create another map.
+        const mode = Config.modes.find((candidate) => candidate.mapName === "faction") ?? Config.modes[body.gameModeIdx] ?? Config.modes[0];
+        if (!mode) return { error: "mode_disabled" };
+        const token = randomUUID();
+        const result = await this.findGame({
+            region: this.regionId,
+            version: body.version,
+            autoFill: body.autoFill,
+            mapName: mode.mapName,
+            teamMode: mode.teamMode,
+            playerData: [{
+                token,
+                userId: null,
+                ip,
+                opsiaSessionId: body.opsiaSessionId,
+            }],
+        });
+        if ("error" in result) return result;
+        return {
+            res: [{
+                zone: this.regionId,
+                gameId: result.gameId,
+                useHttps: this.region.https,
+                hosts: [host],
+                addrs: [host],
+                data: token,
+            }],
+        };
+    }
+
     async sendData() {
+        if (process.env.OPSIA_ROOM === "true") return;
         try {
             await apiPrivateRouter.update_region.$post({
                 json: {
@@ -79,6 +150,7 @@ class GameServer {
     }
 
     async checkIp(ip: string) {
+        if (process.env.OPSIA_ROOM === "true") return undefined;
         try {
             const apiRes = await apiPrivateRouter.check_ip.$post({
                 json: {
@@ -140,8 +212,10 @@ class GameServer {
 
 const server = new GameServer();
 
-if (process.env.NODE_ENV !== "production") {
-    server.manager.newGame(Config.modes[0]);
+if (process.env.OPSIA_ROOM === "true") {
+    server.manager.newGame(Config.modes.find((mode) => mode.mapName === "faction") ?? Config.modes[0]!);
+} else if (process.env.NODE_ENV !== "production") {
+    server.manager.newGame(Config.modes[0]!);
 }
 
 const app = Config.gameServer.ssl
@@ -155,6 +229,63 @@ app.get("/health", (res) => {
     res.writeStatus("200 OK");
     res.write("OK");
     res.end();
+});
+
+app.get("/healthz", (res) => {
+    uwsHelpers.returnJson(res, { status: "ok", roomId: process.env.ROOM_ID ?? "room-0", runtime: "survev-gameServer" });
+});
+
+app.get("/metrics", async (res) => {
+    res.onAborted(() => { res.aborted = true; });
+    const text = await server.metrics.registry.metrics();
+    if (!res.aborted) res.cork(() => res.writeHeader("Content-Type", server.metrics.registry.contentType).end(text));
+});
+
+const returnSiteInfo = (res: Parameters<typeof uwsHelpers.returnJson>[0]) => {
+    uwsHelpers.returnJson(res, {
+        country: "local",
+        gitRevision: GIT_VERSION,
+        captchaEnabled: false,
+        modes: Config.modes,
+        clientTheme: Config.clientTheme,
+        pops: { [server.regionId]: { playerCount: server.manager.getPlayerCount(), l10n: server.region.l10n } },
+        youtube: { name: "", link: "" },
+        twitch: [],
+    });
+};
+
+app.get("/api/site_info", (res) => {
+    returnSiteInfo(res);
+});
+
+app.get("/summary", (res) => {
+    const snapshot = server.manager.getOpsiaSnapshot();
+    uwsHelpers.returnJson(res, {
+        roomId: process.env.ROOM_ID ?? "room-0",
+        status: "running",
+        players: snapshot?.players.length ?? 0,
+        alive: snapshot?.players.filter((player) => player.alive).length ?? 0,
+        podName: process.env.POD_NAME ?? "game-0",
+        strictMode: process.env.STRICT_MODE === "true",
+        qrUrl: `${process.env.PUBLIC_BASE_URL ?? "http://localhost:8090"}/play/${process.env.ROOM_ID ?? "room-0"}`,
+    });
+});
+
+app.get("/ops/snapshot", (res) => {
+    const snapshot = server.manager.getOpsiaSnapshot();
+    if (!snapshot) {
+        res.writeStatus("503 Service Unavailable").end(JSON.stringify({ error: "ops_snapshot_pending" }));
+        return;
+    }
+    uwsHelpers.returnJson(res, snapshot as unknown as Record<string, unknown>);
+});
+
+app.post("/ops/end", (res) => {
+    if (!server.manager.resetOpsiaRoom()) {
+        res.writeStatus("409 Conflict").end(JSON.stringify({ error: "room_not_ready" }));
+        return;
+    }
+    uwsHelpers.returnJson(res, { status: "reset", roomId: process.env.ROOM_ID ?? "room-0" });
 });
 
 app.get("/private/status", (res, req) => {
@@ -177,29 +308,56 @@ app.get("/private/status", (res, req) => {
     });
 });
 
-app.post("/api/find_game", async (res, req) => {
+const handleFindGame = async (res: Parameters<typeof uwsHelpers.getJsonBody>[0], req: Parameters<typeof uwsHelpers.getIp>[1]) => {
     res.onAborted(() => {
         res.aborted = true;
     });
 
-    if (req.getHeader("survev-api-key") !== Config.secrets.SURVEV_API_KEY) {
-        uwsHelpers.forbidden(res);
-        return;
-    }
-
     try {
+        if (process.env.OPSIA_ROOM === "true" && req.getHeader("survev-api-key") !== Config.secrets.SURVEV_API_KEY) {
+            // uWS request headers are only valid before awaiting body parsing.
+            const host = req.getHeader("host") || server.region.address;
+            const ip = uwsHelpers.getIp(res, req, Config.gameServer.proxyIPHeader) ?? "127.0.0.1";
+            const body = await uwsHelpers.getJsonBody(res, zOpsiaFindGame);
+            uwsHelpers.returnJson(res, await server.findOpsiaGame(body, host, ip));
+            return;
+        }
+        if (req.getHeader("survev-api-key") !== Config.secrets.SURVEV_API_KEY) {
+            uwsHelpers.forbidden(res);
+            return;
+        }
         const body = await uwsHelpers.getJsonBody(res, zFindGamePrivateBody);
 
         uwsHelpers.returnJson(res, await server.findGame(body));
     } catch (error) {
         server.logger.warn("/api/find_game error: ", error);
     }
+};
+
+app.post("/api/find_game", (res, req) => {
+    void handleFindGame(res, req);
 });
 
-const gameHTTPRateLimit = new HTTPRateLimit(5, 1000);
-const gameWsRateLimit = new WebSocketRateLimit(500, 1000, 5);
+// When ingress routes /play/room-N to that StatefulSet pod, keep the browser
+// API calls in the same room namespace. These aliases still execute the exact
+// upstream GameServer matchmaking path above; they are not a replacement API.
+app.post("/*", (res, req) => {
+    if (/^\/(?:play|watch)\/room-\d+\/api\/find_game$/.test(req.getUrl())) {
+        void handleFindGame(res, req);
+        return;
+    }
+    res.writeStatus("404 Not Found").end("not found");
+});
 
-app.ws<GameSocketData>("/play", {
+// The normal upstream rate stays conservative. A single controlled
+// bot-runner is intentionally allowed to bring 30 real protocol clients into
+// the three room-pods for the local live demo; input abuse is still caught in
+// the decoded InputMsg hook below.
+const opsiaRoom = process.env.OPSIA_ROOM === "true";
+const gameHTTPRateLimit = new HTTPRateLimit(opsiaRoom ? 100 : 5, 1000);
+const gameWsRateLimit = new WebSocketRateLimit(500, 1000, opsiaRoom ? 100 : 5);
+
+const gameWsBehavior: import("uWebSockets.js").WebSocketBehavior<GameSocketData> = {
     idleTimeout: 30,
     maxPayloadLength: 1024,
 
@@ -315,7 +473,9 @@ app.ws<GameSocketData>("/play", {
         server.manager.onClose(data.id);
         gameWsRateLimit.ipDisconnected(data.ip);
     },
-});
+};
+app.ws<GameSocketData>("/play", gameWsBehavior);
+app.ws<GameSocketData>("/play/*", gameWsBehavior);
 
 const pingHTTPRateLimit = new HTTPRateLimit(1, 3000);
 const pingWsRateLimit = new WebSocketRateLimit(50, 1000, 10);
@@ -373,6 +533,49 @@ app.ws<pingSocketData>("/ptc", {
     close(ws) {
         pingWsRateLimit.ipDisconnected(ws.getUserData().ip);
     },
+});
+
+// Serve the Vite/PixiJS client built from upstream-survev/client. This is a
+// static shell only; all game state and websocket traffic stay in GameServer.
+const clientDist = process.env.SURVEV_CLIENT_DIR;
+const contentTypeFor = (file: string): string => {
+    if (file.endsWith(".js")) return "application/javascript";
+    if (file.endsWith(".css")) return "text/css";
+    if (file.endsWith(".json")) return "application/json";
+    if (file.endsWith(".svg")) return "image/svg+xml";
+    if (file.endsWith(".png")) return "image/png";
+    if (file.endsWith(".woff2")) return "font/woff2";
+    return "text/html; charset=utf-8";
+};
+app.get("/*", (res, req) => {
+    if (!clientDist) {
+        res.writeStatus("404 Not Found").end("survev client build is not configured");
+        return;
+    }
+    const requestPath = decodeURIComponent(req.getUrl());
+    if (/^\/(?:play|watch)\/room-\d+\/api\/site_info$/.test(requestPath)) {
+        returnSiteInfo(res);
+        return;
+    }
+    // index.html references ./js and ./css. For /play/room-N, browsers resolve
+    // those to /play/js (not /play/room-N/js), so support both forms.
+    const roomAsset = requestPath.match(/^\/(?:play|watch)\/(?:(?:room-\d+)\/)?(.+)$/)?.[1];
+    const candidate = requestPath === "/" || /^\/(play|watch)\/room-\d+$/.test(requestPath)
+        ? "index.html"
+        // Vite emits relative ./js and ./css URLs. Strip only the room route
+        // prefix so the actual upstream bundle is served, not an HTML fallback.
+        : roomAsset ?? requestPath.replace(/^\/+/, "");
+    const resolved = path.resolve(clientDist, candidate);
+    if (!resolved.startsWith(path.resolve(clientDist))) {
+        res.writeStatus("403 Forbidden").end("forbidden");
+        return;
+    }
+    try {
+        const file = existsSync(resolved) ? resolved : path.resolve(clientDist, "index.html");
+        res.cork(() => res.writeHeader("Content-Type", contentTypeFor(file)).end(readFileSync(file)));
+    } catch {
+        res.writeStatus("404 Not Found").end("not found");
+    }
 });
 
 server.sendData();

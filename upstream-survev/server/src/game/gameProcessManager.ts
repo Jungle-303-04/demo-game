@@ -7,7 +7,7 @@ import * as net from "../../../shared/net/net.ts";
 import { util } from "../../../shared/utils/util.ts";
 import { ServerLogger } from "../utils/logger.ts";
 import { type FindGamePrivateBody, type ServerGameConfig } from "../utils/types.ts";
-import { type GameData, type ProcessMsg, ProcessMsgType } from "./ipcTypes.ts";
+import { type GameData, type OpsiaSnapshotData, type ProcessMsg, ProcessMsgType } from "./ipcTypes.ts";
 
 let procFile: string;
 if (process.env.NODE_ENV === "production") {
@@ -50,6 +50,8 @@ class GameProcess {
     avaliableSlots = 0;
 
     reusedCount = 0;
+
+    opsiaSnapshot: OpsiaSnapshotData | undefined;
 
     constructor(manager: GameProcessManager, id: string, config: ServerGameConfig) {
         this.manager = manager;
@@ -118,6 +120,10 @@ class GameProcess {
                     socket.end();
                 }
                 break;
+            case ProcessMsgType.OpsiaSnapshot:
+                this.opsiaSnapshot = msg.snapshot;
+                this.manager.emitOpsiaSnapshot(msg.snapshot);
+                break;
         }
     }
 
@@ -175,6 +181,10 @@ class GameProcess {
             socketId,
         });
     }
+
+    reset() {
+        this.send({ type: ProcessMsgType.OpsiaReset });
+    }
 }
 
 export interface GameSocketData {
@@ -193,6 +203,8 @@ export class GameProcessManager {
     readonly processes: GameProcess[] = [];
 
     readonly logger = new ServerLogger("Game Process Manager");
+
+    private readonly opsiaSnapshotListeners = new Set<(snapshot: OpsiaSnapshotData) => void>();
 
     constructor() {
         process.on("beforeExit", () => {
@@ -213,7 +225,8 @@ export class GameProcessManager {
 
                 // kill processes that didn't send a keep alive msg in 10 seconds
                 // because this usually means they are frozen in an infinite loop
-                if (Date.now() - proc.lastMsgTime > 10000) {
+                const watchdogMs = process.env.OPSIA_ROOM === "true" ? 30000 : 10000;
+                if (Date.now() - proc.lastMsgTime > watchdogMs) {
                     const id = proc.gameData.id.substring(0, 4);
                     this.logger.warn(
                         `Process ${proc.process.pid} - #${id} did not send a message in more 10 seconds, killing`,
@@ -243,6 +256,15 @@ export class GameProcessManager {
         }, 5000);
     }
 
+    onOpsiaSnapshot(listener: (snapshot: OpsiaSnapshotData) => void): () => void {
+        this.opsiaSnapshotListeners.add(listener);
+        return () => this.opsiaSnapshotListeners.delete(listener);
+    }
+
+    emitOpsiaSnapshot(snapshot: OpsiaSnapshotData): void {
+        for (const listener of this.opsiaSnapshotListeners) listener(snapshot);
+    }
+
     getPlayerCount(): number {
         return this.processes.reduce((a, b) => {
             return a + b.gameData.aliveCount;
@@ -252,6 +274,10 @@ export class GameProcessManager {
     newGame(config: ServerGameConfig): GameProcess {
         let gameProc: GameProcess | undefined;
 
+        if (process.env.OPSIA_ROOM === "true") {
+            const existing = this.processes.find((proc) => !proc.gameData.stopped);
+            if (existing) return existing;
+        }
         for (let i = 0; i < this.processes.length; i++) {
             const p = this.processes[i];
             if (p.gameData.stopped) {
@@ -311,7 +337,9 @@ export class GameProcessManager {
     }
 
     async findGame(body: FindGamePrivateBody): Promise<GameProcess> {
-        let proc = this.processes
+        let proc = process.env.OPSIA_ROOM === "true"
+            ? this.processes.find((candidate) => !candidate.gameData.stopped)
+            : this.processes
             .filter((proc) => {
                 const game = proc.gameData;
                 return (
@@ -371,5 +399,16 @@ export class GameProcessManager {
         this.sockets.delete(socketId);
         if (!data) return;
         this.processById.get(data.gameId)?.handleSocketClose(socketId);
+    }
+
+    getOpsiaSnapshot(): OpsiaSnapshotData | undefined {
+        return this.processes.find((proc) => !proc.gameData.stopped)?.opsiaSnapshot;
+    }
+
+    resetOpsiaRoom(): boolean {
+        const proc = this.processes.find((candidate) => !candidate.gameData.stopped);
+        if (!proc) return false;
+        proc.reset();
+        return true;
     }
 }

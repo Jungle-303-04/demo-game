@@ -27,5 +27,6 @@ esbuild.buildSync({
         "./src/gameServer.ts",
         "./src/game/gameProcess.ts",
         "./src/api/index.ts",
+        "./src/opsia/botRunner.ts",
     ],
 });

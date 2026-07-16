@@ -10,6 +10,7 @@ import { math } from "../../../shared/utils/math.ts";
 import { util } from "../../../shared/utils/util.ts";
 import { v2 } from "../../../shared/utils/v2.ts";
 import { Config } from "../config.ts";
+import { validateInput } from "../opsia/runtime.ts";
 
 import type { Game } from "./game.ts";
 import type { GameObject } from "./objects/gameObject.ts";
@@ -70,7 +71,12 @@ export class ClientBarn {
                         || (joinData.userId !== null && c.userId === joinData.userId);
                 },
             );
-            if (count.length >= 5) {
+            // The live demo's bot-runner shares one in-cluster IP while it
+            // drives up to 30 genuine survev protocol clients across rooms.
+            // Preserve the upstream five-client anti-abuse limit everywhere
+            // else; decoded input validation remains active in both modes.
+            const maxClientsForIp = process.env.OPSIA_ROOM === "true" ? 100 : 5;
+            if (count.length >= maxClientsForIp) {
                 socket.closeWithReason("rate_limited");
                 return;
             }
@@ -218,6 +224,11 @@ export class ClientBarn {
         }
 
         if (socket.closed()) {
+            return;
+        }
+        // Validate at the actual survev decoded-input boundary. There is no
+        // parallel demo protocol or synthetic movement loop.
+        if (type === net.MsgType.Input && !validateInput(this.game, client.player!)) {
             return;
         }
         client.handleMsg(type, msg);
