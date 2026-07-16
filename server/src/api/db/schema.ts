@@ -1,0 +1,200 @@
+import {
+    bigint,
+    boolean,
+    index,
+    integer,
+    json,
+    pgTable,
+    serial,
+    text,
+    timestamp,
+    uniqueIndex,
+    uuid,
+} from "drizzle-orm/pg-core";
+import { TeamMode } from "../../../../shared/gameConfig.ts";
+import { ItemStatus, type Loadout, loadout } from "../../../../shared/utils/loadout.ts";
+
+export const sessionTable = pgTable("session", {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+        .notNull()
+        .references(() => usersTable.id, {
+            onDelete: "cascade",
+            onUpdate: "cascade",
+        }),
+    expiresAt: timestamp("expires_at").notNull(),
+});
+
+export type SessionTableSelect = typeof sessionTable.$inferSelect;
+
+export const usersTable = pgTable("users", {
+    id: text("id").notNull().primaryKey(),
+    authId: text("auth_id").notNull(),
+    slug: text("slug").notNull().unique(),
+    banned: boolean("banned").notNull().default(false),
+    banReason: text("ban_reason").notNull().default(""),
+    bannedBy: text("banned_by").notNull().default(""),
+    username: text("username").notNull().default(""),
+    usernameSet: boolean("username_set").notNull().default(false),
+    userCreated: timestamp("user_created", { withTimezone: true }).notNull().defaultNow(),
+    lastUsernameChangeTime: timestamp("last_username_change_time"),
+    linked: boolean("linked").notNull().default(false),
+    linkedGoogle: boolean("linked_google").notNull().default(false),
+    linkedDiscord: boolean("linked_discord").notNull().default(false),
+    loadout: json("loadout")
+        .notNull()
+        .default(loadout.validate({} as Loadout))
+        .$type<Loadout>(),
+});
+
+export type UsersTableInsert = typeof usersTable.$inferInsert;
+export type UsersTableSelect = typeof usersTable.$inferSelect;
+
+export const itemsTable = pgTable(
+    "items",
+    {
+        userId: text("user_id")
+            .notNull()
+            .references(() => usersTable.id, {
+                onDelete: "cascade",
+                onUpdate: "cascade",
+            }),
+        type: text("type").notNull(),
+        timeAcquired: bigint("time_acquired", { mode: "number" }).notNull(),
+        source: text("source").notNull().default("unlock_new_account"),
+        status: integer("status").notNull().default(ItemStatus.New),
+    },
+    (table) => [uniqueIndex("uq_items_user_type").on(table.userId, table.type)],
+);
+export const userPassTable = pgTable(
+    "user_pass",
+    {
+        userId: text("user_id")
+            .notNull()
+            .references(() => usersTable.id, {
+                onDelete: "cascade",
+                onUpdate: "cascade",
+            }),
+        passType: text("pass_type").notNull().default("pass_survivr1"),
+        totalXp: integer("total_xp").notNull().default(0),
+        unlocks: json("unlocks").notNull().default({}).$type<Record<string, boolean>>(),
+        newItems: boolean("new_items").notNull().default(false),
+        createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+        updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    },
+    (table) => [uniqueIndex("user_pass_user_type").on(table.userId, table.passType)],
+);
+
+export type UserPassTableSelect = typeof userPassTable.$inferSelect;
+
+export const userQuestTable = pgTable(
+    "user_quest",
+    {
+        id: serial("id").primaryKey(),
+        userId: text("user_id")
+            .notNull()
+            .references(() => usersTable.id, {
+                onDelete: "cascade",
+                onUpdate: "cascade",
+            }),
+        idx: integer("idx").notNull(),
+        questType: text("quest_type").notNull(),
+        progress: integer("progress").notNull().default(0),
+        target: integer("target").notNull(),
+        complete: boolean("complete").notNull().default(false),
+        rerolled: boolean("rerolled").notNull().default(false),
+        timeAcquired: bigint("time_acquired", { mode: "number" }).notNull(),
+        nextRefreshAt: bigint("next_refresh_at", { mode: "number" }).notNull(),
+    },
+    (table) => [uniqueIndex("user_quest_user_idx").on(table.userId, table.idx)],
+);
+
+export type UserQuestTableSelect = typeof userQuestTable.$inferSelect;
+
+export const matchDataTable = pgTable(
+    "match_data",
+    {
+        userId: text("user_id").default(""),
+        userBanned: boolean("user_banned").default(false),
+        createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+        region: text("region").notNull(),
+        mapId: integer("map_id").notNull(),
+        gameId: uuid("game_id").notNull(),
+        mapSeed: bigint("map_seed", { mode: "number" }).notNull(),
+        username: text("username").notNull(),
+        playerId: integer("player_id").notNull(),
+        teamMode: integer("team_mode").$type<TeamMode>().notNull(),
+        teamCount: integer("team_count").notNull(),
+        teamTotal: integer("team_total").notNull(),
+        teamId: integer("team_id").notNull(),
+        timeAlive: integer("time_alive").notNull(),
+        rank: integer("rank").notNull(),
+        died: boolean("died").notNull(),
+        kills: integer("kills").notNull(),
+        teamKills: integer("team_kills").notNull().default(0),
+        damageDealt: integer("damage_dealt").notNull(),
+        damageTaken: integer("damage_taken").notNull(),
+        killerId: integer("killer_id").notNull(),
+        killedIds: integer("killed_ids").array().notNull(),
+        role: text("role").notNull().default(""),
+    },
+    (table) => [
+        index("idx_match_data_user_stats").on(
+            table.userId,
+            table.teamMode,
+            table.rank,
+            table.kills,
+            table.damageDealt,
+            table.timeAlive,
+        ),
+        index("idx_game_id").on(table.gameId),
+        index("idx_user_id").on(table.userId),
+        index("idx_match_data_team_query").on(
+            table.teamMode,
+            table.mapId,
+            table.createdAt,
+            table.gameId,
+            table.teamId,
+            table.region,
+            table.kills,
+        ),
+    ],
+);
+
+export type MatchDataTable = typeof matchDataTable.$inferInsert;
+
+//
+// LOGS
+//
+export const ipLogsTable = pgTable(
+    "ip_logs",
+    {
+        id: serial().primaryKey(),
+        createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+        region: text("region").notNull(),
+        gameId: text("game_id").notNull(),
+        mapId: integer("map_id").notNull(),
+        username: text("username").notNull(),
+        userId: text("user_id").default(""),
+        encodedIp: text("encoded_ip").notNull(),
+        teamMode: integer("team_mode").$type<TeamMode>().notNull().default(TeamMode.Solo),
+        ip: text("ip").notNull(),
+        // also store the IP that was used in api/find_game...
+        // since one could exploit that to never get banned
+        // by requesting it with a different IP than the in-game one
+        findGameIp: text("find_game_ip").notNull(),
+        findGameEncodedIp: text("find_game_encoded_ip").notNull(),
+    },
+    (table) => [index("name_created_at_idx").on(table.username, table.createdAt)],
+);
+
+export type IpLogsTable = typeof ipLogsTable.$inferSelect;
+
+export const bannedIpsTable = pgTable("banned_ips", {
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresIn: timestamp("expires_in").notNull(),
+    encodedIp: text("encoded_ip").notNull().primaryKey(),
+    permanent: boolean("permanent").notNull().default(false),
+    reason: text("reason").notNull().default(""),
+    bannedBy: text("banned_by").notNull().default("admin"),
+});

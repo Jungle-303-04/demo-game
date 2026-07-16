@@ -1,0 +1,14 @@
+{
+  "$schema": "https://www.schemastore.org/tsconfig.json",
+  "extends": [
+    "./bot/tsconfig.json",
+    "./client/tsconfig.json",
+    "./server/tsconfig.json",
+    "./shared/tsconfig.json",
+    "./tests/tsconfig.json"
+  ],
+  "compilerOptions": {
+    "types": []
+  },
+  "include": ["./**/*.ts", "./**/*.js"]
+}

@@ -1,0 +1,18 @@
+{
+  "$schema": "https://www.schemastore.org/tsconfig.json",
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["DOM", "ESNext"],
+    "paths": {
+      "@/sdk.ts": ["./src/sdk/sdk-manager.ts"]
+    }
+  },
+  "include": [
+    "./src/**/*.ts",
+    "./src/**/*.js",
+    "../shared/",
+    "./atlas-builder/**/*.ts",
+    "./building-editor/**/*.ts",
+    "./global.d.ts"
+  ]
+}
