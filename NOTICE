@@ -1,0 +1,8 @@
+데모-게임은 survev 프로젝트를 `upstream-survev/` Git 서브트리로 반영한다.
+
+Upstream: https://github.com/survev/survev
+Upstream commit: f5a8cb7e0c50ebf4f9c9d6eae2193a014d303e14
+Upstream license: GNU General Public License version 3.0 or later
+
+원본 LICENSE 전문은 `upstream-survev/LICENSE`에 보존한다. 이 저장소의 Opsia 연동 어댑터,
+배포 매니페스트, 문서는 GPL-3.0-or-later로 배포한다. 계정과 외부 데이터베이스는 데모 배포에서 사용하지 않는다.
