@@ -6,6 +6,13 @@
 docker compose up --build -d
 curl -fsS http://localhost:8085/healthz
 curl -fsS http://localhost:8085/api/rooms
+curl -fsS http://localhost:8090/healthz
+```
+
+진행 중 룸에서 실제 survev 컨테이너를 재시작하고 재접속 세션의 팀·점수를 검증한다.
+
+```bash
+npm run test:resilience
 ```
 
 정상 상태는 `room-0`부터 `room-2`까지 3개 룸이 보이고 각 룸의 `podName`이 `game-{ordinal}`과 일치하는 상태다.
@@ -35,8 +42,8 @@ curl -X POST http://localhost:8085/api/rooms/room-0/end
 
 ```bash
 npm run test:e2e
-# 실제 클러스터에서 game-0 파드를 삭제한 뒤 같은 session token으로 재접속한다.
-# character, team, score가 유지되는지 관전 화면과 테스트 결과로 확인한다.
+# 실제 클러스터에서 game-0 파드를 삭제한 뒤 같은 브라우저(동일 localStorage 토큰)로 재접속한다.
+# upstream Player의 character, team, kills(score)가 유지되는지 운영 스냅샷과 테스트 결과로 확인한다.
 ```
 
 ## 시나리오 주입과 복구
@@ -47,7 +54,7 @@ npm run test:e2e
 npm run botctl -- spawn --count 1 --room room-0 --mode hack --nickname xX_Speed_Xx
 ```
 
-`input_rate_exceeded`, `movement_anomaly`, `tick_overrun` 로그와 `player_input_rate`/`tick_duration_ms`를 확인한다. Alertmanager firing은 Opsia `POST /api/rca/alertmanager`로 전달된다. 복구는 strict 게임 이미지 롤포워드이며, strict 모드는 위반 세션을 게임 내부에서 킥한다.
+`input_rate_exceeded`, `movement_anomaly`, `tick_overrun` 로그와 `player_input_rate_total`/`tick_duration_ms`를 확인한다. Alertmanager firing은 Opsia `POST /api/rca/alertmanager`로 전달된다. 복구는 strict 게임 이미지 롤포워드이며, strict 모드는 위반 세션을 게임 내부에서 킥한다.
 
 ### 06 join-storm
 
@@ -65,4 +72,3 @@ docker compose down -v
 ```
 
 `demo:reset`은 봇을 중지하고 각 룸을 논리적으로 초기화한다. 동작 중인 플레이어 판을 복구 절차 때문에 강제 종료하지 않는다.
-

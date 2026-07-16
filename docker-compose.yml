@@ -10,21 +10,23 @@ services:
 
   game-0:
     build: { context: ., dockerfile: services/game-server/Dockerfile }
-    environment: { ROOM_ID: room-0, POD_NAME: game-0, REDIS_URL: redis://redis:6379, PUBLIC_BASE_URL: http://localhost:8081, STRICT_MODE: "false" }
+    environment: { ROOM_ID: room-0, POD_NAME: game-0, REDIS_URL: redis://redis:6379, PUBLIC_BASE_URL: http://localhost:8090 }
+    ports: ["8090:8001"]
     depends_on: { redis: { condition: service_healthy } }
   game-1:
     build: { context: ., dockerfile: services/game-server/Dockerfile }
-    environment: { ROOM_ID: room-1, POD_NAME: game-1, REDIS_URL: redis://redis:6379, PUBLIC_BASE_URL: http://localhost:8081, STRICT_MODE: "false" }
+    environment: { ROOM_ID: room-1, POD_NAME: game-1, REDIS_URL: redis://redis:6379, PUBLIC_BASE_URL: http://localhost:8091 }
+    ports: ["8091:8001"]
     depends_on: { redis: { condition: service_healthy } }
   game-2:
     build: { context: ., dockerfile: services/game-server/Dockerfile }
-    environment: { ROOM_ID: room-2, POD_NAME: game-2, REDIS_URL: redis://redis:6379, PUBLIC_BASE_URL: http://localhost:8081, STRICT_MODE: "false" }
+    environment: { ROOM_ID: room-2, POD_NAME: game-2, REDIS_URL: redis://redis:6379, PUBLIC_BASE_URL: http://localhost:8092 }
+    ports: ["8092:8001"]
     depends_on: { redis: { condition: service_healthy } }
 
   room-orchestrator:
-    build: { context: ., dockerfile: services/game-server/Dockerfile }
-    command: ["node", "dist/services/room-orchestrator/src/main.js"]
-    environment: { REDIS_URL: redis://redis:6379, INITIAL_ROOMS: "3", GAME_ENDPOINT_TEMPLATE: "http://game-{ordinal}:8080" }
+    build: { context: ., dockerfile: services/room-orchestrator/Dockerfile }
+    environment: { REDIS_URL: redis://redis:6379, INITIAL_ROOMS: "3", GAME_ENDPOINT_TEMPLATE: "http://game-{ordinal}:8001" }
     depends_on: { redis: { condition: service_healthy }, game-0: { condition: service_started }, game-1: { condition: service_started }, game-2: { condition: service_started } }
   api-server:
     build: { context: ., dockerfile: services/api-server/Dockerfile }
@@ -33,9 +35,9 @@ services:
     depends_on: { room-orchestrator: { condition: service_started } }
   bot-runner:
     build: { context: ., dockerfile: services/bot-runner/Dockerfile }
-    environment: { ORCHESTRATOR_URL: http://room-orchestrator:8082 }
+    environment: { OPSIA_ROOM_ENDPOINTS: "room-0=http://game-0:8001,room-1=http://game-1:8001,room-2=http://game-2:8001" }
     ports: ["8084:8084"]
-    depends_on: { room-orchestrator: { condition: service_started } }
+    depends_on: { game-0: { condition: service_started }, game-1: { condition: service_started }, game-2: { condition: service_started } }
   ops-console:
     build: { context: ., dockerfile: services/ops-console/Dockerfile }
     environment: { ORCHESTRATOR_URL: http://room-orchestrator:8082, BOT_RUNNER_URL: http://bot-runner:8084 }

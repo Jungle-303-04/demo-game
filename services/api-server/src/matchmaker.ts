@@ -1,6 +1,12 @@
 import { Counter, Gauge, Registry } from "prom-client";
 import type { RoomRegistryRecord } from "../../room-orchestrator/src/registry.js";
-import type { StructuredLog } from "../../game-server/src/types.js";
+type StructuredLog = {
+  level: "info" | "warn" | "error";
+  event: string;
+  sessionId?: string;
+  nickname?: string;
+  detail?: Record<string, unknown>;
+};
 
 export interface RoomDirectory { list(): Promise<RoomRegistryRecord[]>; }
 

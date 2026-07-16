@@ -10,14 +10,13 @@ spec:
       serviceAccountName: room-orchestrator
       containers:
         - name: room-orchestrator
-          image: ghcr.io/jungle-303-04/demo-game/game-server:stable
-          command: ["node", "dist/services/room-orchestrator/src/main.js"]
+          image: ghcr.io/jungle-303-04/demo-game/room-orchestrator:stable
           env:
             - { name: REDIS_URL, value: redis://redis:6379 }
             - { name: KUBERNETES_SERVICE_HOST, value: kubernetes.default.svc }
             - { name: NAMESPACE, value: sandbox }
             - { name: GAME_STATEFULSET, value: game }
-            - { name: GAME_ENDPOINT_TEMPLATE, value: "http://game-{ordinal}.game-headless.sandbox.svc.cluster.local:8080" }
+            - { name: GAME_ENDPOINT_TEMPLATE, value: "http://game-{ordinal}.game-headless.sandbox.svc.cluster.local:8001" }
           ports: [{ name: http, containerPort: 8082 }]
 ---
 apiVersion: v1

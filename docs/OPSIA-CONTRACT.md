@@ -11,11 +11,8 @@ Opsia 내부 메트릭 임계 엔진은 사용하지 않는다. Opsia 원인 룰
 | 메트릭 | 라벨 | 의미 |
 | --- | --- | --- |
 | `tick_duration_ms` | `room` | 게임 tick 처리 시간 histogram이다. |
-| `player_input_rate` | `room`, `outcome` | 수락·거절된 입력 수다. |
+| `player_input_rate_total` | `room`, `outcome` | 실제 survev 입력 디코드 훅에서 수락·거절된 입력 수다. |
 | `players_online`, `players_alive` | `room` | 접속·생존 플레이어 수다. |
-| `ws_out_bytes` | `room` | 관전 상태 전송량이다. |
-| `authority_corrections_total` | `room` | 이동 권한 검증 거절 수다. |
-| `entity_count`, `decode_errors_total` | `room` | 영속 엔티티·비정상 입력 수다. |
 | `find_game_fail_ratio` | 없음 | 최근 매치메이킹 실패 비율이다. |
 
 Alertmanager는 tick p95, 거절 입력률, `find_game_fail_ratio`에 대해 firing을 만들 수 있다. receiver의 bearer token은 `opsia-alertmanager-token` Secret에서만 읽는다.
@@ -49,4 +46,3 @@ Alertmanager는 tick p95, 거절 입력률, `find_game_fail_ratio`에 대해 fir
 ## Ops 이벤트 웹훅
 
 Opsia는 운영 화면의 `POST /api/ops/events`로 `CANARY_STARTED`, `ROLLBACK_COMPLETED`, `SCALE_COMPLETED` 같은 이벤트를 보낸다. 요청은 `{ "type": "CANARY_STARTED", ... }` 형식이며 운영 화면은 최근 50개를 타임라인에 표시한다.
-

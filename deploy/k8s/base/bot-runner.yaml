@@ -10,7 +10,8 @@ spec:
       containers:
         - name: bot-runner
           image: ghcr.io/jungle-303-04/demo-game/bot-runner:stable
-          env: [{ name: ORCHESTRATOR_URL, value: http://room-orchestrator:8082 }]
+          env:
+            - { name: OPSIA_ROOM_ENDPOINTS, value: "room-0=http://game-0.game-headless.sandbox.svc.cluster.local:8001,room-1=http://game-1.game-headless.sandbox.svc.cluster.local:8001,room-2=http://game-2.game-headless.sandbox.svc.cluster.local:8001" }
           ports: [{ name: http, containerPort: 8084 }]
 ---
 apiVersion: v1
@@ -19,4 +20,3 @@ metadata: { name: bot-runner, namespace: sandbox }
 spec:
   selector: { app: bot-runner }
   ports: [{ name: http, port: 8084, targetPort: http }]
-

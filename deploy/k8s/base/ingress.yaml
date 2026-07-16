@@ -9,7 +9,7 @@ metadata:
       resolver kube-dns.kube-system.svc.cluster.local valid=10s;
       location ~ ^/(?:play|watch)/room-([0-9]+)(?:/.*)?$ {
         set $game_pod game-$1.game-headless.sandbox.svc.cluster.local;
-        proxy_pass http://$game_pod:8080;
+        proxy_pass http://$game_pod:8001;
       }
 spec:
   rules:
@@ -27,4 +27,3 @@ spec:
           - path: /
             pathType: Prefix
             backend: { service: { name: ops-console, port: { name: http } } }
-
