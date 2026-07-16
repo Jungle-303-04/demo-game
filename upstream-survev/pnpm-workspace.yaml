@@ -1,0 +1,17 @@
+allowBuilds:
+  '@taufik-nurrohman/color-picker': true
+  canvas: true
+  dprint: true
+  esbuild: true
+  sharp: true
+  workerd: true
+ignoreWorkspaceRootCheck: true
+minimumReleaseAge: 10080
+packages:
+  - server/
+  - shared/
+  - client/
+  - bot/
+  - tests/
+  - '!**dist/**'
+shellEmulator: true

@@ -1,0 +1,42 @@
+name: Server
+
+on:
+  push:
+    branches:
+      - master
+    paths: &paths
+      - "server/**"
+      - "shared/**"
+      - "*.json"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/server.yml"
+
+  pull_request:
+    paths: *paths
+
+jobs:
+  server:
+    name: Server
+    runs-on: ubuntu-latest
+    concurrency: ci-server-${{ github.ref }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Install Packages
+        run: pnpm install --filter server --filter shared
+
+      - name: Typecheck Server
+        run: pnpm run typecheck
+        working-directory: ./server
+
+      - name: Build Server
+        run: pnpm run build
+        working-directory: ./server

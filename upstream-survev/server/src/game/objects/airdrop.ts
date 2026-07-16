@@ -1,0 +1,125 @@
+import { MapObjectDefs } from "../../../../shared/defs/register.ts";
+import { GameConfig } from "../../../../shared/gameConfig.ts";
+import { ObjectType } from "../../../../shared/net/objectSerializeFns.ts";
+import { coldet, type Collider } from "../../../../shared/utils/coldet.ts";
+import { collider } from "../../../../shared/utils/collider.ts";
+import { math } from "../../../../shared/utils/math.ts";
+import { util } from "../../../../shared/utils/util.ts";
+import { v2, type Vec2 } from "../../../../shared/utils/v2.ts";
+import type { Game } from "../game.ts";
+import { BaseGameObject } from "./gameObject.ts";
+
+export class AirdropBarn {
+    airdrops: Airdrop[] = [];
+
+    constructor(readonly game: Game) {}
+
+    addAirdrop(pos: Vec2, type: string) {
+        const airdrop = new Airdrop(this.game, pos, type);
+        this.airdrops.push(airdrop);
+        this.game.playerBarn.addMapPing("ping_airdrop", pos);
+        this.game.objectRegister.register(airdrop);
+    }
+
+    update(dt: number) {
+        for (let i = 0; i < this.airdrops.length; i++) {
+            const airdrop = this.airdrops[i];
+            if (airdrop.sentLandedToClients) {
+                this.airdrops.splice(i, 1);
+                i--;
+                airdrop.destroy();
+                continue;
+            }
+            airdrop.update(dt);
+        }
+    }
+
+    flush() {
+        for (let i = 0; i < this.airdrops.length; i++) {
+            const airdrop = this.airdrops[i];
+            if (airdrop.landed) {
+                airdrop.sentLandedToClients = true;
+            }
+        }
+    }
+}
+
+export class Airdrop extends BaseGameObject {
+    override readonly __type = ObjectType.Airdrop;
+    bounds = collider.createAabbExtents(v2.create(0, 0), v2.create(5, 5));
+
+    layer = 0;
+
+    fallTime = GameConfig.airdrop.fallTime;
+    fallT = 0;
+    landed = false;
+    sentLandedToClients = false;
+
+    obstacleType: string;
+    crateCollision: Collider;
+
+    constructor(game: Game, pos: Vec2, obstacleType: string) {
+        super(game, pos);
+        this.obstacleType = obstacleType;
+        const def = MapObjectDefs.typeToDef(this.obstacleType, "obstacle");
+        this.crateCollision = collider.transform(def.collision, this.pos, 0, 1);
+    }
+
+    update(dt: number) {
+        if (this.landed) return;
+        this.fallTime -= dt;
+        this.fallT = math.remap(this.fallTime, 0, GameConfig.airdrop.fallTime, 1, 0);
+
+        this.fallT = math.clamp(this.fallT, 0, 1);
+
+        if (this.fallT === 1) {
+            this.landed = true;
+            this.setDirty();
+
+            const objs = this.game.grid.intersectCollider(this.crateCollision);
+            for (const obj of objs) {
+                if (!util.sameLayer(obj.layer, this.layer)) continue;
+
+                if (
+                    obj.__type === ObjectType.Player
+                    || obj.__type === ObjectType.Obstacle
+                ) {
+                    let collider: Collider;
+                    if (obj.__type === ObjectType.Player) {
+                        collider = obj.collider;
+                    } else {
+                        collider = obj.obstacleAABB || obj.collider;
+                    }
+                    if (coldet.test(collider, this.crateCollision)) {
+                        obj.damage({
+                            amount: 1e10,
+                            damageType: GameConfig.DamageType.Airdrop,
+                            dir: "dir" in obj ? obj.dir : v2.create(0, 0),
+                        });
+                    }
+                } else if (
+                    obj.__type === ObjectType.Building
+                    && !obj.ceilingDead
+                    && obj.wallsToDestroy < Infinity
+                ) {
+                    for (const zoomRegion of obj.zoomRegions) {
+                        if (!zoomRegion.zoomIn) continue;
+                        if (coldet.test(zoomRegion.zoomIn, this.crateCollision)) {
+                            obj.ceilingDead = true;
+                            obj.setPartDirty();
+                            break;
+                        }
+                    }
+                }
+            }
+
+            this.game.map.genObstacle(this.obstacleType, this.pos, 0);
+            this.game.lootBarn.forceLootUpdates(this.crateCollision, this.layer);
+        } else {
+            // airdrops parachute fallT only needs to be sent once to clients
+            // but still need to be serialized for new clients that will get them into their FOV
+            // so just serialize instead of setting to dirty
+            this.serializePartial();
+        }
+    }
+}
