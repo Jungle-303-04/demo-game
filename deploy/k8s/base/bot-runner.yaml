@@ -1,0 +1,22 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: bot-runner, namespace: sandbox }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: bot-runner } }
+  template:
+    metadata: { labels: { app: bot-runner, app.kubernetes.io/part-of: demo-game } }
+    spec:
+      containers:
+        - name: bot-runner
+          image: ghcr.io/jungle-303-04/demo-game/bot-runner:stable
+          env: [{ name: ORCHESTRATOR_URL, value: http://room-orchestrator:8082 }]
+          ports: [{ name: http, containerPort: 8084 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: bot-runner, namespace: sandbox }
+spec:
+  selector: { app: bot-runner }
+  ports: [{ name: http, port: 8084, targetPort: http }]
+

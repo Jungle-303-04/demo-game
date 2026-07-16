@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - redis.yaml
+  - game.yaml
+  - services.yaml
+  - api-server.yaml
+  - bot-runner.yaml
+  - ops-console.yaml
+  - room-orchestrator.yaml
+  - ingress.yaml
+  - monitoring.yaml
+  - alertmanager.yaml
+  - rbac.yaml
+

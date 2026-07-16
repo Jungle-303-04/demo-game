@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ops-policy
+  namespace: sandbox
+data:
+  accountsEnabled: "false"
+  alertmanagerWebhookPath: "/api/rca/alertmanager"
+  recoveryActions: "image_rollforward,image_rollback,deployment_scale"
+  note: "No session identifiers or mutable enforcement values are stored here."
+

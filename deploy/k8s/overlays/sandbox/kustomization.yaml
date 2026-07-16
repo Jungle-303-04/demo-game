@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources: [../../base]
+images:
+  - name: ghcr.io/jungle-303-04/demo-game/game-server
+    newTag: stable
+  - name: ghcr.io/jungle-303-04/demo-game/api-server
+    newTag: stable
+  - name: ghcr.io/jungle-303-04/demo-game/bot-runner
+    newTag: stable
+  - name: ghcr.io/jungle-303-04/demo-game/ops-console
+    newTag: stable

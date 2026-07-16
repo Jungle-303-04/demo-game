@@ -28,7 +28,9 @@ export class GameRuntime {
   async start(): Promise<void> {
     await this.options.store.connect();
     if (!await this.options.store.acquireLease(this.options.roomId, this.owner, this.leaseTtlMs)) throw new Error("room_lease_held");
-    const snapshot = await this.options.store.load(this.options.roomId);
+    let snapshot = null;
+    try { snapshot = await this.options.store.load(this.options.roomId); }
+    catch (error) { this.log({ level: "error", event: "restore_failed", roomId: this.options.roomId, server: this.options.podName, detail: { message: error instanceof Error ? error.message : String(error) } }); }
     this.room = snapshot ? DemoRoom.restore(snapshot, this.roomOptions()) : new DemoRoom(this.roomOptions());
     this.room.start();
     if (snapshot) this.log({ level: "info", event: "snapshot_restored", roomId: this.options.roomId, server: this.options.podName });
@@ -50,6 +52,7 @@ export class GameRuntime {
   disconnect(sessionId: string): void { this.room.disconnect(sessionId); }
   eliminate(sessionId: string): void { this.room.eliminate(sessionId); }
   award(sessionId: string, points = 1): void { this.room.award(sessionId, points); }
+  grantItem(sessionId: string, item: string, count: number): boolean { return this.room.grantItem(sessionId, item, count); }
   tick(): void { this.room.tick(); }
   player(sessionId: string) { return this.room.getPlayer(sessionId); }
   opsSnapshot(): OpsSnapshot { return this.room.opsSnapshot(); }

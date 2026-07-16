@@ -97,6 +97,7 @@ export class DemoRoom {
     if (!result.accepted) {
       const event = result.reason === "movement" ? "movement_anomaly" : "input_rate_exceeded";
       this.event("warn", event, player, { reason: result.reason, strictMode: this.strictMode });
+      if (result.reason === "movement") this.event("warn", "position_desync", player, { maxDelta: this.strictMode ? 0.8 : 1.2 });
       if (result.kick) {
         player.kicked = true;
         player.connected = false;
@@ -125,6 +126,17 @@ export class DemoRoom {
     const player = this.requirePlayer(sessionId);
     player.score += points;
     this.bump();
+  }
+
+  grantItem(sessionId: string, item: string, count: number): boolean {
+    const player = this.requirePlayer(sessionId);
+    if (!Number.isInteger(count) || count < 1 || count > 5 || !/^[a-z0-9_-]{1,32}$/i.test(item)) {
+      this.event("warn", "inventory_invariant_violation", player, { item, count });
+      return false;
+    }
+    this.groundLoot.push({ id: `${item}-${this.sequence}`, kind: item, position: { ...player.position } });
+    this.bump();
+    return true;
   }
 
   tick(): void {

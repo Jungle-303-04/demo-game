@@ -1,0 +1,30 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: demo-game
+  namespace: sandbox
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/server-snippet: |
+      resolver kube-dns.kube-system.svc.cluster.local valid=10s;
+      location ~ ^/(?:play|watch)/room-([0-9]+)(?:/.*)?$ {
+        set $game_pod game-$1.game-headless.sandbox.svc.cluster.local;
+        proxy_pass http://$game_pod:8080;
+      }
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /play
+            pathType: Prefix
+            backend: { service: { name: api-server, port: { name: http } } }
+          - path: /watch
+            pathType: Prefix
+            backend: { service: { name: api-server, port: { name: http } } }
+          - path: /api/find-game
+            pathType: Prefix
+            backend: { service: { name: api-server, port: { name: http } } }
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: ops-console, port: { name: http } } }
+

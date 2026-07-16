@@ -1,13 +1,15 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { MemoryRoomRegistry, RoomReconciler } from "./registry.js";
+import { readFile } from "node:fs/promises";
+import { createRoomRegistry, RoomReconciler } from "./registry.js";
 import { KubernetesStatefulSetScaler, NoopScaler, type ReplicaScaler } from "./scaler.js";
 
-const registry = new MemoryRoomRegistry();
+const registry = createRoomRegistry();
 const reconciler = new RoomReconciler(registry);
 const port = Number(process.env.PORT ?? 8082);
 const endpointBase = process.env.GAME_ENDPOINT_BASE ?? "http://game-";
-const scaler: ReplicaScaler = process.env.KUBERNETES_SERVICE_HOST && process.env.KUBE_TOKEN
-  ? new KubernetesStatefulSetScaler(`https://${process.env.KUBERNETES_SERVICE_HOST}`, process.env.NAMESPACE ?? "sandbox", process.env.GAME_STATEFULSET ?? "game", process.env.KUBE_TOKEN)
+const kubeToken = process.env.KUBE_TOKEN ?? await readFile("/var/run/secrets/kubernetes.io/serviceaccount/token", "utf8").catch(() => "");
+const scaler: ReplicaScaler = process.env.KUBERNETES_SERVICE_HOST && kubeToken
+  ? new KubernetesStatefulSetScaler(`https://${process.env.KUBERNETES_SERVICE_HOST}:${process.env.KUBERNETES_SERVICE_PORT ?? "443"}`, process.env.NAMESPACE ?? "sandbox", process.env.GAME_STATEFULSET ?? "game", kubeToken)
   : new NoopScaler();
 const endpointFor = (ordinal: number) => process.env.GAME_ENDPOINT_TEMPLATE?.replace("{ordinal}", String(ordinal)) ?? `${endpointBase}${ordinal}:8080`;
 
@@ -30,5 +32,6 @@ const server = createServer(async (request, response) => {
   }
   return send(response, 404, { error: "not_found" });
 });
+await registry.connect();
 await reconciler.reconcile(Number(process.env.INITIAL_ROOMS ?? 3), endpointFor);
 server.listen(port, () => process.stdout.write(`${JSON.stringify({ level: "info", event: "room_orchestrator_listening", detail: { port } })}\n`));

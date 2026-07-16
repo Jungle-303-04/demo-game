@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: game
+  namespace: sandbox
+  labels: { app: game-server, app.kubernetes.io/part-of: demo-game }
+spec:
+  serviceName: game-headless
+  replicas: 3
+  podManagementPolicy: Parallel
+  updateStrategy: { type: RollingUpdate }
+  selector:
+    matchLabels: { app: game-server }
+  template:
+    metadata:
+      labels: { app: game-server, app.kubernetes.io/part-of: demo-game }
+    spec:
+      terminationGracePeriodSeconds: 8
+      containers:
+        - name: game-server
+          image: ghcr.io/jungle-303-04/demo-game/game-server:stable
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-ec", "ordinal=${HOSTNAME##*-}; export ROOM_ID=room-${ordinal}; exec node dist/services/game-server/src/main.js"]
+          env:
+            - { name: REDIS_URL, value: redis://redis:6379 }
+            - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+            - { name: STRICT_MODE, value: "false" }
+          ports: [{ containerPort: 8080, name: http }]
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 3 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 10 }
+

@@ -1,0 +1,43 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+
+  game-0:
+    build: { context: ., dockerfile: services/game-server/Dockerfile }
+    environment: { ROOM_ID: room-0, POD_NAME: game-0, REDIS_URL: redis://redis:6379, PUBLIC_BASE_URL: http://localhost:8081, STRICT_MODE: "false" }
+    depends_on: { redis: { condition: service_healthy } }
+  game-1:
+    build: { context: ., dockerfile: services/game-server/Dockerfile }
+    environment: { ROOM_ID: room-1, POD_NAME: game-1, REDIS_URL: redis://redis:6379, PUBLIC_BASE_URL: http://localhost:8081, STRICT_MODE: "false" }
+    depends_on: { redis: { condition: service_healthy } }
+  game-2:
+    build: { context: ., dockerfile: services/game-server/Dockerfile }
+    environment: { ROOM_ID: room-2, POD_NAME: game-2, REDIS_URL: redis://redis:6379, PUBLIC_BASE_URL: http://localhost:8081, STRICT_MODE: "false" }
+    depends_on: { redis: { condition: service_healthy } }
+
+  room-orchestrator:
+    build: { context: ., dockerfile: services/game-server/Dockerfile }
+    command: ["node", "dist/services/room-orchestrator/src/main.js"]
+    environment: { REDIS_URL: redis://redis:6379, INITIAL_ROOMS: "3", GAME_ENDPOINT_TEMPLATE: "http://game-{ordinal}:8080" }
+    depends_on: { redis: { condition: service_healthy }, game-0: { condition: service_started }, game-1: { condition: service_started }, game-2: { condition: service_started } }
+  api-server:
+    build: { context: ., dockerfile: services/api-server/Dockerfile }
+    environment: { ORCHESTRATOR_URL: http://room-orchestrator:8082 }
+    ports: ["8081:8081"]
+    depends_on: { room-orchestrator: { condition: service_started } }
+  bot-runner:
+    build: { context: ., dockerfile: services/bot-runner/Dockerfile }
+    environment: { ORCHESTRATOR_URL: http://room-orchestrator:8082 }
+    ports: ["8084:8084"]
+    depends_on: { room-orchestrator: { condition: service_started } }
+  ops-console:
+    build: { context: ., dockerfile: services/ops-console/Dockerfile }
+    environment: { ORCHESTRATOR_URL: http://room-orchestrator:8082, BOT_RUNNER_URL: http://bot-runner:8084 }
+    ports: ["8085:8085"]
+    depends_on: { room-orchestrator: { condition: service_started }, bot-runner: { condition: service_started } }

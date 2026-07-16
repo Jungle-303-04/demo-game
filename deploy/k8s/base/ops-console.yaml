@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: ops-console, namespace: sandbox }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: ops-console } }
+  template:
+    metadata: { labels: { app: ops-console, app.kubernetes.io/part-of: demo-game } }
+    spec:
+      containers:
+        - name: ops-console
+          image: ghcr.io/jungle-303-04/demo-game/ops-console:stable
+          env:
+            - { name: ORCHESTRATOR_URL, value: http://room-orchestrator:8082 }
+            - { name: BOT_RUNNER_URL, value: http://bot-runner:8084 }
+          ports: [{ name: http, containerPort: 8085 }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: ops-console, namespace: sandbox }
+spec:
+  selector: { app: ops-console }
+  ports: [{ name: http, port: 8085, targetPort: http }]
+

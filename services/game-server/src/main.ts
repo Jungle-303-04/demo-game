@@ -18,6 +18,7 @@ const roomId = process.env.ROOM_ID ?? "room-0";
 const podName = process.env.POD_NAME ?? "game-0";
 const port = Number(process.env.PORT ?? 8080);
 const strictMode = process.env.STRICT_MODE === "true";
+if (!/^room-\d+$/.test(roomId)) consoleJsonLog({ level: "error", event: "config_validation_failed", roomId, server: podName, detail: { key: "ROOM_ID", value: roomId } });
 const runtime = new GameRuntime({ roomId, podName, strictMode, store: createSnapshotStore(), baseUrl: process.env.PUBLIC_BASE_URL, log: consoleJsonLog });
 const metrics = new GameMetrics();
 
@@ -25,7 +26,9 @@ await runtime.start();
 const tickTimer = setInterval(() => {
   const started = performance.now();
   runtime.tick();
-  metrics.observeTick((runtime as unknown as { room: import("./room.js").DemoRoom }).room, performance.now() - started);
+  const elapsedMs = performance.now() - started;
+  metrics.observeTick((runtime as unknown as { room: import("./room.js").DemoRoom }).room, elapsedMs);
+  if (elapsedMs > 40) consoleJsonLog({ level: "error", event: "tick_overrun", roomId, server: podName, detail: { tickMs: elapsedMs, budgetMs: 40 } });
 }, 100);
 
 const server = createServer(async (request, response) => {
@@ -49,6 +52,11 @@ const server = createServer(async (request, response) => {
       const result = runtime.input(String(body.sessionId ?? ""), body as unknown as InputPacket);
       metrics.observeInput(roomId, result.accepted, result.reason);
       return send(response, result.kick ? 403 : 200, result);
+    }
+    if (request.method === "POST" && url.pathname === "/inventory/grant") {
+      const body = await readJson(request);
+      const accepted = runtime.grantItem(String(body.sessionId ?? ""), String(body.item ?? ""), Number(body.count));
+      return send(response, accepted ? 200 : 409, { accepted });
     }
     if (request.method === "POST" && url.pathname === "/ops/end") { await runtime.reset(); return send(response, 200, { status: "reset", roomId }); }
     return send(response, 404, { error: "not_found" });

@@ -1,0 +1,15 @@
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata: { name: opsia-webhook, namespace: sandbox }
+spec:
+  route:
+    receiver: opsia
+    matchers: [{ name: alertname, matchType: "=~", value: "DemoGame.*" }]
+  receivers:
+    - name: opsia
+      webhookConfigs:
+        - url: http://opsia-api.management.svc.cluster.local/api/rca/alertmanager
+          sendResolved: true
+          httpConfig:
+            bearerTokenSecret: { name: opsia-alertmanager-token, key: token }
+
