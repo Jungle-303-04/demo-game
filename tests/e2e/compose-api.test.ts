@@ -20,8 +20,12 @@ test("compose starts three rooms, distributes 30 bots, and exposes minimap snaps
   const spawned = await fetch(`${opsUrl}/api/bots/spawn`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ count: 30, mode: "normal" }) });
   assert.equal(spawned.status, 201);
   await new Promise((resolve) => setTimeout(resolve, 1_000));
-  const snapshot = await (await fetch(`${opsUrl}/api/ops/snapshot/room-0`)).json() as { players: unknown[] };
-  assert.ok(snapshot.players.length > 0);
+  const bots = await (await fetch(`${opsUrl}/api/bots`)).json() as { bots: unknown[] };
+  assert.equal(bots.bots.length, 30);
+  const snapshots = await Promise.all(before.rooms.map(async ({ roomId }) => (await (await fetch(`${opsUrl}/api/ops/snapshot/${roomId}`)).json() as { players: unknown[] }).players));
+  assert.deepEqual(snapshots.map((players) => players.length), [10, 10, 10]);
+  const page = await (await fetch(`${opsUrl}/`)).text();
+  assert.match(page, /다음 생존자/);
   const event = await fetch(`${opsUrl}/api/ops/events`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ type: "CANARY_STARTED", release: "strict" }) });
   assert.equal(event.status, 202);
   const timeline = await (await fetch(`${opsUrl}/api/timeline`)).json() as { events: Array<{ type: string }> };

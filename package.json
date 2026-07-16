@@ -11,7 +11,7 @@
     "test": "npm run build && node --test $(find dist/tests -name '*.test.js' -print)",
     "test:unit": "npm run build && node --test $(find dist/tests/unit -name '*.test.js' -print)",
     "test:e2e": "npm run build && node --test $(find dist/tests/e2e -name '*.test.js' -print)",
-    "test:compose": "docker compose up --build -d && COMPOSE_E2E=1 npm run build && COMPOSE_E2E=1 node --test dist/tests/e2e/compose-api.test.js",
+    "test:compose": "docker compose down -v && docker compose up --build -d && COMPOSE_E2E=1 npm run build && COMPOSE_E2E=1 node --test dist/tests/e2e/compose-api.test.js",
     "start:game": "node dist/services/game-server/src/main.js",
     "start:api": "node dist/services/api-server/src/main.js",
     "start:orchestrator": "node dist/services/room-orchestrator/src/main.js",

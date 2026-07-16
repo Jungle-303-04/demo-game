@@ -32,6 +32,7 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && end) { const room = (await roomRecords()).find((record) => record.roomId === end[1]); if (!room) return send(response, 404, { error: "room_not_found" }); return send(response, 200, await proxyJson(`${room.endpoint}/ops/end`, {})); }
     if (request.method === "POST" && url.pathname === "/api/bots/spawn") return send(response, 201, await proxyJson(`${botRunner}/bots/spawn`, await readJson(request)));
     if (request.method === "POST" && url.pathname === "/api/bots/kill") return send(response, 200, await proxyJson(`${botRunner}/bots/kill`, await readJson(request)));
+    if (request.method === "GET" && url.pathname === "/api/bots") return send(response, 200, await (await fetch(`${botRunner}/bots`)).json());
     const snapshot = url.pathname.match(/^\/api\/ops\/snapshot\/(room-\d+)$/);
     if (request.method === "GET" && snapshot) { const room = (await roomRecords()).find((record) => record.roomId === snapshot[1]); if (!room) return send(response, 404, { error: "room_not_found" }); return send(response, 200, await (await fetch(`${room.endpoint}/ops/snapshot`)).json() as OpsSnapshot); }
     if (request.method === "POST" && url.pathname === "/api/ops/events") { const body = await readJson(request); const type = String(body.type ?? ""); if (!type) return send(response, 400, { error: "event_type_required" }); events.unshift({ at: new Date().toISOString(), type, detail: body }); events.splice(50); return send(response, 202, { accepted: true }); }
