@@ -69,7 +69,25 @@ test("admin room projection uses real map dimensions, live player fields, and bo
     if (url === "http://game-0/ops/snapshot") return json({
       roomId: "room-0",
       capturedAt,
-      map: { name: "faction", width: 880, height: 500 },
+      map: {
+        name: "faction",
+        seed: 4242,
+        width: 880,
+        height: 500,
+        shoreInset: 12,
+        grassInset: 18,
+        rivers: [{ width: 14, looped: false, points: [{ x: 100, y: 0 }, { x: 120, y: 500 }] }],
+        places: [{ name: "Riverside", x: 0.5, y: 0.4 }],
+        objects: [{
+          id: 7,
+          type: "house_red_01",
+          kind: "building",
+          x: 220,
+          y: 125,
+          width: 40,
+          height: 24,
+        }],
+      },
       zone: { x: 440, y: 250, radius: 220, nextX: 660, nextY: 125, nextRadius: 110 },
       tickP95Ms: 8,
       tickRate: 100,
@@ -128,6 +146,12 @@ test("admin room projection uses real map dimensions, live player fields, and bo
   assert.equal(room.players[0]?.vy, 1);
   assert.equal(room.players[0]?.isBot, true);
   assert.equal(room.players[0]?.health, 87);
+  assert.equal(room.seed, 4242);
+  assert.equal(room.mapLayout.width, 880);
+  assert.equal(room.mapLayout.shoreInset, 12);
+  assert.equal(room.mapLayout.rivers[0]?.points[1]?.y, 500);
+  assert.equal(room.mapLayout.places[0]?.name, "Riverside");
+  assert.equal(room.mapLayout.objects[0]?.kind, "building");
   assert.equal(room.zone.x, 50);
   assert.equal(room.zone.y, 50);
   assert.equal(room.zone.nextX, 75);

@@ -15,7 +15,29 @@ export interface GameData {
 export interface OpsiaSnapshotData {
     roomId: string;
     capturedAt: number;
-    map: { name: string; width: number; height: number };
+    map: {
+        name: string;
+        seed: number;
+        width: number;
+        height: number;
+        shoreInset: number;
+        grassInset: number;
+        rivers: Array<{
+            width: number;
+            looped: boolean;
+            points: Array<{ x: number; y: number }>;
+        }>;
+        places: Array<{ name: string; x: number; y: number }>;
+        objects: Array<{
+            id: number;
+            type: string;
+            kind: "building" | "structure" | "tree" | "rock" | "wall" | "obstacle";
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+        }>;
+    };
     zone: { x: number; y: number; radius: number; nextX: number; nextY: number; nextRadius: number };
     players: Array<{
         sessionId: string;

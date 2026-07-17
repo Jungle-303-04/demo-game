@@ -48,10 +48,40 @@ export interface OpsiaPlayerSnapshot {
     connected: boolean;
 }
 
+export type OpsiaMapObjectKind = "building" | "structure" | "tree" | "rock" | "wall" | "obstacle";
+
+export interface OpsiaMapSnapshot {
+    name: string;
+    seed: number;
+    width: number;
+    height: number;
+    shoreInset: number;
+    grassInset: number;
+    rivers: Array<{
+        width: number;
+        looped: boolean;
+        points: Array<{ x: number; y: number }>;
+    }>;
+    places: Array<{
+        name: string;
+        x: number;
+        y: number;
+    }>;
+    objects: Array<{
+        id: number;
+        type: string;
+        kind: OpsiaMapObjectKind;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    }>;
+}
+
 export interface OpsiaSnapshot {
     roomId: string;
     capturedAt: number;
-    map: { name: string; width: number; height: number };
+    map: OpsiaMapSnapshot;
     zone: { x: number; y: number; radius: number; nextX: number; nextY: number; nextRadius: number };
     players: OpsiaPlayerSnapshot[];
     tickP95Ms: number;
@@ -67,6 +97,7 @@ export interface OpsiaSnapshot {
 const restoredPlayers = new WeakMap<Game, Map<string, LoosePlayerState>>();
 const inputWindows = new WeakMap<Game, Map<string, number[]>>();
 const inputCounters = new WeakMap<Game, { accepted: number; rejected: number }>();
+const mapSnapshots = new WeakMap<Game, OpsiaMapSnapshot>();
 const memorySnapshots = new Map<string, LooseGameSnapshot>();
 const memoryLeases = new Map<string, { owner: string; expiresAt: number }>();
 let previousCpuUsage = process.cpuUsage();
@@ -95,6 +126,60 @@ const jsonLog = (level: "info" | "warn" | "error", event: string, detail: Record
 };
 
 const playerSessionId = (player: Player): string => player.opsiaSessionId || player.client.findGameIp;
+
+const mapObjectSize = (bounds: { min: { x: number; y: number }; max: { x: number; y: number } }) => ({
+    width: Math.max(1, bounds.max.x - bounds.min.x),
+    height: Math.max(1, bounds.max.y - bounds.min.y),
+});
+
+const makeOpsMapSnapshot = (game: Game): OpsiaMapSnapshot => {
+    const cached = mapSnapshots.get(game);
+    if (cached?.seed === game.map.seed) return cached;
+
+    const buildings: OpsiaMapSnapshot["objects"] = game.map.buildings
+        .filter((building) => building.layer === 0 && !building.parentBuilding && !building.parentStructure)
+        .map((building) => ({
+            id: building.__id,
+            type: building.type,
+            kind: "building",
+            x: building.pos.x,
+            y: building.pos.y,
+            ...mapObjectSize(building.bounds),
+        }));
+    const structures: OpsiaMapSnapshot["objects"] = game.map.structures
+        .filter((structure) => structure.layer === 0)
+        .map((structure) => ({
+            id: structure.__id,
+            type: structure.type,
+            kind: "structure",
+            x: structure.pos.x,
+            y: structure.pos.y,
+            ...mapObjectSize(structure.bounds),
+        }));
+    const snapshot: OpsiaMapSnapshot = {
+        name: game.mapName,
+        seed: game.map.seed,
+        width: game.map.width,
+        height: game.map.height,
+        shoreInset: game.map.shoreInset,
+        grassInset: game.map.grassInset,
+        rivers: game.map.riverDescs.map((river) => ({
+            width: river.width,
+            looped: river.looped,
+            points: river.points.map((point) => ({ x: point.x, y: point.y })),
+        })),
+        places: game.map.msg.places.map((place) => ({
+            name: place.name,
+            x: place.pos.x,
+            y: place.pos.y,
+        })),
+        // The admin tactical LOD keeps real navigational geometry while
+        // omitting thousands of tiny decorative props from every 1s poll.
+        objects: [...structures, ...buildings],
+    };
+    mapSnapshots.set(game, snapshot);
+    return snapshot;
+};
 
 export const serializeGame = (game: Game): LooseGameSnapshot => ({
     schemaVersion: 2,
@@ -208,7 +293,7 @@ export const makeOpsSnapshot = (game: Game, tickP95Ms: number, tickRate: number)
     return {
         roomId: opsiaRoomId(),
         capturedAt: Date.now(),
-        map: { name: game.mapName, width: game.map.width, height: game.map.height },
+        map: makeOpsMapSnapshot(game),
         zone: {
             x: game.gas.currentPos.x,
             y: game.gas.currentPos.y,

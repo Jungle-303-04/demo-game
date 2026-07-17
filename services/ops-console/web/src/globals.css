@@ -1362,23 +1362,96 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-.survev-live-view {
+.admin-tactical-map {
   position: relative;
   height: clamp(560px, calc(100vh - 250px), 820px);
   min-height: 560px;
   overflow: hidden;
-  background: #020403;
+  background: #102532;
+  isolation: isolate;
 }
 
-.survev-live-view iframe {
-  display: block;
+.admin-map-surface {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
   width: 100%;
   height: 100%;
-  border: 0;
-  background: #020403;
+  filter: saturate(0.82) contrast(1.05);
 }
 
-.survev-live-source {
+.admin-map-water {
+  fill: #183b47;
+}
+
+.admin-map-shore {
+  fill: #8b704c;
+}
+
+.admin-map-grass {
+  fill: #29452b;
+}
+
+.admin-map-river-shore,
+.admin-map-river-water {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.admin-map-river-shore {
+  stroke: #7c694c;
+}
+
+.admin-map-river-water {
+  stroke: #1b4a59;
+}
+
+.admin-map-object {
+  vector-effect: non-scaling-stroke;
+}
+
+.admin-map-object-building,
+.admin-map-object-structure {
+  fill: #58605a;
+  stroke: rgba(232, 240, 225, 0.24);
+  stroke-width: 0.8;
+}
+
+.admin-map-object-structure {
+  fill: #454c47;
+}
+
+.admin-map-object-tree {
+  fill: #142c19;
+  stroke: rgba(104, 151, 84, 0.5);
+  stroke-width: 0.55;
+}
+
+.admin-map-object-rock {
+  fill: #59625b;
+  stroke: rgba(222, 228, 216, 0.18);
+  stroke-width: 0.45;
+}
+
+.admin-map-object-wall,
+.admin-map-object-obstacle {
+  fill: #3c4d3d;
+  opacity: 0.8;
+}
+
+.admin-map-places text {
+  fill: rgba(242, 246, 235, 0.72);
+  font-family: var(--sans);
+  font-size: 18px;
+  font-weight: 700;
+  paint-order: stroke;
+  pointer-events: none;
+  stroke: rgba(7, 13, 9, 0.72);
+  stroke-width: 4px;
+  text-anchor: middle;
+}
+
+.admin-map-source {
   position: absolute;
   z-index: 8;
   left: 14px;
@@ -1395,7 +1468,7 @@ select:focus-visible {
   backdrop-filter: blur(7px);
 }
 
-.survev-live-source span {
+.admin-map-source span {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -1405,7 +1478,7 @@ select:focus-visible {
   letter-spacing: 0.08em;
 }
 
-.survev-live-source span i {
+.admin-map-source span i {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -1413,17 +1486,17 @@ select:focus-visible {
   box-shadow: 0 0 8px rgba(255, 117, 109, 0.65);
 }
 
-.survev-live-source strong {
+.admin-map-source strong {
   font-size: 13px;
 }
 
-.survev-live-source small {
+.admin-map-source small {
   color: #aab6ac;
   font-family: var(--mono);
   font-size: 8px;
 }
 
-.survev-live-view.is-unavailable {
+.admin-tactical-map.is-unavailable {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1433,13 +1506,85 @@ select:focus-visible {
   text-align: center;
 }
 
-.survev-live-view.is-unavailable strong {
+.admin-tactical-map.is-unavailable strong {
   color: var(--text);
 }
 
-.survev-live-view.is-unavailable p {
+.admin-tactical-map.is-unavailable p {
   margin: 0;
   font-size: 12px;
+}
+
+.admin-map-selection {
+  position: absolute;
+  z-index: 13;
+  left: 14px;
+  bottom: 42px;
+  min-width: 210px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 11px 12px;
+  border: 1px solid rgba(184, 229, 120, 0.34);
+  border-radius: 6px;
+  background: rgba(4, 10, 6, 0.84);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(8px);
+}
+
+.admin-map-selection > div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--green-strong);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.admin-map-selection > div i {
+  width: 7px;
+  height: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 50%;
+}
+
+.admin-map-selection strong {
+  font-size: 15px;
+}
+
+.admin-map-selection small {
+  color: #aab6ac;
+  font-family: var(--mono);
+  font-size: 8px;
+}
+
+.admin-map-selection button {
+  align-self: flex-start;
+  margin-top: 5px;
+  padding: 5px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 8px;
+}
+
+.admin-map-no-players {
+  position: absolute;
+  z-index: 10;
+  left: 50%;
+  top: 50%;
+  padding: 12px 15px;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: rgba(5, 10, 7, 0.78);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  transform: translate(-50%, -50%);
 }
 
 .full-map {
@@ -1648,8 +1793,8 @@ select:focus-visible {
 .player-marker {
   position: absolute;
   z-index: 7;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   padding: 0;
   border: 0;
   border-radius: 50%;
@@ -1657,13 +1802,13 @@ select:focus-visible {
   cursor: crosshair;
   transform: translate(-50%, -50%);
   transition:
-    left 190ms linear,
-    top 190ms linear;
+    left 900ms linear,
+    top 900ms linear;
 }
 
 .player-marker-core {
   position: absolute;
-  inset: 5px;
+  inset: 4px;
   border: 1px solid rgba(255, 255, 255, 0.82);
   border-radius: 50%;
   background: var(--player-color);
@@ -1672,8 +1817,8 @@ select:focus-visible {
 
 .player-marker-direction {
   position: absolute;
-  left: 9px;
-  top: 1px;
+  left: 8px;
+  top: 0;
   width: 2px;
   height: 7px;
   border-radius: 2px;
@@ -1696,8 +1841,44 @@ select:focus-visible {
 }
 
 .player-marker-bot .player-marker-core {
-  border-radius: 2px;
-  transform: rotate(45deg);
+  box-shadow:
+    0 0 8px color-mix(in srgb, var(--player-color), transparent 28%),
+    inset 0 0 0 2px rgba(5, 9, 6, 0.62);
+}
+
+.player-marker.is-selected {
+  z-index: 14;
+}
+
+.player-marker.is-selected::before {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border: 2px solid var(--green-strong);
+  border-radius: 50%;
+  box-shadow: 0 0 18px rgba(184, 229, 120, 0.58);
+}
+
+.player-marker-label {
+  position: absolute;
+  left: 50%;
+  top: 20px;
+  display: none;
+  padding: 3px 5px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 3px;
+  background: rgba(3, 7, 4, 0.86);
+  color: #eef4ea;
+  font-family: var(--mono);
+  font-size: 8px;
+  pointer-events: none;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.player-marker:hover .player-marker-label,
+.player-marker.is-selected .player-marker-label {
+  display: block;
 }
 
 .map-empty-state {
@@ -1820,6 +2001,19 @@ select:focus-visible {
   height: 10px;
   border: 1px solid var(--cyan);
   border-radius: 50%;
+}
+
+.legend-red,
+.legend-blue {
+  width: 7px;
+  height: 7px;
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 50%;
+  background: #ff7c72;
+}
+
+.legend-blue {
+  background: #75a8ff;
 }
 
 .map-management-cta {
@@ -3610,7 +3804,7 @@ select:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .survev-live-view {
+  .admin-tactical-map {
     height: 600px;
   }
 
@@ -3715,7 +3909,7 @@ select:focus-visible {
     flex-wrap: wrap;
   }
 
-  .survev-live-view {
+  .admin-tactical-map {
     height: 510px;
     min-height: 510px;
   }
@@ -3855,7 +4049,7 @@ select:focus-visible {
     gap: 6px;
   }
 
-  .survev-live-view {
+  .admin-tactical-map {
     height: 430px;
     min-height: 430px;
   }

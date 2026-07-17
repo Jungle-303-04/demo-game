@@ -37,6 +37,30 @@ export interface ZoneTelemetry {
   nextRadius: number;
 }
 
+export interface MapObjectTelemetry {
+  id: number;
+  type: string;
+  kind: "building" | "structure" | "tree" | "rock" | "wall" | "obstacle";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface MapLayoutTelemetry {
+  width: number;
+  height: number;
+  shoreInset: number;
+  grassInset: number;
+  rivers: Array<{
+    width: number;
+    looped: boolean;
+    points: Array<{ x: number; y: number }>;
+  }>;
+  places: Array<{ name: string; x: number; y: number }>;
+  objects: MapObjectTelemetry[];
+}
+
 export interface RoomMetrics {
   cpuPercent: number;
   memoryMb: number;
@@ -71,6 +95,7 @@ export interface GameRoom {
   tickRate: number;
   uptimeSeconds: number;
   seed: number;
+  mapLayout: MapLayoutTelemetry;
   podHealthy: boolean;
   desiredReplicas: number;
   readyReplicas: number;

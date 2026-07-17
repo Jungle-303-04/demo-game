@@ -66,10 +66,34 @@ interface SnapshotPlayer {
   connected?: boolean;
 }
 
+interface SnapshotMap {
+  name: string;
+  seed?: number;
+  width: number;
+  height: number;
+  shoreInset?: number;
+  grassInset?: number;
+  rivers?: Array<{
+    width: number;
+    looped: boolean;
+    points: Array<{ x: number; y: number }>;
+  }>;
+  places?: Array<{ name: string; x: number; y: number }>;
+  objects?: Array<{
+    id: number;
+    type: string;
+    kind: AdminMapObject["kind"];
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  }>;
+}
+
 interface GameSnapshot {
   roomId: string;
   capturedAt?: number;
-  map?: { name: string; width: number; height: number };
+  map?: SnapshotMap;
   zone?: { x: number; y: number; radius: number; nextX?: number; nextY?: number; nextRadius: number };
   players: SnapshotPlayer[];
   tickP95Ms: number;
@@ -109,6 +133,30 @@ export interface AdminPlayer {
   isBot: boolean;
 }
 
+export interface AdminMapObject {
+  id: number;
+  type: string;
+  kind: "building" | "structure" | "tree" | "rock" | "wall" | "obstacle";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface AdminMapLayout {
+  width: number;
+  height: number;
+  shoreInset: number;
+  grassInset: number;
+  rivers: Array<{
+    width: number;
+    looped: boolean;
+    points: Array<{ x: number; y: number }>;
+  }>;
+  places: Array<{ name: string; x: number; y: number }>;
+  objects: AdminMapObject[];
+}
+
 export interface AdminRoom {
   id: string;
   name: string;
@@ -131,6 +179,7 @@ export interface AdminRoom {
   tickRate: number;
   uptimeSeconds: number;
   seed: number;
+  mapLayout: AdminMapLayout;
   podHealthy: boolean;
   desiredReplicas: number;
   readyReplicas: number;
@@ -312,7 +361,16 @@ export async function buildAdminRooms(
       snapshotCapturedAt: capturedAt,
       tickRate: snapshot?.tickRate ?? (reachable ? 40 : 0),
       uptimeSeconds: snapshot?.uptimeSeconds ?? summary?.uptimeSeconds ?? 0,
-      seed: record.ordinal + 1,
+      seed: snapshot?.map?.seed ?? record.ordinal + 1,
+      mapLayout: {
+        width: mapWidth,
+        height: mapHeight,
+        shoreInset: Math.max(0, snapshot?.map?.shoreInset ?? 0),
+        grassInset: Math.max(0, snapshot?.map?.grassInset ?? 0),
+        rivers: snapshot?.map?.rivers ?? [],
+        places: snapshot?.map?.places ?? [],
+        objects: snapshot?.map?.objects ?? [],
+      },
       podHealthy: reachable && !stale,
       desiredReplicas: active ? 1 : 0,
       readyReplicas: reachable ? 1 : 0,

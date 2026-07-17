@@ -15,6 +15,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   const client = await readFile(join(process.cwd(), "upstream-survev/client/src/main.ts"), "utf8");
   const gameClient = await readFile(join(process.cwd(), "upstream-survev/client/src/game.ts"), "utf8");
   const serverClient = await readFile(join(process.cwd(), "upstream-survev/server/src/game/client.ts"), "utf8");
+  const opsiaRuntime = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/runtime.ts"), "utf8");
   const adminUi = await readFile(join(process.cwd(), "services/ops-console/web/src/GameAdminConsole.tsx"), "utf8");
   const docker = await readFile(join(process.cwd(), "services/game-server/Dockerfile"), "utf8");
   assert.match(gameServer, /new GameServer\(\)/);
@@ -24,8 +25,13 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(client, /matchArgs\.spectator = true/);
   assert.match(gameClient, /m_opsiaMapView/);
   assert.match(serverClient, /client\.spectatorOnly = true/);
-  assert.match(adminUi, /<iframe/);
-  assert.match(adminUi, /roomWatchUrl\(room, player\)/);
+  assert.match(opsiaRuntime, /makeOpsMapSnapshot/);
+  assert.match(opsiaRuntime, /game\.map\.riverDescs/);
+  assert.match(opsiaRuntime, /game\.map\.buildings/);
+  assert.match(adminUi, /function AdminTacticalMap/);
+  assert.match(adminUi, /room\.mapLayout/);
+  assert.match(adminUi, /className="player-marker-core"/);
+  assert.doesNotMatch(adminUi, /<iframe|roomWatchUrl/);
   assert.doesNotMatch(adminUi, /PlayerPerspective|MAP_OBJECTS|MAP_LABELS/);
   assert.match(docker, /WORKDIR \/app\/upstream-survev\/server/);
   assert.match(docker, /CMD \["node", "--enable-source-maps", "dist\/gameServer\.js"\]/);

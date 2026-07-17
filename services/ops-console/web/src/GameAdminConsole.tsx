@@ -158,15 +158,6 @@ function StatusBadge({ status }: { status: RoomStatus }) {
   );
 }
 
-function roomWatchUrl(room: GameRoom, player?: PlayerTelemetry) {
-  const url = new URL(room.serviceUrl, window.location.origin);
-  url.pathname = url.pathname.replace(/\/play\/(room-\d+)\/?$/, "/watch/$1/");
-  url.search = "";
-  url.searchParams.set("view", player ? "player" : "map");
-  if (player) url.searchParams.set("target", player.id);
-  return url.toString();
-}
-
 function RoomMiniMap({ room }: { room: GameRoom }) {
   return (
     <div className="room-mini-map" aria-hidden="true">
@@ -430,8 +421,8 @@ function RoomDirectory({
         <i>→</i>
         <div>
           <span>02</span>
-          <strong>실제 맵 & 관전</strong>
-          <p>원본 PixiJS 전체 맵에서 실제 spectator 시점으로 전환</p>
+          <strong>관리자 전술 맵</strong>
+          <p>실제 맵 좌표 위에서 모든 플레이어를 동시에 추적</p>
         </div>
         <i>→</i>
         <div>
@@ -444,49 +435,195 @@ function RoomDirectory({
   );
 }
 
-function LiveSurvevView({
+function AdminTacticalMap({
   room,
-  player,
+  selectedPlayer,
+  onSelectPlayer,
+  onClearPlayer,
 }: {
   room: GameRoom;
-  player?: PlayerTelemetry;
+  selectedPlayer?: PlayerTelemetry;
+  onSelectPlayer: (playerId: string) => void;
+  onClearPlayer: () => void;
 }) {
-  if (!isRoomActive(room.status) || room.players.length === 0) {
+  const map = room.mapLayout;
+  if (map.width <= 0 || map.height <= 0) {
     return (
-      <div className="survev-live-view is-unavailable">
+      <div className="admin-tactical-map is-unavailable">
         <span className="map-empty-signal" />
-        <strong>
-          {room.status === "stopped"
-            ? "게임 서버가 중지되어 있습니다"
-            : "실제 관전 대상 연결 대기 중"}
-        </strong>
-        <p>Survev 게임 세션에 플레이어가 연결되면 실제 렌더러를 엽니다.</p>
+        <strong>게임 맵 스냅샷 대기 중</strong>
+        <p>Survev 게임 프로세스가 생성한 GameMap 데이터를 기다리고 있습니다.</p>
       </div>
     );
   }
 
+  const coastInset = Math.max(0, map.shoreInset);
+  const grassInset = coastInset + Math.max(0, map.grassInset);
+
   return (
     <div
-      className="survev-live-view"
-      aria-label={player ? `${player.name} 실제 관전 화면` : `${room.name} 실제 전체 맵`}
+      className="admin-tactical-map"
+      aria-label={`${room.name} 실시간 관리자 전술 맵`}
+      data-map-seed={room.seed}
     >
-      <iframe
-        allow="autoplay"
-        key={`${room.id}:${player?.id ?? "map"}`}
-        src={roomWatchUrl(room, player)}
-        title={player ? `${player.name} Survev 실시간 관전` : `${room.name} Survev 실제 전체 맵`}
+      <svg
+        aria-hidden="true"
+        className="admin-map-surface"
+        preserveAspectRatio="none"
+        viewBox={`0 0 ${map.width} ${map.height}`}
+      >
+        <rect className="admin-map-water" width={map.width} height={map.height} />
+        <rect
+          className="admin-map-shore"
+          height={Math.max(0, map.height - coastInset * 2)}
+          width={Math.max(0, map.width - coastInset * 2)}
+          x={coastInset}
+          y={coastInset}
+        />
+        <rect
+          className="admin-map-grass"
+          height={Math.max(0, map.height - grassInset * 2)}
+          width={Math.max(0, map.width - grassInset * 2)}
+          x={grassInset}
+          y={grassInset}
+        />
+        <g className="admin-map-rivers">
+          {map.rivers.map((river, index) => {
+            const points = river.points.map((point) => `${point.x},${point.y}`).join(" ");
+            const closedPoints = river.looped && river.points[0]
+              ? `${points} ${river.points[0].x},${river.points[0].y}`
+              : points;
+            return (
+              <g key={`${index}:${river.width}:${river.points.length}`}>
+                <polyline
+                  className="admin-map-river-shore"
+                  fill="none"
+                  points={closedPoints}
+                  strokeWidth={Math.max(4, river.width * 2 + 9)}
+                />
+                <polyline
+                  className="admin-map-river-water"
+                  fill="none"
+                  points={closedPoints}
+                  strokeWidth={Math.max(2, river.width * 2)}
+                />
+              </g>
+            );
+          })}
+        </g>
+        <g className="admin-map-objects">
+          {map.objects.map((object) => {
+            const className = `admin-map-object admin-map-object-${object.kind}`;
+            if (object.kind === "tree" || object.kind === "rock") {
+              return (
+                <ellipse
+                  className={className}
+                  cx={object.x}
+                  cy={object.y}
+                  key={`${object.kind}:${object.id}`}
+                  rx={Math.max(1.5, object.width / 2)}
+                  ry={Math.max(1.5, object.height / 2)}
+                />
+              );
+            }
+            return (
+              <rect
+                className={className}
+                height={Math.max(1, object.height)}
+                key={`${object.kind}:${object.id}`}
+                width={Math.max(1, object.width)}
+                x={object.x - object.width / 2}
+                y={object.y - object.height / 2}
+              />
+            );
+          })}
+        </g>
+        <g className="admin-map-places">
+          {map.places.map((place) => (
+            <text
+              key={place.name}
+              x={place.x * map.width}
+              y={place.y * map.height}
+            >
+              {place.name}
+            </text>
+          ))}
+        </g>
+      </svg>
+      <div
+        className="zone-ring zone-ring-current"
+        style={
+          {
+            "--zone-size": `${room.zone.radius * 2}%`,
+            "--zone-x": `${room.zone.x}%`,
+            "--zone-y": `${room.zone.y}%`,
+          } as StyleWithVariables
+        }
       />
-      <div className="survev-live-source">
+      <div
+        className="zone-ring zone-ring-next"
+        style={
+          {
+            "--zone-size": `${room.zone.nextRadius * 2}%`,
+            "--zone-x": `${room.zone.nextX}%`,
+            "--zone-y": `${room.zone.nextY}%`,
+          } as StyleWithVariables
+        }
+      />
+      {room.players.map((player) => (
+        <button
+          aria-label={`${player.name} ${player.squad} 플레이어 위치`}
+          className={`player-marker ${player.isBot ? "player-marker-bot" : ""} ${
+            selectedPlayer?.id === player.id ? "is-selected" : ""
+          }`}
+          key={player.id}
+          onClick={() => onSelectPlayer(player.id)}
+          style={
+            {
+              left: `${player.x}%`,
+              top: `${player.y}%`,
+              "--player-color": player.color,
+              "--player-rotation": `${player.rotation}rad`,
+            } as StyleWithVariables
+          }
+          title={`${player.name} · ${player.squad} · HP ${Math.round(player.health)}`}
+          type="button"
+        >
+          <span className="player-marker-core" />
+          <span className="player-marker-direction" />
+          <span className="player-marker-label">{player.name}</span>
+        </button>
+      ))}
+      <div className="admin-map-source">
         <span>
           <i />
-          SURVEV PIXIJS · LIVE
+          GAME PROCESS · LIVE
         </span>
-        <strong>{player ? player.name : "SERVER MAP STREAM"}</strong>
-        <small>
-          {player
-            ? `${player.isBot ? "LOAD TEST BOT" : "CONNECTED PLAYER"} · ${player.squad}`
-            : "실제 MapMsg · 실제 게임 오브젝트 · 실제 가스존"}
-        </small>
+        <strong>ADMIN TACTICAL VIEW</strong>
+        <small>실제 GameMap · 플레이어 좌표 · 가스존</small>
+      </div>
+      {selectedPlayer && (
+        <div className="admin-map-selection">
+          <div>
+            <i style={{ background: selectedPlayer.color }} />
+            <span>SELECTED PLAYER</span>
+          </div>
+          <strong>{selectedPlayer.name}</strong>
+          <small>
+            {selectedPlayer.squad} · HP {Math.round(selectedPlayer.health)} · {selectedPlayer.weapon}
+          </small>
+          <button onClick={onClearPlayer} type="button">선택 해제</button>
+        </div>
+      )}
+      {room.players.length === 0 && (
+        <div className="admin-map-no-players">연결된 플레이어 없음</div>
+      )}
+      <div className="map-compass"><i />N</div>
+      <div className="map-scale">MAP {Math.round(map.width)} × {Math.round(map.height)}</div>
+      <div className="map-legend">
+        <span><i className="legend-red" />RED</span>
+        <span><i className="legend-blue" />BLUE</span>
+        <span><i className="legend-zone" />GAS</span>
       </div>
     </div>
   );
@@ -591,7 +728,7 @@ function PlayerRoster({
               <i style={{ width: `${player.health}%` }} />
             </span>
             <span className="player-list-kills">{player.kills}K</span>
-            <span className="player-watch-label">관전</span>
+            <span className="player-watch-label">찾기</span>
           </button>
         ))}
         {filteredPlayers.length === 0 && (
@@ -601,7 +738,7 @@ function PlayerRoster({
         )}
       </div>
       <div className="roster-hint">
-        맵 마커나 목록을 누르면 해당 플레이어의 2D 시점으로 전환됩니다.
+        맵 마커나 목록을 누르면 관리자 전술 맵에서 해당 플레이어를 강조합니다.
       </div>
     </aside>
   );
@@ -625,7 +762,6 @@ function WorldTab({
 
   function selectPlayerFromRoster(playerId: string) {
     onSelectPlayer(playerId);
-    setIsRosterOpen(false);
   }
 
   return (
@@ -638,19 +774,9 @@ function WorldTab({
     >
       <div className="world-toolbar">
         <div>
-          <span className="eyebrow">
-            {selectedPlayer ? "LIVE PIXIJS SPECTATOR" : "LIVE PIXIJS MAP"}
-          </span>
-          <h2>
-            {selectedPlayer
-              ? `${selectedPlayer.name} 실제 플레이어 시점`
-              : "실제 게임 전체 맵"}
-          </h2>
-          <p>
-            {selectedPlayer
-              ? "별도 CSS 재구성 없이 Survev 서버의 spectator 스트림을 실제 PixiJS 클라이언트로 렌더링합니다."
-              : "Survev 서버가 전송한 실제 MapMsg와 게임 오브젝트를 원본 PixiJS 전체 맵으로 표시합니다."}
-          </p>
+          <span className="eyebrow">LIVE ADMIN TACTICAL MAP</span>
+          <h2>실시간 관리자 전술 맵</h2>
+          <p>게임 프로세스의 실제 GameMap과 모든 플레이어 좌표를 한 화면에서 동시에 추적합니다.</p>
         </div>
         <div className="world-toolbar-actions">
           <a
@@ -661,27 +787,24 @@ function WorldTab({
           >
             실제 게임 열기 ↗
           </a>
-          {selectedPlayer ? (
+          {selectedPlayer && (
             <button
               className="button button-secondary"
               onClick={onClearPlayer}
               type="button"
             >
-              ← 전체 맵으로
+              선택 해제
             </button>
-          ) : (
-            <>
-              <span>
-                사람 <strong>{humans}</strong>
-              </span>
-              <span>
-                봇 <strong>{bots}</strong>
-              </span>
-              <span>
-                생존 <strong>{room.players.length}</strong>
-              </span>
-            </>
           )}
+          <span>
+            사람 <strong>{humans}</strong>
+          </span>
+          <span>
+            봇 <strong>{bots}</strong>
+          </span>
+          <span>
+            추적 <strong>{room.players.length}</strong>
+          </span>
           <button
             aria-controls="player-roster"
             aria-expanded={isRosterOpen}
@@ -710,7 +833,12 @@ function WorldTab({
             <span>Seed {room.seed}</span>
             <span>{room.tickRate.toFixed(1)}Hz measured</span>
           </div>
-          <LiveSurvevView room={room} player={selectedPlayer} />
+          <AdminTacticalMap
+            room={room}
+            selectedPlayer={selectedPlayer}
+            onSelectPlayer={onSelectPlayer}
+            onClearPlayer={onClearPlayer}
+          />
           {room.status === "stopped" && (
             <button
               className="map-management-cta"
@@ -1535,7 +1663,7 @@ function RoomDetail({
         >
           <span className="tab-number">01</span>
           <span>
-            <strong>실제 게임 맵 & 플레이어 관전</strong>
+            <strong>관리자 전술 맵 & 플레이어 추적</strong>
             <small>전체 위치에서 한 명의 2D 시점까지</small>
           </span>
         </button>
