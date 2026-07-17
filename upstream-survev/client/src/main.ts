@@ -77,6 +77,9 @@ export class Application {
     initialized = false;
     active = false;
     readonly opsiaWatch = /^\/watch\/room-\d+\/?$/.test(window.location.pathname);
+    readonly opsiaWatchView = new URLSearchParams(window.location.search).get("view") === "map"
+        ? "map"
+        : "player";
     // A stable browser token is sent only to the real survev game-server's
     // reconnect adapter. It is not an account and is never used by Opsia.
     // Broadcast tabs deliberately use an ephemeral identity so changing a
@@ -105,6 +108,15 @@ export class Application {
     }
 
     constructor() {
+        if (this.opsiaWatch) {
+            document.documentElement.classList.add(
+                "opsia-watch",
+                `opsia-watch-${this.opsiaWatchView}`,
+            );
+            document.title = this.opsiaWatchView === "map"
+                ? "Survev live map"
+                : "Survev player spectator";
+        }
         if (!this.opsiaWatch) {
             localStorage.setItem("opsia-survev-session", this.sessionId);
         }

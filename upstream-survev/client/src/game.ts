@@ -101,6 +101,8 @@ export class Game {
     m_spectating!: boolean;
     readonly m_opsiaMapView = /^\/watch\/room-\d+\/?$/.test(window.location.pathname)
         && new URLSearchParams(window.location.search).get("view") === "map";
+    readonly m_opsiaPlayerView = /^\/watch\/room-\d+\/?$/.test(window.location.pathname)
+        && new URLSearchParams(window.location.search).get("view") === "player";
     m_inputMsgTimeout!: number;
     m_prevInputMsg!: net.InputMsg;
     m_playingTicker!: number;
@@ -1291,6 +1293,9 @@ export class Game {
                 this.m_bulletBarn.onMapLoad(this.m_map);
                 this.m_particleBarn.onMapLoad(this.m_map);
                 this.m_uiManager.onMapLoad(this.m_map, this.m_camera);
+                if (this.m_opsiaPlayerView) {
+                    this.m_uiManager.hideMiniMap();
+                }
                 if (this.m_map.perkMode) {
                     const player = this.m_activePlayer as Player | undefined;
                     if (!player?.m_netData.m_role) {

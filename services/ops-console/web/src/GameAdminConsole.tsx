@@ -165,12 +165,12 @@ function StatusBadge({ status }: { status: RoomStatus }) {
   );
 }
 
-function roomWatchUrl(room: GameRoom, player: PlayerTelemetry) {
+function roomWatchUrl(room: GameRoom, player?: PlayerTelemetry) {
   const url = new URL(room.serviceUrl, window.location.origin);
   url.pathname = url.pathname.replace(/\/play\/(room-\d+)\/?$/, "/watch/$1/");
   url.search = "";
-  url.searchParams.set("view", "player");
-  url.searchParams.set("target", player.id);
+  url.searchParams.set("view", player ? "player" : "map");
+  if (player) url.searchParams.set("target", player.id);
   return url.toString();
 }
 
@@ -441,6 +441,92 @@ function AdminTacticalMap({
         <span className="map-empty-signal" />
         <strong>게임 맵 스냅샷 대기 중</strong>
         <p>Survev 게임 프로세스가 생성한 GameMap 데이터를 기다리고 있습니다.</p>
+      </div>
+    );
+  }
+
+  if (isRoomActive(room.status)) {
+    const mapAspect = map.width / map.height;
+    const watchUrl = roomWatchUrl(room);
+
+    return (
+      <div
+        className="admin-tactical-map admin-tactical-map-game-render"
+        aria-label={`${room.name} 실제 게임 렌더 관리자 맵`}
+        data-map-seed={room.seed}
+      >
+        <div
+          className="admin-map-viewport"
+          data-map-native-size={`${map.width}x${map.height}`}
+          style={
+            {
+              "--map-aspect": `${map.width} / ${map.height}`,
+              "--map-width-by-height": `${mapAspect * 100}cqh`,
+              "--map-height-by-width": `${(1 / mapAspect) * 100}cqw`,
+            } as StyleWithVariables
+          }
+        >
+          <iframe
+            allow="autoplay; fullscreen"
+            aria-hidden="true"
+            className="admin-map-game-frame"
+            src={watchUrl}
+            tabIndex={-1}
+            title={`${room.name} Survev 실제 전체 맵 렌더`}
+          />
+          <div className="admin-map-telemetry-layer">
+            <div
+              className="zone-ring zone-ring-current"
+              style={
+                {
+                  "--zone-size": `${room.zone.radius * 2}%`,
+                  "--zone-x": `${room.zone.x}%`,
+                  "--zone-y": `${room.zone.y}%`,
+                } as StyleWithVariables
+              }
+            />
+            <div
+              className="zone-ring zone-ring-next"
+              style={
+                {
+                  "--zone-size": `${room.zone.nextRadius * 2}%`,
+                  "--zone-x": `${room.zone.nextX}%`,
+                  "--zone-y": `${room.zone.nextY}%`,
+                } as StyleWithVariables
+              }
+            />
+            {room.players.map((player) => (
+              <button
+                aria-label={`${player.name} ${player.squad} 플레이어 위치`}
+                className={`player-marker ${player.isBot ? "player-marker-bot" : ""}`}
+                key={player.id}
+                onClick={() => onSelectPlayer(player.id)}
+                style={
+                  {
+                    left: `${player.x}%`,
+                    top: `${player.y}%`,
+                    "--player-color": player.color,
+                    "--player-rotation": `${player.rotation}rad`,
+                  } as StyleWithVariables
+                }
+                title={`${player.name} · ${player.squad} · HP ${Math.round(player.health)}`}
+                type="button"
+              >
+                <span className="player-marker-core" />
+                <span className="player-marker-direction" />
+                <span className="player-marker-label">{player.name}</span>
+              </button>
+            ))}
+          </div>
+          <div className="admin-map-source">
+            <span><i />GAME CANVAS · LIVE</span>
+            <strong>REAL SURVEV MAP RENDER</strong>
+            <small>실제 PixiJS 게임 렌더 · 관리자 플레이어 오버레이</small>
+          </div>
+          {room.players.length === 0 && (
+            <div className="admin-map-no-players">연결된 플레이어 없음</div>
+          )}
+        </div>
       </div>
     );
   }
@@ -1771,7 +1857,7 @@ function RoomDetail({
   }
 
   return (
-    <section className="room-detail">
+    <section className={`room-detail ${activeTab === "world" ? "is-world-view" : ""}`}>
       <div className="room-detail-header">
         <button className="back-to-rooms" onClick={onBack} type="button">
           <span>←</span>
@@ -2475,7 +2561,11 @@ export function GameAdminConsole() {
   const connected = connection === "connected";
 
   return (
-    <main className="console-shell">
+    <main
+      className={`console-shell ${
+        selectedRoom && activeTab === "world" ? "is-world-focused" : ""
+      }`}
+    >
       <header className="console-topbar">
         <button
           className="console-brand"
