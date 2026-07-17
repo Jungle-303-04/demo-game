@@ -2,6 +2,7 @@ import fs from "node:fs";
 import { platform } from "node:os";
 import path from "node:path";
 import { Config } from "../config.ts";
+import { makeOpsSnapshot, opsiaEnabled, OpsiaSnapshotStore } from "../opsia/runtime.ts";
 import { apiPrivateRouter } from "../utils/apiRouter.ts";
 import { logErrorToWebhook } from "../utils/logger.ts";
 import type { SaveGameBody } from "../utils/types.ts";
@@ -9,7 +10,6 @@ import type { Client } from "./client.ts";
 import { Game } from "./game.ts";
 import { type ProcessMsg, ProcessMsgType } from "./ipcTypes.ts";
 import { ClientSocket } from "./socket.ts";
-import { makeOpsSnapshot, OpsiaSnapshotStore, opsiaEnabled } from "../opsia/runtime.ts";
 
 let game: ServerGame | undefined;
 
@@ -39,10 +39,15 @@ class ServerGame extends Game {
     }
 
     async stopOpsia(): Promise<void> {
+        this.opsiaReady = false;
         await this.opsiaStore?.stop();
     }
 
     async resetOpsia(): Promise<void> {
+        // Pause ticks, telemetry and periodic saves synchronously before the
+        // first await. The store's Redis client orders any already-issued save
+        // before the guarded clear below.
+        this.opsiaReady = false;
         await this.opsiaStore?.clearSnapshot();
         await this.stopOpsia();
     }
@@ -185,9 +190,15 @@ const gracefulExit = async () => {
         process.exit();
     }
 };
-process.on("disconnect", () => { void gracefulExit(); });
-process.on("SIGTERM", () => { void gracefulExit(); });
-process.on("SIGINT", () => { void gracefulExit(); });
+process.on("disconnect", () => {
+    void gracefulExit();
+});
+process.on("SIGTERM", () => {
+    void gracefulExit();
+});
+process.on("SIGINT", () => {
+    void gracefulExit();
+});
 
 const socketMsgs: Array<{
     socketId: string;
@@ -287,15 +298,54 @@ process.on("message", (msg: ProcessMsg) => {
             const previous = game;
             for (const socket of socketIdToSocket.values()) socket.close();
             socketIdToSocket.clear();
-            void previous.resetOpsia().finally(() => {
-                game = new ServerGame(previous.id, previous.config);
-                void game.initializeOpsia().catch((error) => {
+            void (async () => {
+                try {
+                    await previous.resetOpsia();
+                    game = new ServerGame(previous.id, previous.config);
+                    await game.initializeOpsia();
+                    sendMsg({
+                        type: ProcessMsgType.OpsiaResetResult,
+                        requestId: msg.requestId,
+                        ok: true,
+                        resetAt: Date.now(),
+                    });
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : "opsia_reset_failed";
                     console.error("Opsia room reset failed", error);
+                    sendMsg({
+                        type: ProcessMsgType.OpsiaResetResult,
+                        requestId: msg.requestId,
+                        ok: false,
+                        error: message,
+                    });
                     process.exit(1);
-                });
-            });
+                }
+            })();
             break;
         }
+        case ProcessMsgType.OpsiaSave:
+            if (!game.isOpsiaReady()) {
+                sendMsg({
+                    type: ProcessMsgType.OpsiaSaveResult,
+                    requestId: msg.requestId,
+                    ok: false,
+                    error: "opsia_not_ready",
+                });
+                break;
+            }
+            void game.snapshotOpsia().then(() => {
+                sendMsg({
+                    type: ProcessMsgType.OpsiaSaveResult,
+                    requestId: msg.requestId,
+                    ok: true,
+                    savedAt: Date.now(),
+                });
+            }).catch((error) => {
+                const message = error instanceof Error ? error.message : "opsia_snapshot_failed";
+                console.error("Opsia manual snapshot failed", error);
+                sendMsg({ type: ProcessMsgType.OpsiaSaveResult, requestId: msg.requestId, ok: false, error: message });
+            });
+            break;
     }
 });
 
@@ -324,17 +374,31 @@ if (platform() === "win32") {
     };
 }
 
-let lastOpsiaSnapshotAt = 0;
+let lastOpsiaSnapshotAt = Date.now();
 let lastOpsiaSaveAt = 0;
+let opsiaTickWindowStartedAt = performance.now();
+let opsiaTickSamples: number[] = [];
 setGameInterval(() => {
     const startedAt = performance.now();
     game?.update();
     if (game && opsiaEnabled() && game.isOpsiaReady()) {
         const now = Date.now();
         const tickMs = performance.now() - startedAt;
+        opsiaTickSamples.push(tickMs);
         if (now - lastOpsiaSnapshotAt >= 500) {
             lastOpsiaSnapshotAt = now;
-            sendMsg({ type: ProcessMsgType.OpsiaSnapshot, snapshot: makeOpsSnapshot(game, tickMs) });
+            const sampledAt = performance.now();
+            const elapsedMs = Math.max(1, sampledAt - opsiaTickWindowStartedAt);
+            const sortedTicks = [...opsiaTickSamples].sort((a, b) => a - b);
+            const p95Index = Math.max(0, Math.ceil(sortedTicks.length * 0.95) - 1);
+            const tickP95Ms = sortedTicks[p95Index] ?? tickMs;
+            const measuredTickRate = opsiaTickSamples.length * 1000 / elapsedMs;
+            sendMsg({
+                type: ProcessMsgType.OpsiaSnapshot,
+                snapshot: makeOpsSnapshot(game, tickP95Ms, measuredTickRate),
+            });
+            opsiaTickWindowStartedAt = sampledAt;
+            opsiaTickSamples = [];
         }
         if (now - lastOpsiaSaveAt >= 1000) {
             lastOpsiaSaveAt = now;

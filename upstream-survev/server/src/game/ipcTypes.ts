@@ -14,16 +14,32 @@ export interface GameData {
 
 export interface OpsiaSnapshotData {
     roomId: string;
+    capturedAt: number;
+    map: { name: string; width: number; height: number };
+    zone: { x: number; y: number; radius: number; nextX: number; nextY: number; nextRadius: number };
     players: Array<{
         sessionId: string;
         nickname: string;
         team: "red" | "blue";
         x: number;
         y: number;
+        vx: number;
+        vy: number;
         alive: boolean;
         score: number;
+        rotation: number;
+        health: number;
+        armor: number;
+        weapon: string;
+        ammo: number;
+        isBot: boolean;
+        connected: boolean;
     }>;
-    tickMs: number;
+    tickP95Ms: number;
+    tickRate: number;
+    cpuPercent: number;
+    memoryMb: number;
+    uptimeSeconds: number;
     strictMode: boolean;
     inputAccepted: number;
     inputRejected: number;
@@ -40,6 +56,9 @@ export enum ProcessMsgType {
     SocketClose,
     OpsiaSnapshot,
     OpsiaReset,
+    OpsiaResetResult,
+    OpsiaSave,
+    OpsiaSaveResult,
 }
 
 export interface CreateGameMsg {
@@ -103,6 +122,28 @@ export interface OpsiaSnapshotMsg {
 
 export interface OpsiaResetMsg {
     type: ProcessMsgType.OpsiaReset;
+    requestId: string;
+}
+
+export interface OpsiaResetResultMsg {
+    type: ProcessMsgType.OpsiaResetResult;
+    requestId: string;
+    ok: boolean;
+    resetAt?: number;
+    error?: string;
+}
+
+export interface OpsiaSaveMsg {
+    type: ProcessMsgType.OpsiaSave;
+    requestId: string;
+}
+
+export interface OpsiaSaveResultMsg {
+    type: ProcessMsgType.OpsiaSaveResult;
+    requestId: string;
+    ok: boolean;
+    savedAt?: number;
+    error?: string;
 }
 
 export type ProcessMsg =
@@ -115,4 +156,7 @@ export type ProcessMsg =
     | SocketServerMsg
     | SocketCloseMsg
     | OpsiaSnapshotMsg
-    | OpsiaResetMsg;
+    | OpsiaResetMsg
+    | OpsiaResetResultMsg
+    | OpsiaSaveMsg
+    | OpsiaSaveResultMsg;

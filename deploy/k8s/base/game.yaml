@@ -24,7 +24,7 @@ spec:
       containers:
         - name: game-server
           image: ghcr.io/jungle-303-04/demo-game/game-server:stable
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           command: ["sh", "-ec", "ordinal=${HOSTNAME##*-}; export ROOM_ID=room-${ordinal}; export POD_NAME=${HOSTNAME}; exec node --enable-source-maps dist/gameServer.js"]
           env:
             - { name: REDIS_URL, value: redis://redis:6379 }
@@ -33,6 +33,9 @@ spec:
             - { name: OPSIA_ROOM, value: "true" }
             - { name: OPSIA_INFINITE, value: "true" }
             - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
+            - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
+            - name: OPS_CONTROL_TOKEN
+              valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
           ports: [{ containerPort: 8001, name: http }]
           resources:
             requests: { cpu: 500m, memory: 1Gi }

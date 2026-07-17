@@ -13,3 +13,24 @@ test("registry fixes room IDs to StatefulSet ordinals and only deactivates high 
   assert.equal(rooms[1]?.status, "waiting");
   assert.equal(rooms[2]?.status, "inactive");
 });
+
+test("registry preserves room metadata and does not expose mutable spec references", async () => {
+  const registry = new MemoryRoomRegistry();
+  const reconciler = new RoomReconciler(registry);
+  await reconciler.reconcile(1);
+  const original = await registry.get("room-0");
+  assert.ok(original?.spec);
+  original.spec.name = "mutated outside registry";
+  assert.equal((await registry.get("room-0"))?.spec?.name, "Faction Room 1");
+
+  const stored = await registry.get("room-0");
+  assert.ok(stored?.spec);
+  stored.spec.name = "Production Faction";
+  stored.joinLocked = true;
+  await registry.put(stored);
+  await reconciler.reconcile(1);
+  const reconciled = await registry.get("room-0");
+  assert.equal(reconciled?.spec?.name, "Production Faction");
+  assert.equal(reconciled?.joinLocked, true);
+  assert.equal(reconciled?.spec?.mode, "Faction 50v50");
+});

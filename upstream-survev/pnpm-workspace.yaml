@@ -7,6 +7,9 @@ allowBuilds:
   workerd: true
 ignoreWorkspaceRootCheck: true
 minimumReleaseAge: 10080
+overrides:
+  '@esbuild-kit/core-utils>esbuild': 0.25.12
+  undici: 6.27.0
 packages:
   - server/
   - shared/

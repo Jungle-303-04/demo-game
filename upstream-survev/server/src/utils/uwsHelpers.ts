@@ -54,9 +54,11 @@ export const uwsHelpers = {
      * Get an IP from an uWebsockets HTTP response
      */
     getIp(res: HttpResponse, req: HttpRequest, proxyHeader?: string) {
-        const ip = proxyHeader
-            ? req.getHeader(proxyHeader.toLowerCase())
-            : textDecoder.decode(res.getRemoteAddressAsText());
+        // The trusted gateway overwrites the configured header. Direct local
+        // Compose traffic has no proxy header, so safely fall back to the
+        // transport peer instead of accepting a client-controlled XFF chain.
+        const proxied = proxyHeader ? req.getHeader(proxyHeader.toLowerCase()) : "";
+        const ip = proxied || textDecoder.decode(res.getRemoteAddressAsText());
 
         if (!ip || isIP(ip) == 0) return undefined;
         return ip;

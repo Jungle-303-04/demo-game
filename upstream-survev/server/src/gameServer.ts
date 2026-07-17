@@ -3,8 +3,9 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { Counter, Gauge, Histogram, Registry } from "prom-client";
-import { App, SSLApp, type WebSocket } from "uWebSockets.js";
+import { Counter, Gauge, Registry } from "prom-client";
+import { createClient, type RedisClientType } from "redis";
+import { App, type HttpRequest, type HttpResponse, SSLApp, type WebSocket } from "uWebSockets.js";
 import { z } from "zod";
 import pkgJson from "../../package.json" with { type: "json" };
 import { GameConfig } from "../../shared/gameConfig.ts";
@@ -12,6 +13,7 @@ import * as net from "../../shared/net/net.ts";
 import { Config } from "./config.ts";
 import { GameProcessManager, type GameSocketData, ProcState } from "./game/gameProcessManager.ts";
 import type { OpsiaSnapshotData } from "./game/ipcTypes.ts";
+import { controlTokenMatches, readControlToken } from "./opsia/controlPlaneAuth.ts";
 import { apiPrivateRouter } from "./utils/apiRouter.ts";
 import { GIT_VERSION } from "./utils/gitRevision.ts";
 import { logErrorToWebhook, ServerLogger } from "./utils/logger.ts";
@@ -34,17 +36,54 @@ const zOpsiaFindGame = z.object({
     opsiaSessionId: z.string().min(16).max(128).optional(),
 }).passthrough();
 
+const controlToken = readControlToken();
+const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+        return await Promise.race([
+            operation,
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+};
+
 class OpsiaMetrics {
     readonly registry = new Registry();
-    private readonly tick = new Histogram({ name: "tick_duration_ms", help: "survev Game.update duration", labelNames: ["room"] as const, registers: [this.registry], buckets: [1, 5, 10, 20, 40, 80, 160] });
-    private readonly online = new Gauge({ name: "players_online", help: "players in the real survev playerBarn", labelNames: ["room"] as const, registers: [this.registry] });
-    private readonly alive = new Gauge({ name: "players_alive", help: "living players in the real survev playerBarn", labelNames: ["room"] as const, registers: [this.registry] });
-    private readonly inputs = new Counter({ name: "player_input_rate_total", help: "decoded survev input outcomes", labelNames: ["room", "outcome"] as const, registers: [this.registry] });
+    private readonly tickP95 = new Gauge({
+        name: "tick_p95_ms",
+        help: "500ms-window p95 of survev Game.update duration",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly online = new Gauge({
+        name: "players_online",
+        help: "players in the real survev playerBarn",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly alive = new Gauge({
+        name: "players_alive",
+        help: "living players in the real survev playerBarn",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly inputs = new Counter({
+        name: "player_input_rate_total",
+        help: "decoded survev input outcomes",
+        labelNames: ["room", "outcome"] as const,
+        registers: [this.registry],
+    });
 
     observe(snapshot: OpsiaSnapshotData): void {
-        this.tick.labels(snapshot.roomId).observe(snapshot.tickMs);
-        this.online.labels(snapshot.roomId).set(snapshot.players.length);
-        this.alive.labels(snapshot.roomId).set(snapshot.players.filter((player) => player.alive).length);
+        this.tickP95.labels(snapshot.roomId).set(snapshot.tickP95Ms);
+        this.online.labels(snapshot.roomId).set(snapshot.players.filter((player) => player.connected).length);
+        this.alive.labels(snapshot.roomId).set(
+            snapshot.players.filter((player) => player.connected && player.alive).length,
+        );
         if (snapshot.inputAccepted) this.inputs.labels(snapshot.roomId, "accepted").inc(snapshot.inputAccepted);
         if (snapshot.inputRejected) this.inputs.labels(snapshot.roomId, "rejected").inc(snapshot.inputRejected);
     }
@@ -70,9 +109,31 @@ class GameServer {
 
     readonly manager = new GameProcessManager();
     readonly metrics = new OpsiaMetrics();
+    private joinLocked = false;
+    private joinLockClient: RedisClientType | undefined;
+    private readonly joinLockKey = `room:${process.env.ROOM_ID ?? "room-0"}:join-lock`;
 
     constructor() {
         this.manager.onOpsiaSnapshot((snapshot) => this.metrics.observe(snapshot));
+    }
+
+    async initializeOpsiaControls(): Promise<void> {
+        const redisUrl = process.env.REDIS_URL;
+        if (!redisUrl) return;
+        this.joinLockClient = createClient({ url: redisUrl });
+        this.joinLockClient.on("error", (error) => this.logger.error("Join-lock Redis error", error));
+        await this.joinLockClient.connect();
+        await this.refreshJoinLock();
+        const refreshTimer = setInterval(() => {
+            void this.refreshJoinLock().catch((error) => this.logger.error("Join-lock refresh failed", error));
+        }, 1_000);
+        refreshTimer.unref();
+    }
+
+    private async refreshJoinLock(): Promise<void> {
+        if (!this.joinLockClient) return;
+        if (!this.joinLockClient.isOpen) throw new Error("join_lock_store_unavailable");
+        this.joinLocked = await this.joinLockClient.get(this.joinLockKey) === "1";
     }
 
     async findGame(body: FindGamePrivateBody): Promise<FindGamePrivateRes> {
@@ -101,36 +162,56 @@ class GameServer {
         };
     }
 
-    async findOpsiaGame(body: z.infer<typeof zOpsiaFindGame>, host: string, ip: string) {
+    async findOpsiaGame(body: z.infer<typeof zOpsiaFindGame>, host: string, ip: string, useHttps = this.region.https) {
+        // Fail closed and, critically, finish the HTTP response if Redis is
+        // unavailable. A join-lock lookup must never leave admission hanging.
+        await withTimeout(this.refreshJoinLock(), 1_500, "join_lock_unavailable");
+        if (this.joinLocked) return { error: "room_join_locked" };
         // A room-pod is always the live 50v50 faction game. The client still
         // renders upstream's mode menu, but no request can create another map.
-        const mode = Config.modes.find((candidate) => candidate.mapName === "faction") ?? Config.modes[body.gameModeIdx] ?? Config.modes[0];
+        const mode = Config.modes.find((candidate) => candidate.mapName === "faction") ?? Config.modes[body.gameModeIdx]
+            ?? Config.modes[0];
         if (!mode) return { error: "mode_disabled" };
         const token = randomUUID();
-        const result = await this.findGame({
-            region: this.regionId,
-            version: body.version,
-            autoFill: body.autoFill,
-            mapName: mode.mapName,
-            teamMode: mode.teamMode,
-            playerData: [{
-                token,
-                userId: null,
-                ip,
-                opsiaSessionId: body.opsiaSessionId,
-            }],
-        });
+        let result: FindGamePrivateRes;
+        try {
+            result = await this.findGame({
+                region: this.regionId,
+                version: body.version,
+                autoFill: body.autoFill,
+                mapName: mode.mapName,
+                teamMode: mode.teamMode,
+                playerData: [{
+                    token,
+                    userId: null,
+                    ip,
+                    opsiaSessionId: body.opsiaSessionId,
+                }],
+            });
+        } catch (error) {
+            if (error instanceof Error && error.message === "full") return { error: "full" };
+            throw error;
+        }
         if ("error" in result) return result;
         return {
             res: [{
                 zone: this.regionId,
                 gameId: result.gameId,
-                useHttps: this.region.https,
+                useHttps,
                 hosts: [host],
                 addrs: [host],
                 data: token,
             }],
         };
+    }
+
+    async setJoinLocked(locked: boolean): Promise<void> {
+        await this.joinLockClient?.set(this.joinLockKey, locked ? "1" : "0");
+        this.joinLocked = locked;
+    }
+
+    isJoinLocked(): boolean {
+        return this.joinLocked;
     }
 
     async sendData() {
@@ -211,6 +292,7 @@ class GameServer {
 }
 
 const server = new GameServer();
+await server.initializeOpsiaControls();
 
 if (process.env.OPSIA_ROOM === "true") {
     server.manager.newGame(Config.modes.find((mode) => mode.mapName === "faction") ?? Config.modes[0]!);
@@ -225,6 +307,15 @@ const app = Config.gameServer.ssl
     })
     : App();
 
+const authorizeOpsRequest = (res: HttpResponse, req: HttpRequest): boolean => {
+    if (controlTokenMatches(req.getHeader("authorization"), controlToken)) return true;
+    res.writeStatus("401 Unauthorized")
+        .writeHeader("Content-Type", "application/json")
+        .writeHeader("WWW-Authenticate", "Bearer realm=\"demo-game-control\"")
+        .end(JSON.stringify({ error: "unauthorized" }));
+    return false;
+};
+
 app.get("/health", (res) => {
     res.writeStatus("200 OK");
     res.write("OK");
@@ -234,14 +325,20 @@ app.get("/health", (res) => {
 app.get("/healthz", (res) => {
     if (process.env.OPSIA_ROOM === "true" && !server.manager.isOpsiaReady()) {
         res.writeStatus("503 Service Unavailable");
-        uwsHelpers.returnJson(res, { status: "initializing", roomId: process.env.ROOM_ID ?? "room-0", runtime: "survev-gameServer" });
+        uwsHelpers.returnJson(res, {
+            status: "initializing",
+            roomId: process.env.ROOM_ID ?? "room-0",
+            runtime: "survev-gameServer",
+        });
         return;
     }
     uwsHelpers.returnJson(res, { status: "ok", roomId: process.env.ROOM_ID ?? "room-0", runtime: "survev-gameServer" });
 });
 
 app.get("/metrics", async (res) => {
-    res.onAborted(() => { res.aborted = true; });
+    res.onAborted(() => {
+        res.aborted = true;
+    });
     const text = await server.metrics.registry.metrics();
     if (!res.aborted) res.cork(() => res.writeHeader("Content-Type", server.metrics.registry.contentType).end(text));
 });
@@ -268,15 +365,22 @@ app.get("/summary", (res) => {
     uwsHelpers.returnJson(res, {
         roomId: process.env.ROOM_ID ?? "room-0",
         status: server.manager.isOpsiaReady() ? "running" : "initializing",
-        players: snapshot?.players.length ?? 0,
-        alive: snapshot?.players.filter((player) => player.alive).length ?? 0,
+        players: snapshot?.players.filter((player) => player.connected).length ?? 0,
+        alive: snapshot?.players.filter((player) => player.connected && player.alive).length ?? 0,
         podName: process.env.POD_NAME ?? "game-0",
         strictMode: process.env.STRICT_MODE === "true",
-        qrUrl: `${process.env.PUBLIC_BASE_URL ?? "http://localhost:8090"}/play/${process.env.ROOM_ID ?? "room-0"}`,
+        joinLocked: server.isJoinLocked(),
+        capturedAt: snapshot?.capturedAt,
+        tickP95Ms: snapshot?.tickP95Ms,
+        cpuPercent: snapshot?.cpuPercent,
+        memoryMb: snapshot?.memoryMb,
+        uptimeSeconds: snapshot?.uptimeSeconds,
+        qrUrl: `${process.env.PUBLIC_BASE_URL ?? "http://localhost:8090"}/play/${process.env.ROOM_ID ?? "room-0"}/`,
     });
 });
 
-app.get("/ops/snapshot", (res) => {
+app.get("/ops/snapshot", (res, req) => {
+    if (!authorizeOpsRequest(res, req)) return;
     const snapshot = server.manager.getOpsiaSnapshot();
     if (!snapshot) {
         res.writeStatus("503 Service Unavailable").end(JSON.stringify({ error: "ops_snapshot_pending" }));
@@ -285,12 +389,85 @@ app.get("/ops/snapshot", (res) => {
     uwsHelpers.returnJson(res, snapshot as unknown as Record<string, unknown>);
 });
 
-app.post("/ops/end", (res) => {
-    if (!server.manager.resetOpsiaRoom()) {
-        res.writeStatus("409 Conflict").end(JSON.stringify({ error: "room_not_ready" }));
+app.post("/ops/end", (res, req) => {
+    if (!authorizeOpsRequest(res, req)) return;
+    res.onAborted(() => {
+        res.aborted = true;
+    });
+    void server.manager.resetOpsiaRoom().then((resetAt) => {
+        if (!res.aborted) {
+            res.cork(() =>
+                uwsHelpers.returnJson(res, { status: "reset", roomId: process.env.ROOM_ID ?? "room-0", resetAt })
+            );
+        }
+    }).catch((error) => {
+        if (!res.aborted) {
+            res.cork(() =>
+                res.writeStatus("503 Service Unavailable").end(
+                    JSON.stringify({ error: error instanceof Error ? error.message : "room_reset_failed" }),
+                )
+            );
+        }
+    });
+});
+
+app.post("/ops/snapshot/save", (res, req) => {
+    if (!authorizeOpsRequest(res, req)) return;
+    res.onAborted(() => {
+        res.aborted = true;
+    });
+    void server.manager.saveOpsiaRoom().then((savedAt) => {
+        if (!res.aborted) {
+            res.cork(() =>
+                uwsHelpers.returnJson(res, { status: "saved", roomId: process.env.ROOM_ID ?? "room-0", savedAt })
+            );
+        }
+    }).catch((error) => {
+        if (!res.aborted) {
+            res.cork(() =>
+                res.writeStatus("503 Service Unavailable").end(
+                    JSON.stringify({ error: error instanceof Error ? error.message : "snapshot_save_failed" }),
+                )
+            );
+        }
+    });
+});
+
+app.get("/ops/join-lock", (res, req) => {
+    if (!authorizeOpsRequest(res, req)) return;
+    uwsHelpers.returnJson(res, { roomId: process.env.ROOM_ID ?? "room-0", locked: server.isJoinLocked() });
+});
+
+app.post("/ops/join-lock/:state", (res, req) => {
+    if (!authorizeOpsRequest(res, req)) return;
+    const state = req.getParameter(0);
+    if (state !== "true" && state !== "false") {
+        res.writeStatus("400 Bad Request").end(JSON.stringify({ error: "invalid_join_lock" }));
         return;
     }
-    uwsHelpers.returnJson(res, { status: "reset", roomId: process.env.ROOM_ID ?? "room-0" });
+    res.onAborted(() => {
+        res.aborted = true;
+    });
+    void server.setJoinLocked(state === "true").then(() => {
+        if (!res.aborted) {
+            res.cork(() =>
+                uwsHelpers.returnJson(res, { roomId: process.env.ROOM_ID ?? "room-0", locked: server.isJoinLocked() })
+            );
+        }
+    }).catch((error) => {
+        if (!res.aborted) {
+            res.cork(() =>
+                res.writeStatus("503 Service Unavailable").end(
+                    JSON.stringify({ error: error instanceof Error ? error.message : "join_lock_store_failed" }),
+                )
+            );
+        }
+    });
+});
+
+app.any("/ops/*", (res, req) => {
+    if (!authorizeOpsRequest(res, req)) return;
+    res.writeStatus("404 Not Found").end(JSON.stringify({ error: "not_found" }));
 });
 
 app.get("/private/status", (res, req) => {
@@ -313,29 +490,77 @@ app.get("/private/status", (res, req) => {
     });
 });
 
-const handleFindGame = async (res: Parameters<typeof uwsHelpers.getJsonBody>[0], req: Parameters<typeof uwsHelpers.getIp>[1]) => {
+const handleFindGame = async (
+    res: Parameters<typeof uwsHelpers.getJsonBody>[0],
+    req: Parameters<typeof uwsHelpers.getIp>[1],
+) => {
     res.onAborted(() => {
         res.aborted = true;
     });
 
+    // OPSIA exposes only the public admission contract. The demo config is
+    // intentionally repository-visible, so its upstream private API key must
+    // never select a less-restricted branch in a room Pod.
+    if (process.env.OPSIA_ROOM === "true") {
+        // uWS request headers are only valid before awaiting body parsing.
+        const host = req.getHeader("host") || server.region.address;
+        const useHttps = server.region.https
+            || req.getHeader("x-forwarded-proto").split(",")[0]?.trim() === "https";
+        const ip = uwsHelpers.getIp(res, req, Config.gameServer.proxyIPHeader);
+        if (!ip) {
+            res.writeStatus("400 Bad Request").end(JSON.stringify({ error: "invalid_client_ip" }));
+            return;
+        }
+        // Reserve rate-limit capacity before parsing or creating a 15-second
+        // game token. WebSocket upgrades use the same per-IP window below.
+        if (gameHTTPRateLimit.isRateLimited(ip)) {
+            res.writeStatus("429 Too Many Requests").end(JSON.stringify({ error: "find_game_rate_limited" }));
+            return;
+        }
+        let body: z.infer<typeof zOpsiaFindGame>;
+        try {
+            body = await uwsHelpers.getJsonBody(res, zOpsiaFindGame);
+        } catch (error) {
+            // getJsonBody has already ended the response with 400 or 413.
+            server.logger.warn("/api/find_game invalid body: ", error);
+            return;
+        }
+        try {
+            uwsHelpers.returnJson(res, await server.findOpsiaGame(body, host, ip, useHttps));
+        } catch (error) {
+            server.logger.warn("/api/find_game unavailable: ", error);
+            if (!res.aborted) {
+                res.cork(() =>
+                    res.writeStatus("503 Service Unavailable")
+                        .writeHeader("Content-Type", "application/json")
+                        .end(JSON.stringify({ error: "find_game_unavailable" }))
+                );
+            }
+        }
+        return;
+    }
+    if (req.getHeader("survev-api-key") !== Config.secrets.SURVEV_API_KEY) {
+        uwsHelpers.forbidden(res);
+        return;
+    }
+    let body: z.infer<typeof zFindGamePrivateBody>;
     try {
-        if (process.env.OPSIA_ROOM === "true" && req.getHeader("survev-api-key") !== Config.secrets.SURVEV_API_KEY) {
-            // uWS request headers are only valid before awaiting body parsing.
-            const host = req.getHeader("host") || server.region.address;
-            const ip = uwsHelpers.getIp(res, req, Config.gameServer.proxyIPHeader) ?? "127.0.0.1";
-            const body = await uwsHelpers.getJsonBody(res, zOpsiaFindGame);
-            uwsHelpers.returnJson(res, await server.findOpsiaGame(body, host, ip));
-            return;
-        }
-        if (req.getHeader("survev-api-key") !== Config.secrets.SURVEV_API_KEY) {
-            uwsHelpers.forbidden(res);
-            return;
-        }
-        const body = await uwsHelpers.getJsonBody(res, zFindGamePrivateBody);
-
+        body = await uwsHelpers.getJsonBody(res, zFindGamePrivateBody);
+    } catch (error) {
+        server.logger.warn("/api/find_game invalid private body: ", error);
+        return;
+    }
+    try {
         uwsHelpers.returnJson(res, await server.findGame(body));
     } catch (error) {
-        server.logger.warn("/api/find_game error: ", error);
+        server.logger.warn("/api/find_game private service unavailable: ", error);
+        if (!res.aborted) {
+            res.cork(() =>
+                res.writeStatus("503 Service Unavailable")
+                    .writeHeader("Content-Type", "application/json")
+                    .end(JSON.stringify({ error: "find_game_unavailable" }))
+            );
+        }
     }
 };
 
@@ -359,7 +584,7 @@ app.post("/*", (res, req) => {
 // the three room-pods for the local live demo; input abuse is still caught in
 // the decoded InputMsg hook below.
 const opsiaRoom = process.env.OPSIA_ROOM === "true";
-const gameHTTPRateLimit = new HTTPRateLimit(opsiaRoom ? 100 : 5, 1000);
+const gameHTTPRateLimit = new HTTPRateLimit(opsiaRoom ? 40 : 5, 1000);
 const gameWsRateLimit = new WebSocketRateLimit(500, 1000, opsiaRoom ? 100 : 5);
 
 const gameWsBehavior: import("uWebSockets.js").WebSocketBehavior<GameSocketData> = {
@@ -565,7 +790,7 @@ app.get("/*", (res, req) => {
     // index.html references ./js and ./css. For /play/room-N, browsers resolve
     // those to /play/js (not /play/room-N/js), so support both forms.
     const roomAsset = requestPath.match(/^\/(?:play|watch)\/(?:(?:room-\d+)\/)?(.+)$/)?.[1];
-    const candidate = requestPath === "/" || /^\/(play|watch)\/room-\d+$/.test(requestPath)
+    const candidate = requestPath === "/" || /^\/(play|watch)\/room-\d+\/?$/.test(requestPath)
         ? "index.html"
         // Vite emits relative ./js and ./css URLs. Strip only the room route
         // prefix so the actual upstream bundle is served, not an HTML fallback.

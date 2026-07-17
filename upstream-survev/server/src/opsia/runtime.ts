@@ -35,14 +35,30 @@ export interface OpsiaPlayerSnapshot {
     team: "red" | "blue";
     x: number;
     y: number;
+    vx: number;
+    vy: number;
     alive: boolean;
     score: number;
+    rotation: number;
+    health: number;
+    armor: number;
+    weapon: string;
+    ammo: number;
+    isBot: boolean;
+    connected: boolean;
 }
 
 export interface OpsiaSnapshot {
     roomId: string;
+    capturedAt: number;
+    map: { name: string; width: number; height: number };
+    zone: { x: number; y: number; radius: number; nextX: number; nextY: number; nextRadius: number };
     players: OpsiaPlayerSnapshot[];
-    tickMs: number;
+    tickP95Ms: number;
+    tickRate: number;
+    cpuPercent: number;
+    memoryMb: number;
+    uptimeSeconds: number;
     strictMode: boolean;
     inputAccepted: number;
     inputRejected: number;
@@ -53,18 +69,29 @@ const inputWindows = new WeakMap<Game, Map<string, number[]>>();
 const inputCounters = new WeakMap<Game, { accepted: number; rejected: number }>();
 const memorySnapshots = new Map<string, LooseGameSnapshot>();
 const memoryLeases = new Map<string, { owner: string; expiresAt: number }>();
+let previousCpuUsage = process.cpuUsage();
+let previousCpuAt = performance.now();
 // A dead pod leaves no graceful owner release. Keep the hand-off short enough
 // for the reconnect overlay, while refreshing well inside the ownership window.
 const leaseTtlSeconds = 10;
 const leaseRefreshMs = 2_000;
-const refreshLeaseScript = "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('EXPIRE', KEYS[1], ARGV[2]) end return 0";
+const refreshLeaseScript =
+    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('EXPIRE', KEYS[1], ARGV[2]) end return 0";
+const saveSnapshotScript =
+    "if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('SET', KEYS[2], ARGV[2]); return 1 end return 0";
+const releaseLeaseScript =
+    "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
+const clearSnapshotScript =
+    "if redis.call('GET', KEYS[1]) == ARGV[1] then redis.call('DEL', KEYS[2]); return 1 end return 0";
 
 export const opsiaEnabled = (): boolean => process.env.OPSIA_ROOM === "true";
 export const opsiaStrict = (): boolean => process.env.STRICT_MODE === "true";
 export const opsiaRoomId = (): string => process.env.ROOM_ID ?? "room-0";
 
 const jsonLog = (level: "info" | "warn" | "error", event: string, detail: Record<string, unknown> = {}) => {
-    console.log(JSON.stringify({ level, event, roomId: opsiaRoomId(), server: process.env.POD_NAME ?? "game-0", detail }));
+    console.log(
+        JSON.stringify({ level, event, roomId: opsiaRoomId(), server: process.env.POD_NAME ?? "game-0", detail }),
+    );
 };
 
 const playerSessionId = (player: Player): string => player.opsiaSessionId || player.client.findGameIp;
@@ -124,6 +151,12 @@ export const restorePlayer = (game: Game, player: Player, joinData: JoinTokenDat
         }
     }
     game.grid.updateObject(player);
+    // A reconnect projection is a one-shot hand-off. Keeping it would let a
+    // later connection with the same session roll a live player back to stale
+    // coordinates, health and inventory.
+    const pending = restoredPlayers.get(game);
+    pending?.delete(sessionId);
+    if (pending?.size === 0) restoredPlayers.delete(game);
     jsonLog("info", "player_reconnected", { nickname: player.name, teamId: player.teamId, score: player.kills });
     return true;
 };
@@ -143,9 +176,17 @@ export const validateInput = (game: Game, player: Player): boolean => {
     // abusive client exceeds this by an order of magnitude.
     if (timestamps.length > 60) {
         counters.rejected++;
-        jsonLog("warn", "input_rate_exceeded", { nickname: player.name, rate: timestamps.length, strictMode: opsiaStrict() });
+        jsonLog("warn", "input_rate_exceeded", {
+            nickname: player.name,
+            rate: timestamps.length,
+            strictMode: opsiaStrict(),
+        });
         if (opsiaStrict()) {
-            jsonLog("warn", "session_kicked", { nickname: player.name, reason: "input_rate_exceeded", enforcement: "strict_mode" });
+            jsonLog("warn", "session_kicked", {
+                nickname: player.name,
+                reason: "input_rate_exceeded",
+                enforcement: "strict_mode",
+            });
             player.client.disconnect("input_rate_exceeded");
             return false;
         }
@@ -155,12 +196,32 @@ export const validateInput = (game: Game, player: Player): boolean => {
     return true;
 };
 
-export const makeOpsSnapshot = (game: Game, tickMs: number): OpsiaSnapshot => {
+export const makeOpsSnapshot = (game: Game, tickP95Ms: number, tickRate: number): OpsiaSnapshot => {
     const counters = inputCounters.get(game) ?? { accepted: 0, rejected: 0 };
     inputCounters.set(game, { accepted: 0, rejected: 0 });
+    const now = performance.now();
+    const elapsedMs = Math.max(1, now - previousCpuAt);
+    const cpuDelta = process.cpuUsage(previousCpuUsage);
+    previousCpuUsage = process.cpuUsage();
+    previousCpuAt = now;
+    const cpuPercent = Math.max(0, Math.min(100, ((cpuDelta.user + cpuDelta.system) / 1000 / elapsedMs) * 100));
     return {
         roomId: opsiaRoomId(),
-        tickMs,
+        capturedAt: Date.now(),
+        map: { name: game.mapName, width: game.map.width, height: game.map.height },
+        zone: {
+            x: game.gas.currentPos.x,
+            y: game.gas.currentPos.y,
+            radius: game.gas.currentRad,
+            nextX: game.gas.posNew.x,
+            nextY: game.gas.posNew.y,
+            nextRadius: game.gas.radNew,
+        },
+        tickP95Ms,
+        tickRate,
+        cpuPercent,
+        memoryMb: process.memoryUsage().rss / 1024 / 1024,
+        uptimeSeconds: process.uptime(),
         strictMode: opsiaStrict(),
         inputAccepted: counters.accepted,
         inputRejected: counters.rejected,
@@ -170,8 +231,19 @@ export const makeOpsSnapshot = (game: Game, tickMs: number): OpsiaSnapshot => {
             team: player.teamId === 1 ? "red" : "blue",
             x: player.pos.x,
             y: player.pos.y,
+            vx: player.vel.x,
+            vy: player.vel.y,
             alive: !player.dead,
             score: player.kills,
+            rotation: Math.atan2(player.dir.y, player.dir.x),
+            health: player.health,
+            armor: Math.round(
+                Math.max(player.getGearLevel(player.helmet), player.getGearLevel(player.chest)) / 3 * 100,
+            ),
+            weapon: player.activeWeapon || "fists",
+            ammo: player.weapons[player.curWeapIdx]?.ammo ?? 0,
+            isBot: player.bot,
+            connected: !player.disconnected,
         })),
     };
 };
@@ -243,8 +315,19 @@ export class OpsiaSnapshotStore {
             this.pendingPlayers = [];
         }
         if (this.client) {
-            await this.client.set(this.snapshotKey, JSON.stringify(snapshot), { EX: 60 });
+            // A stopped StatefulSet ordinal can remain offline for longer than a
+            // minute. Keep the latest acknowledged projection until an explicit
+            // room reset/delete clears it.
+            const saved = await this.client.eval(saveSnapshotScript, {
+                keys: [this.leaseKey, this.snapshotKey],
+                arguments: [this.owner, JSON.stringify(snapshot)],
+            });
+            if (Number(saved) !== 1) throw new Error("room_lease_lost");
         } else {
+            const lease = memoryLeases.get(this.leaseKey);
+            if (!lease || lease.owner !== this.owner || lease.expiresAt <= Date.now()) {
+                throw new Error("room_lease_lost");
+            }
             memorySnapshots.set(this.snapshotKey, snapshot);
         }
         jsonLog("info", "snapshot_saved", { players: snapshot.players.length });
@@ -253,10 +336,15 @@ export class OpsiaSnapshotStore {
     async stop(): Promise<void> {
         this.ready = false;
         if (this.leaseTimer) clearInterval(this.leaseTimer);
+        this.leaseTimer = undefined;
         if (this.client?.isOpen) {
-            // Release only our own lease. This is a lifecycle cleanup, never a
-            // player-controlled or ConfigMap-driven mutation.
-            if (await this.client.get(this.leaseKey) === this.owner) await this.client.del(this.leaseKey);
+            // Compare-and-delete in one Redis operation. A GET/DEL pair could
+            // erase a replacement owner's lease if this lease expired between
+            // the two commands.
+            await this.client.eval(releaseLeaseScript, {
+                keys: [this.leaseKey],
+                arguments: [this.owner],
+            });
             await this.client.quit();
             return;
         }
@@ -269,9 +357,19 @@ export class OpsiaSnapshotStore {
     async clearSnapshot(): Promise<void> {
         this.pendingPlayers = [];
         this.pendingRestoreUntil = 0;
-        if (this.client) {
-            await this.client.del(this.snapshotKey);
+        if (this.client?.isOpen) {
+            const cleared = await this.client.eval(clearSnapshotScript, {
+                keys: [this.leaseKey, this.snapshotKey],
+                arguments: [this.owner],
+            });
+            if (Number(cleared) !== 1) throw new Error("room_lease_lost");
+        } else if (this.client) {
+            throw new Error("room_lease_lost");
         } else {
+            const lease = memoryLeases.get(this.leaseKey);
+            if (!lease || lease.owner !== this.owner || lease.expiresAt <= Date.now()) {
+                throw new Error("room_lease_lost");
+            }
             memorySnapshots.delete(this.snapshotKey);
         }
         jsonLog("info", "snapshot_cleared", {});
@@ -284,7 +382,9 @@ export class OpsiaSnapshotStore {
             return;
         }
         const existing = memoryLeases.get(this.leaseKey);
-        if (existing && existing.expiresAt > Date.now() && existing.owner !== this.owner) throw new Error("room_lease_not_acquired");
+        if (existing && existing.expiresAt > Date.now() && existing.owner !== this.owner) {
+            throw new Error("room_lease_not_acquired");
+        }
         memoryLeases.set(this.leaseKey, { owner: this.owner, expiresAt: Date.now() + leaseTtlSeconds * 1000 });
     }
 

@@ -53,6 +53,18 @@ class GameProcess {
     reusedCount = 0;
 
     opsiaSnapshot: OpsiaSnapshotData | undefined;
+    private readonly opsiaReservations = new Map<string, { expiresAt: number; sessionId?: string; ip: string }>();
+    private readonly pendingOpsiaResets = new Map<string, {
+        resolve: (resetAt: number) => void;
+        reject: (error: Error) => void;
+        timeout: NodeJS.Timeout;
+    }>();
+    private readonly pendingOpsiaSaves = new Map<string, {
+        resolve: (savedAt: number) => void;
+        reject: (error: Error) => void;
+        timeout: NodeJS.Timeout;
+    }>();
+    private opsiaResetInFlight = false;
 
     constructor(manager: GameProcessManager, id: string, config: ServerGameConfig) {
         this.manager = manager;
@@ -75,7 +87,10 @@ class GameProcess {
 
         switch (msg.type) {
             case ProcessMsgType.UpdateData:
-                if (this.state === ProcState.CreatingGame && msg.canJoin) {
+                if (
+                    this.state === ProcState.CreatingGame
+                    && (msg.canJoin || (process.env.OPSIA_ROOM === "true" && !msg.stopped))
+                ) {
                     this.state = ProcState.Running;
                     for (const cb of this.onCreatedCbs) {
                         cb(this);
@@ -124,8 +139,28 @@ class GameProcess {
                 break;
             case ProcessMsgType.OpsiaSnapshot:
                 this.opsiaSnapshot = msg.snapshot;
+                if (process.env.OPSIA_ROOM === "true") this.refreshOpsiaCapacity();
                 this.manager.emitOpsiaSnapshot(msg.snapshot);
                 break;
+            case ProcessMsgType.OpsiaResetResult: {
+                const pending = this.pendingOpsiaResets.get(msg.requestId);
+                if (!pending) break;
+                clearTimeout(pending.timeout);
+                this.pendingOpsiaResets.delete(msg.requestId);
+                this.opsiaResetInFlight = false;
+                if (msg.ok && msg.resetAt) pending.resolve(msg.resetAt);
+                else pending.reject(new Error(msg.error ?? "opsia_reset_failed"));
+                break;
+            }
+            case ProcessMsgType.OpsiaSaveResult: {
+                const pending = this.pendingOpsiaSaves.get(msg.requestId);
+                if (!pending) break;
+                clearTimeout(pending.timeout);
+                this.pendingOpsiaSaves.delete(msg.requestId);
+                if (msg.ok && msg.savedAt) pending.resolve(msg.savedAt);
+                else pending.reject(new Error(msg.error ?? "opsia_snapshot_failed"));
+                break;
+            }
         }
     }
 
@@ -154,12 +189,76 @@ class GameProcess {
     }
 
     addJoinTokens(tokens: FindGamePrivateBody["playerData"], autoFill: boolean) {
+        if (process.env.OPSIA_ROOM === "true") {
+            if (!this.canAcceptOpsia(tokens)) throw new Error("full");
+            const expiresAt = Date.now() + 15_000;
+            for (const token of tokens) {
+                this.opsiaReservations.set(token.token, {
+                    expiresAt,
+                    sessionId: token.opsiaSessionId,
+                    ip: token.ip,
+                });
+            }
+            this.refreshOpsiaCapacity();
+        }
         this.send({
             type: ProcessMsgType.AddJoinToken,
             autoFill,
             tokens,
         });
-        this.avaliableSlots--;
+        if (process.env.OPSIA_ROOM !== "true") this.avaliableSlots--;
+    }
+
+    canAcceptOpsia(tokens: FindGamePrivateBody["playerData"]): boolean {
+        this.refreshOpsiaCapacity();
+        const requestedSessions = tokens
+            .map((token) => token.opsiaSessionId)
+            .filter((sessionId): sessionId is string => Boolean(sessionId));
+        if (new Set(requestedSessions).size !== requestedSessions.length) return false;
+        const connectedSessions = new Set(
+            (this.opsiaSnapshot?.players ?? [])
+                .filter((player) => player.connected)
+                .map((player) => player.sessionId),
+        );
+        const reservedSessions = new Set(
+            [...this.opsiaReservations.values()]
+                .map((reservation) => reservation.sessionId)
+                .filter((sessionId): sessionId is string => Boolean(sessionId)),
+        );
+        if (
+            requestedSessions.some((sessionId) => connectedSessions.has(sessionId) || reservedSessions.has(sessionId))
+        ) return false;
+        // A public find-game response reserves a slot before the WebSocket is
+        // established. Bound outstanding reservations per source IP so a
+        // request-only client cannot consume the room's entire capacity.
+        const maxOutstandingPerIp = 20;
+        const requestedByIp = new Map<string, number>();
+        for (const token of tokens) requestedByIp.set(token.ip, (requestedByIp.get(token.ip) ?? 0) + 1);
+        const reservedByIp = new Map<string, number>();
+        for (const reservation of this.opsiaReservations.values()) {
+            reservedByIp.set(reservation.ip, (reservedByIp.get(reservation.ip) ?? 0) + 1);
+        }
+        if (
+            [...requestedByIp].some(([ip, requested]) => (reservedByIp.get(ip) ?? 0) + requested > maxOutstandingPerIp)
+        ) return false;
+        return tokens.length > 0 && this.avaliableSlots >= tokens.length;
+    }
+
+    private refreshOpsiaCapacity(): void {
+        const now = Date.now();
+        const connected = (this.opsiaSnapshot?.players ?? []).filter((player) => player.connected);
+        const connectedPlayers = connected.length;
+        const connectedSessions = new Set(connected.map((player) => player.sessionId));
+        for (const [token, reservation] of this.opsiaReservations) {
+            if (
+                reservation.expiresAt <= now || (reservation.sessionId && connectedSessions.has(reservation.sessionId))
+            ) {
+                this.opsiaReservations.delete(token);
+            }
+        }
+        const mapDef = MapDefs[this.gameData.mapName as MapDefKey];
+        const maxPlayers = mapDef?.gameMode.maxPlayers ?? 0;
+        this.avaliableSlots = Math.max(0, maxPlayers - connectedPlayers - this.opsiaReservations.size);
     }
 
     handleSocketOpen(socketId: string, ip: string) {
@@ -185,8 +284,42 @@ class GameProcess {
         });
     }
 
-    reset() {
-        this.send({ type: ProcessMsgType.OpsiaReset });
+    reset(): Promise<number> {
+        if (this.process.killed || !this.process.channel) return Promise.reject(new Error("room_process_unavailable"));
+        if (this.opsiaResetInFlight) return Promise.reject(new Error("opsia_reset_in_progress"));
+        this.opsiaResetInFlight = true;
+        // Stop admission immediately; the replacement Game's first UpdateData
+        // transitions this process back to Running after lease acquisition.
+        this.state = ProcState.CreatingGame;
+        this.opsiaSnapshot = undefined;
+        this.opsiaReservations.clear();
+        this.avaliableSlots = 0;
+        const requestId = randomUUID();
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                this.pendingOpsiaResets.delete(requestId);
+                this.opsiaResetInFlight = false;
+                reject(new Error("opsia_reset_timeout"));
+            }, 7_000);
+            this.pendingOpsiaResets.set(requestId, { resolve, reject, timeout });
+            this.send({ type: ProcessMsgType.OpsiaReset, requestId });
+        });
+    }
+
+    saveOpsiaSnapshot(): Promise<number> {
+        if (this.process.killed || !this.process.channel) return Promise.reject(new Error("room_process_unavailable"));
+        if (this.opsiaResetInFlight || this.state !== ProcState.Running) {
+            return Promise.reject(new Error("opsia_not_ready"));
+        }
+        const requestId = randomUUID();
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                this.pendingOpsiaSaves.delete(requestId);
+                reject(new Error("opsia_snapshot_timeout"));
+            }, 5_000);
+            this.pendingOpsiaSaves.set(requestId, { resolve, reject, timeout });
+            this.send({ type: ProcessMsgType.OpsiaSave, requestId });
+        });
     }
 }
 
@@ -343,22 +476,25 @@ export class GameProcessManager {
 
     async findGame(body: FindGamePrivateBody): Promise<GameProcess> {
         let proc = process.env.OPSIA_ROOM === "true"
-            ? this.processes.find((candidate) => !candidate.gameData.stopped)
+            ? this.processes.find((candidate) =>
+                !candidate.gameData.stopped && candidate.canAcceptOpsia(body.playerData)
+            )
             : this.processes
-            .filter((proc) => {
-                const game = proc.gameData;
-                return (
-                    (game.canJoin || proc.state === ProcState.CreatingGame)
-                    && proc.avaliableSlots > 0
-                    && game.teamMode === body.teamMode
-                    && game.mapName === body.mapName
-                );
-            })
-            .sort((a, b) => {
-                return a.gameData.startedTime - b.gameData.startedTime;
-            })[0];
+                .filter((proc) => {
+                    const game = proc.gameData;
+                    return (
+                        (game.canJoin || proc.state === ProcState.CreatingGame)
+                        && proc.avaliableSlots > 0
+                        && game.teamMode === body.teamMode
+                        && game.mapName === body.mapName
+                    );
+                })
+                .sort((a, b) => {
+                    return a.gameData.startedTime - b.gameData.startedTime;
+                })[0];
 
         if (!proc) {
+            if (process.env.OPSIA_ROOM === "true") throw new Error("full");
             proc = this.newGame({
                 teamMode: body.teamMode,
                 mapName: body.mapName as MapDefKey,
@@ -368,11 +504,24 @@ export class GameProcessManager {
         // if the game has not finished creating
         // wait for it to be created to send the find game response
         if (proc.state !== ProcState.Running) {
-            return await new Promise((resolve) => {
-                proc.onCreatedCbs.push((proc) => {
-                    proc.addJoinTokens(body.playerData, body.autoFill);
-                    resolve(proc);
-                });
+            return await new Promise((resolve, reject) => {
+                const onCreated = (created: GameProcess) => {
+                    clearTimeout(timeout);
+                    try {
+                        created.addJoinTokens(body.playerData, body.autoFill);
+                        resolve(created);
+                    } catch (error) {
+                        // A concurrent admission filled the room while its
+                        // child process was becoming ready.
+                        reject(error);
+                    }
+                };
+                const timeout = setTimeout(() => {
+                    const index = proc.onCreatedCbs.indexOf(onCreated);
+                    if (index >= 0) proc.onCreatedCbs.splice(index, 1);
+                    reject(new Error("game_process_ready_timeout"));
+                }, 5_000);
+                proc.onCreatedCbs.push(onCreated);
             });
         }
 
@@ -411,13 +560,18 @@ export class GameProcessManager {
     }
 
     isOpsiaReady(): boolean {
-        return this.processes.some((proc) => proc.state === ProcState.Running && proc.gameData.canJoin && !proc.gameData.stopped);
+        return this.processes.some((proc) => proc.state === ProcState.Running && !proc.gameData.stopped);
     }
 
-    resetOpsiaRoom(): boolean {
+    resetOpsiaRoom(): Promise<number> {
         const proc = this.processes.find((candidate) => !candidate.gameData.stopped);
-        if (!proc) return false;
-        proc.reset();
-        return true;
+        if (!proc) return Promise.reject(new Error("room_not_ready"));
+        return proc.reset();
+    }
+
+    saveOpsiaRoom(): Promise<number> {
+        const proc = this.processes.find((candidate) => !candidate.gameData.stopped);
+        if (!proc) return Promise.reject(new Error("room_not_ready"));
+        return proc.saveOpsiaSnapshot();
     }
 }
