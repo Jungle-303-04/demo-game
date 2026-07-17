@@ -35,6 +35,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /preserveAspectRatio="xMidYMid meet"/);
   assert.match(adminUi, /상세 화면에서 실시간 전술 맵 확인/);
   assert.match(adminUi, /className="player-marker-core"/);
+  assert.match(adminUi, /capabilities\.scalingAvailable && \(/);
+  assert.doesNotMatch(adminUi, /방 배포 사용 불가|현재 런타임은 Kubernetes StatefulSet/);
   assert.doesNotMatch(adminUi, /RoomMiniMap|LIVE COORDINATES|mini-map-zone/);
   assert.doesNotMatch(adminUi, /preserveAspectRatio="none"/);
   assert.doesNotMatch(adminUi, /<iframe|roomWatchUrl/);

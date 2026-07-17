@@ -360,28 +360,28 @@ function RoomDirectory({
             onDelete={() => onDelete(room.id)}
           />
         ))}
-        <button
-          className="add-room-card"
-          disabled={!canCreate}
-          onClick={onCreate}
-          title={
-            capabilities.scalingAvailable
-              ? `최대 ${capabilities.maxRooms}개 방을 배포할 수 있습니다`
-              : "Kubernetes 배포에서만 방을 추가할 수 있습니다"
-          }
-          type="button"
-        >
-          <span className="add-room-icon">+</span>
-          <strong>{canCreate ? "새 게임 방 배포" : "방 배포 사용 불가"}</strong>
-          <p>
-            {capabilities.scalingAvailable
-              ? `Room 설정을 만들고 ordinal Pod를 할당합니다. (${activeRoomCount}/${capabilities.maxRooms})`
-              : "현재 런타임은 Kubernetes StatefulSet을 관리하지 않습니다."}
-          </p>
-          <span className="add-room-flow">
-            Room record <i>→</i> StatefulSet ordinal <i>→</i> Pod
-          </span>
-        </button>
+        {capabilities.scalingAvailable && (
+          <button
+            className="add-room-card"
+            disabled={!canCreate}
+            onClick={onCreate}
+            title={
+              canCreate
+                ? `최대 ${capabilities.maxRooms}개 방을 배포할 수 있습니다`
+                : `최대 방 수 ${capabilities.maxRooms}개에 도달했습니다`
+            }
+            type="button"
+          >
+            <span className="add-room-icon">+</span>
+            <strong>{canCreate ? "새 게임 방 배포" : "최대 방 수 도달"}</strong>
+            <p>
+              {`Room 설정을 만들고 ordinal Pod를 할당합니다. (${activeRoomCount}/${capabilities.maxRooms})`}
+            </p>
+            <span className="add-room-flow">
+              Room record <i>→</i> StatefulSet ordinal <i>→</i> Pod
+            </span>
+          </button>
+        )}
       </div>
 
       <div className="presentation-flow">
