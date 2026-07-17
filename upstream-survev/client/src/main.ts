@@ -76,9 +76,14 @@ export class Application {
     configLoaded = false;
     initialized = false;
     active = false;
+    readonly opsiaWatch = /^\/watch\/room-\d+\/?$/.test(window.location.pathname);
     // A stable browser token is sent only to the real survev game-server's
     // reconnect adapter. It is not an account and is never used by Opsia.
-    sessionId = localStorage.getItem("opsia-survev-session") || helpers.random64();
+    // Broadcast tabs deliberately use an ephemeral identity so changing a
+    // watched player never collides with an active participant session.
+    sessionId = this.opsiaWatch
+        ? `watch-${helpers.random64()}`
+        : localStorage.getItem("opsia-survev-session") || helpers.random64();
     contextListener = function(e: MouseEvent) {
         e.preventDefault();
     };
@@ -100,7 +105,9 @@ export class Application {
     }
 
     constructor() {
-        localStorage.setItem("opsia-survev-session", this.sessionId);
+        if (!this.opsiaWatch) {
+            localStorage.setItem("opsia-survev-session", this.sessionId);
+        }
         this.account = new Account(this.config);
         this.loadoutMenu = new LoadoutMenu(this.account, this.localization);
         this.pass = new Pass(this.account, this.loadoutMenu, this.localization);
@@ -398,7 +405,7 @@ export class Application {
             SDK.gameLoadComplete();
             // `/watch/room-N` is an Opsia broadcast surface. It reuses the
             // upstream PixiJS client rather than drawing a separate minimap.
-            if (/^\/watch\/room-\d+\/?$/.test(window.location.pathname)) {
+            if (this.opsiaWatch) {
                 setTimeout(() => this.tryQuickStartGame(2), 0);
             }
         }
@@ -679,15 +686,30 @@ export class Application {
                 zones = [paramZone];
             }
 
-            const matchArgs: FindGameBody & { opsiaSessionId: string } = {
+            const matchArgs: FindGameBody & {
+                opsiaSessionId: string;
+                spectator?: boolean;
+                spectateSessionId?: string;
+            } = {
                 version,
                 region,
                 zones,
-                playerCount: 1,
+                playerCount: this.opsiaWatch ? 0 : 1,
                 autoFill: true,
                 gameModeIdx,
                 opsiaSessionId: this.sessionId,
             };
+            if (this.opsiaWatch) {
+                matchArgs.spectator = true;
+                const targetSessionId = helpers.getParameterByName("target");
+                if (
+                    targetSessionId !== undefined
+                    && targetSessionId.length >= 16
+                    && targetSessionId.length <= 128
+                ) {
+                    matchArgs.spectateSessionId = targetSessionId;
+                }
+            }
 
             const tryQuickStartGameImpl = () => {
                 this.waitOnAccount(() => {

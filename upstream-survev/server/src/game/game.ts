@@ -31,6 +31,10 @@ export interface JoinTokenData {
     quests?: string[];
     /** Stable browser token used only by the in-game reconnect path. */
     opsiaSessionId?: string;
+    /** Playerless broadcast connection rendered by the actual PixiJS client. */
+    spectator?: boolean;
+    /** Stable live-player session selected in the admin console. */
+    spectateSessionId?: string;
     groupData: {
         autoFill: boolean;
         playerCount: number;
@@ -378,6 +382,8 @@ export class Game {
                 loadout: token.loadout,
                 quests: token.quests,
                 opsiaSessionId: token.opsiaSessionId,
+                spectator: token.spectator,
+                spectateSessionId: token.spectateSessionId,
             });
         }
     }

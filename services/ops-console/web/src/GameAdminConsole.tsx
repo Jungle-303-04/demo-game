@@ -10,8 +10,6 @@ import {
   useState,
 } from "react";
 import {
-  MAP_LABELS,
-  MAP_OBJECTS,
   MATCH_PHASE_LABEL,
   type CreateRoomInput,
   type ControlPlaneCapabilities,
@@ -160,52 +158,19 @@ function StatusBadge({ status }: { status: RoomStatus }) {
   );
 }
 
-function MapDecor({ labels = true }: { labels?: boolean }) {
-  return (
-    <>
-      <div className="map-texture" />
-      <div className="map-road map-road-horizontal" />
-      <div className="map-road map-road-vertical" />
-      <div className="map-road map-road-diagonal" />
-      {MAP_OBJECTS.map((object) => (
-        <div
-          className={`map-object map-object-${object.kind}`}
-          key={object.id}
-          style={{
-            left: `${object.x}%`,
-            top: `${object.y}%`,
-            width: `${object.w}%`,
-            height: `${object.h}%`,
-          }}
-        >
-          {object.kind === "building" && (
-            <span className="map-object-roofline" />
-          )}
-        </div>
-      ))}
-      {labels &&
-        MAP_LABELS.map((label) => (
-          <span
-            className="map-label"
-            key={label.name}
-            style={{ left: `${label.x}%`, top: `${label.y}%` }}
-          >
-            {label.name}
-          </span>
-        ))}
-      <div className="map-tree-cluster cluster-a" />
-      <div className="map-tree-cluster cluster-b" />
-      <div className="map-tree-cluster cluster-c" />
-      <div className="map-tree-cluster cluster-d" />
-    </>
-  );
+function roomWatchUrl(room: GameRoom, player?: PlayerTelemetry) {
+  const url = new URL(room.serviceUrl, window.location.origin);
+  url.pathname = url.pathname.replace(/\/play\/(room-\d+)\/?$/, "/watch/$1/");
+  url.search = "";
+  url.searchParams.set("view", player ? "player" : "map");
+  if (player) url.searchParams.set("target", player.id);
+  return url.toString();
 }
 
 function RoomMiniMap({ room }: { room: GameRoom }) {
   return (
     <div className="room-mini-map" aria-hidden="true">
-      <div className="mini-map-road mini-map-road-a" />
-      <div className="mini-map-road mini-map-road-b" />
+      <span className="mini-map-source">LIVE COORDINATES</span>
       <div
         className="mini-map-zone"
         style={{
@@ -214,7 +179,6 @@ function RoomMiniMap({ room }: { room: GameRoom }) {
           width: `${room.zone.radius * 1.35}%`,
         }}
       />
-      <span className="mini-map-lake" />
       {room.players.slice(0, 32).map((player) => (
         <i
           className={player.isBot ? "is-bot" : ""}
@@ -466,8 +430,8 @@ function RoomDirectory({
         <i>→</i>
         <div>
           <span>02</span>
-          <strong>전체 맵 & 관전</strong>
-          <p>전체 플레이어 위치를 보고 한 명의 시점으로 전환</p>
+          <strong>실제 맵 & 관전</strong>
+          <p>원본 PixiJS 전체 맵에서 실제 spectator 시점으로 전환</p>
         </div>
         <i>→</i>
         <div>
@@ -480,235 +444,49 @@ function RoomDirectory({
   );
 }
 
-function FullMap({
-  room,
-  onSelectPlayer,
-}: {
-  room: GameRoom;
-  onSelectPlayer: (playerId: string) => void;
-}) {
-  return (
-    <div className="full-map" aria-label={`${room.name} 전체 게임 맵`}>
-      <MapDecor />
-      <div
-        className="zone-ring zone-ring-current"
-        style={
-          {
-            "--zone-x": `${room.zone.x}%`,
-            "--zone-y": `${room.zone.y}%`,
-            "--zone-size": `${room.zone.radius * 2}%`,
-          } as StyleWithVariables
-        }
-      />
-      <div
-        className="zone-ring zone-ring-next"
-        style={
-          {
-            "--zone-x": `${room.zone.nextX}%`,
-            "--zone-y": `${room.zone.nextY}%`,
-            "--zone-size": `${room.zone.nextRadius * 2}%`,
-          } as StyleWithVariables
-        }
-      />
-      <div className="plane-path" />
-      {room.players.map((player) => (
-        <button
-          className={`player-marker ${
-            player.isBot ? "player-marker-bot" : ""
-          }`}
-          key={player.id}
-          onClick={() => onSelectPlayer(player.id)}
-          style={
-            {
-              left: `${player.x}%`,
-              top: `${player.y}%`,
-              "--player-color": player.color,
-              "--player-rotation": `${player.rotation}rad`,
-            } as StyleWithVariables
-          }
-          type="button"
-          aria-label={`${player.name} 플레이어 시점 관전`}
-          title={`${player.name} · HP ${player.health} · ${player.weapon}`}
-        >
-          <span className="player-marker-direction" />
-          <span className="player-marker-core" />
-        </button>
-      ))}
-      {room.players.length === 0 && (
-        <div className="map-empty-state">
-          <span className="map-empty-signal" />
-          <strong>
-            {room.status === "stopped"
-              ? "게임 서버가 중지되어 있습니다"
-              : "플레이어 텔레메트리 대기 중"}
-          </strong>
-          <p>
-            게임 관리 탭에서 서버를 시작하거나 봇을 투입하면 위치가
-            표시됩니다.
-          </p>
-        </div>
-      )}
-      <div className="map-compass" aria-hidden="true">
-        <span>N</span>
-        <i />
-      </div>
-      <div className="map-scale">250 m</div>
-      <div className="map-legend">
-        <span>
-          <i className="legend-human" /> Player
-        </span>
-        <span>
-          <i className="legend-bot" /> LoadBot
-        </span>
-        <span>
-          <i className="legend-zone" /> Safe zone
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function PerspectiveMiniMap({
+function LiveSurvevView({
   room,
   player,
 }: {
   room: GameRoom;
-  player: PlayerTelemetry;
+  player?: PlayerTelemetry;
 }) {
-  return (
-    <div className="perspective-mini-map" aria-label="관전 대상 미니맵 위치">
-      <div
-        className="perspective-mini-zone"
-        style={{
-          left: `${room.zone.x}%`,
-          top: `${room.zone.y}%`,
-          width: `${room.zone.radius * 1.4}%`,
-        }}
-      />
-      <i style={{ left: `${player.x}%`, top: `${player.y}%` }} />
-      <span>N</span>
-    </div>
-  );
-}
-
-function PlayerPerspective({
-  room,
-  player,
-}: {
-  room: GameRoom;
-  player: PlayerTelemetry;
-}) {
-  const nearbyPlayers = room.players.filter((candidate) => {
-    if (candidate.id === player.id) return false;
+  if (!isRoomActive(room.status) || room.players.length === 0) {
     return (
-      Math.abs(candidate.x - player.x) < 27 &&
-      Math.abs(candidate.y - player.y) < 21
+      <div className="survev-live-view is-unavailable">
+        <span className="map-empty-signal" />
+        <strong>
+          {room.status === "stopped"
+            ? "게임 서버가 중지되어 있습니다"
+            : "실제 관전 대상 연결 대기 중"}
+        </strong>
+        <p>Survev 게임 세션에 플레이어가 연결되면 실제 렌더러를 엽니다.</p>
+      </div>
     );
-  });
-  const nearbyObjects = MAP_OBJECTS.filter(
-    (object) =>
-      Math.abs(object.x - player.x) < 31 &&
-      Math.abs(object.y - player.y) < 24,
-  );
+  }
 
   return (
-    <div className="player-perspective" aria-label={`${player.name} 관전 화면`}>
-      <div
-        className="perspective-ground"
-        style={
-          {
-            "--camera-x": `${-player.x * 8}px`,
-            "--camera-y": `${-player.y * 8}px`,
-          } as StyleWithVariables
-        }
+    <div
+      className="survev-live-view"
+      aria-label={player ? `${player.name} 실제 관전 화면` : `${room.name} 실제 전체 맵`}
+    >
+      <iframe
+        allow="autoplay"
+        key={`${room.id}:${player?.id ?? "map"}`}
+        src={roomWatchUrl(room, player)}
+        title={player ? `${player.name} Survev 실시간 관전` : `${room.name} Survev 실제 전체 맵`}
       />
-      <div className="perspective-road perspective-road-a" />
-      <div className="perspective-road perspective-road-b" />
-      {nearbyObjects.map((object) => (
-        <div
-          className={`perspective-object perspective-object-${object.kind}`}
-          key={object.id}
-          style={{
-            left: `${50 + (object.x - player.x) * 2.8}%`,
-            top: `${50 + (object.y - player.y) * 2.8}%`,
-            width: `${Math.max(44, object.w * 10)}px`,
-            height: `${Math.max(38, object.h * 10)}px`,
-          }}
-        />
-      ))}
-      {nearbyPlayers.map((candidate) => (
-        <span
-          className={`perspective-other-player ${
-            candidate.isBot ? "is-bot" : ""
-          }`}
-          key={candidate.id}
-          style={
-            {
-              left: `${50 + (candidate.x - player.x) * 2.8}%`,
-              top: `${50 + (candidate.y - player.y) * 2.8}%`,
-              "--player-color": candidate.color,
-            } as StyleWithVariables
-          }
-        >
+      <div className="survev-live-source">
+        <span>
           <i />
-          <small>{candidate.name}</small>
+          SURVEV PIXIJS · LIVE
         </span>
-      ))}
-      <span
-        className="perspective-focus-player"
-        style={
-          {
-            "--player-color": player.color,
-            "--player-rotation": `${player.rotation}rad`,
-          } as StyleWithVariables
-        }
-      >
-        <i className="perspective-facing" />
-        <i className="perspective-body" />
-        <i className="perspective-weapon" />
-      </span>
-      <span className="perspective-crosshair" />
-      <div className="perspective-vignette" />
-
-      <div className="perspective-top-left">
-        <span className="live-follow-badge">
-          <i />
-          PLAYER VIEW · LIVE TELEMETRY
-        </span>
-        <strong>{player.name}</strong>
+        <strong>{player ? player.name : "SERVER MAP STREAM"}</strong>
         <small>
-          {player.isBot ? "LOAD TEST BOT" : "CONNECTED PLAYER"} · {player.squad}
+          {player
+            ? `${player.isBot ? "LOAD TEST BOT" : "CONNECTED PLAYER"} · ${player.squad}`
+            : "실제 MapMsg · 실제 게임 오브젝트 · 실제 가스존"}
         </small>
-      </div>
-      <PerspectiveMiniMap room={room} player={player} />
-      <div className="perspective-combat-hud">
-        <div>
-          <span>HP</span>
-          <b className="hud-bar">
-            <i style={{ width: `${player.health}%` }} />
-          </b>
-          <strong>{player.health}</strong>
-        </div>
-        <div>
-          <span>ARMOR</span>
-          <b className="hud-bar armor">
-            <i style={{ width: `${player.armor}%` }} />
-          </b>
-          <strong>{player.armor}</strong>
-        </div>
-        <div className="hud-weapon">
-          <span>WEAPON</span>
-          <strong>{player.weapon}</strong>
-          <b>{player.ammo} ammo</b>
-        </div>
-        <div className="hud-kills">
-          <span>KILLS</span>
-          <strong>{player.kills}</strong>
-        </div>
-      </div>
-      <div className="perspective-coordinate">
-        X {player.x.toFixed(1)} · Y {player.y.toFixed(1)} ·{" "}
-        {player.ping > 0 ? `${player.ping}ms` : "PING N/A"}
       </div>
     </div>
   );
@@ -861,17 +639,17 @@ function WorldTab({
       <div className="world-toolbar">
         <div>
           <span className="eyebrow">
-            {selectedPlayer ? "PLAYER SPECTATOR" : "WHOLE GAME VIEW"}
+            {selectedPlayer ? "LIVE PIXIJS SPECTATOR" : "LIVE PIXIJS MAP"}
           </span>
           <h2>
             {selectedPlayer
-              ? `${selectedPlayer.name} 플레이어 시점`
-              : "전체 게임 맵"}
+              ? `${selectedPlayer.name} 실제 플레이어 시점`
+              : "실제 게임 전체 맵"}
           </h2>
           <p>
             {selectedPlayer
-              ? "관리자 텔레메트리 좌표를 바탕으로 선택한 플레이어를 화면 중앙에서 따라가는 데모 시점입니다."
-              : "서버 텔레메트리에서 받은 모든 플레이어 위치를 한눈에 보여줍니다."}
+              ? "별도 CSS 재구성 없이 Survev 서버의 spectator 스트림을 실제 PixiJS 클라이언트로 렌더링합니다."
+              : "Survev 서버가 전송한 실제 MapMsg와 게임 오브젝트를 원본 PixiJS 전체 맵으로 표시합니다."}
           </p>
         </div>
         <div className="world-toolbar-actions">
@@ -932,11 +710,7 @@ function WorldTab({
             <span>Seed {room.seed}</span>
             <span>{room.tickRate.toFixed(1)}Hz measured</span>
           </div>
-          {selectedPlayer ? (
-            <PlayerPerspective room={room} player={selectedPlayer} />
-          ) : (
-            <FullMap room={room} onSelectPlayer={onSelectPlayer} />
-          )}
+          <LiveSurvevView room={room} player={selectedPlayer} />
           {room.status === "stopped" && (
             <button
               className="map-management-cta"
@@ -1761,7 +1535,7 @@ function RoomDetail({
         >
           <span className="tab-number">01</span>
           <span>
-            <strong>전체 맵 & 플레이어 관전</strong>
+            <strong>실제 게임 맵 & 플레이어 관전</strong>
             <small>전체 위치에서 한 명의 2D 시점까지</small>
           </span>
         </button>

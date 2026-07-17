@@ -99,6 +99,8 @@ export class Game {
     m_playing!: boolean;
     m_gameOver!: boolean;
     m_spectating!: boolean;
+    readonly m_opsiaMapView = /^\/watch\/room-\d+\/?$/.test(window.location.pathname)
+        && new URLSearchParams(window.location.search).get("view") === "map";
     m_inputMsgTimeout!: number;
     m_prevInputMsg!: net.InputMsg;
     m_playingTicker!: number;
@@ -1154,6 +1156,9 @@ export class Game {
         }
         this.m_spectating = this.m_activeId != this.m_localId;
         this.m_activePlayer = this.m_playerBarn.getPlayerById(this.m_activeId)!;
+        if (this.m_opsiaMapView && !this.m_uiManager.bigmapDisplayed) {
+            this.m_uiManager.displayMapLarge();
+        }
         this.m_activePlayer.m_setLocalData(msg.activePlayerData);
         if (msg.activePlayerData.weapsDirty) {
             this.m_uiManager.weapsDirty = true;

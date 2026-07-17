@@ -472,6 +472,21 @@ select:focus-visible {
   box-shadow: inset 0 0 65px rgba(0, 0, 0, 0.55);
 }
 
+.mini-map-source {
+  position: absolute;
+  z-index: 4;
+  left: 10px;
+  top: 9px;
+  padding: 4px 6px;
+  border: 1px solid rgba(184, 229, 120, 0.2);
+  border-radius: 3px;
+  background: rgba(5, 10, 7, 0.62);
+  color: rgba(213, 235, 190, 0.72);
+  font-family: var(--mono);
+  font-size: 7px;
+  letter-spacing: 0.08em;
+}
+
 .mini-map-road {
   position: absolute;
   height: 12px;
@@ -1347,12 +1362,84 @@ select:focus-visible {
   white-space: nowrap;
 }
 
-.full-map,
-.player-perspective {
+.survev-live-view {
   position: relative;
   height: clamp(560px, calc(100vh - 250px), 820px);
   min-height: 560px;
   overflow: hidden;
+  background: #020403;
+}
+
+.survev-live-view iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #020403;
+}
+
+.survev-live-source {
+  position: absolute;
+  z-index: 8;
+  left: 14px;
+  top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 11px;
+  border: 1px solid rgba(184, 229, 120, 0.24);
+  border-radius: 5px;
+  background: rgba(3, 8, 5, 0.76);
+  color: #edf4e9;
+  pointer-events: none;
+  backdrop-filter: blur(7px);
+}
+
+.survev-live-source span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--green-strong);
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.08em;
+}
+
+.survev-live-source span i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--red);
+  box-shadow: 0 0 8px rgba(255, 117, 109, 0.65);
+}
+
+.survev-live-source strong {
+  font-size: 13px;
+}
+
+.survev-live-source small {
+  color: #aab6ac;
+  font-family: var(--mono);
+  font-size: 8px;
+}
+
+.survev-live-view.is-unavailable {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.survev-live-view.is-unavailable strong {
+  color: var(--text);
+}
+
+.survev-live-view.is-unavailable p {
+  margin: 0;
+  font-size: 12px;
 }
 
 .full-map {
@@ -3523,8 +3610,7 @@ select:focus-visible {
     grid-template-columns: 1fr;
   }
 
-  .full-map,
-  .player-perspective {
+  .survev-live-view {
     height: 600px;
   }
 
@@ -3629,8 +3715,7 @@ select:focus-visible {
     flex-wrap: wrap;
   }
 
-  .full-map,
-  .player-perspective {
+  .survev-live-view {
     height: 510px;
     min-height: 510px;
   }
@@ -3770,8 +3855,7 @@ select:focus-visible {
     gap: 6px;
   }
 
-  .full-map,
-  .player-perspective {
+  .survev-live-view {
     height: 430px;
     min-height: 430px;
   }

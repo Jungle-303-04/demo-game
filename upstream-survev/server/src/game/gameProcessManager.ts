@@ -53,7 +53,12 @@ class GameProcess {
     reusedCount = 0;
 
     opsiaSnapshot: OpsiaSnapshotData | undefined;
-    private readonly opsiaReservations = new Map<string, { expiresAt: number; sessionId?: string; ip: string }>();
+    private readonly opsiaReservations = new Map<string, {
+        expiresAt: number;
+        sessionId?: string;
+        ip: string;
+        spectator: boolean;
+    }>();
     private readonly pendingOpsiaResets = new Map<string, {
         resolve: (resetAt: number) => void;
         reject: (error: Error) => void;
@@ -197,6 +202,7 @@ class GameProcess {
                     expiresAt,
                     sessionId: token.opsiaSessionId,
                     ip: token.ip,
+                    spectator: token.spectator === true,
                 });
             }
             this.refreshOpsiaCapacity();
@@ -241,7 +247,8 @@ class GameProcess {
         if (
             [...requestedByIp].some(([ip, requested]) => (reservedByIp.get(ip) ?? 0) + requested > maxOutstandingPerIp)
         ) return false;
-        return tokens.length > 0 && this.avaliableSlots >= tokens.length;
+        const participantCount = tokens.filter((token) => token.spectator !== true).length;
+        return tokens.length > 0 && this.avaliableSlots >= participantCount;
     }
 
     private refreshOpsiaCapacity(): void {
@@ -258,7 +265,9 @@ class GameProcess {
         }
         const mapDef = MapDefs[this.gameData.mapName as MapDefKey];
         const maxPlayers = mapDef?.gameMode.maxPlayers ?? 0;
-        this.avaliableSlots = Math.max(0, maxPlayers - connectedPlayers - this.opsiaReservations.size);
+        const participantReservations = [...this.opsiaReservations.values()]
+            .filter((reservation) => !reservation.spectator).length;
+        this.avaliableSlots = Math.max(0, maxPlayers - connectedPlayers - participantReservations);
     }
 
     handleSocketOpen(socketId: string, ip: string) {

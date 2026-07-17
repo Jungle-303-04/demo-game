@@ -149,23 +149,3 @@ export const MATCH_PHASE_LABEL: Record<MatchPhase, string> = {
   in_match: "IN MATCH",
   finished: "FINISHED",
 };
-
-export const MAP_OBJECTS = [
-  { id: "warehouse", x: 17, y: 23, w: 9, h: 6, kind: "building" },
-  { id: "cabins", x: 34, y: 14, w: 6, h: 5, kind: "building" },
-  { id: "factory", x: 68, y: 22, w: 12, h: 8, kind: "building" },
-  { id: "hangar", x: 79, y: 49, w: 8, h: 12, kind: "building" },
-  { id: "village-a", x: 20, y: 69, w: 7, h: 6, kind: "building" },
-  { id: "village-b", x: 31, y: 78, w: 5, h: 5, kind: "building" },
-  { id: "bunker", x: 57, y: 74, w: 9, h: 7, kind: "building" },
-  { id: "port", x: 76, y: 82, w: 11, h: 5, kind: "building" },
-  { id: "lake", x: 45, y: 39, w: 13, h: 17, kind: "water" },
-] as const;
-
-export const MAP_LABELS = [
-  { name: "WAREHOUSE", x: 17, y: 19 },
-  { name: "FACTORY", x: 71, y: 18 },
-  { name: "CENTRAL LAKE", x: 45, y: 48 },
-  { name: "BUNKER", x: 59, y: 82 },
-  { name: "SOUTH PORT", x: 79, y: 89 },
-] as const;

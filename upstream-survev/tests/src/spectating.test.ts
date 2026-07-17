@@ -1,6 +1,8 @@
 import { expect, test } from "vitest";
+import type { Client } from "../../server/src/game/client.ts";
+import { NoOpSocket } from "../../server/src/game/socket.ts";
 import { GameConfig, TeamMode } from "../../shared/gameConfig.ts";
-import { MsgType, SpectateMsg } from "../../shared/net/net.ts";
+import { JoinMsg, MsgType, SpectateMsg } from "../../shared/net/net.ts";
 import { SpectateAction } from "../../shared/net/spectateMsg.ts";
 import { v2 } from "../../shared/utils/v2.ts";
 import { createGame } from "./gameTestHelpers.ts";
@@ -18,6 +20,39 @@ specPrev.action = SpectateAction.Prev;
 const spectateDeathCooldown = 2;
 const spectateTeammateCooldown = 0.1;
 const spectateSoloCooldown = 1;
+
+test("Opsia broadcast spectator follows a requested player without entering playerBarn", () => {
+    const game = createGame(TeamMode.Solo, "test_normal");
+    game.preventStart = true;
+
+    const target = game.playerBarn.addTestPlayer({});
+    target.opsiaSessionId = "target-session-00000001";
+    const participantCount = game.playerBarn.players.length;
+    const joinMsg = new JoinMsg();
+    joinMsg.matchPriv = "broadcast-token";
+    game.joinTokens.set(joinMsg.matchPriv, {
+        expiresAt: Date.now() + 10_000,
+        userId: null,
+        findGameIp: "127.0.0.1",
+        opsiaSessionId: "watch-session-000000001",
+        spectator: true,
+        spectateSessionId: target.opsiaSessionId,
+        groupData: {
+            autoFill: false,
+            playerCount: 0,
+            groupHashToJoin: "",
+        },
+    });
+
+    const socket = new NoOpSocket<Client | undefined>();
+    const spectator = game.clientBarn.addClient(socket, joinMsg);
+
+    expect(spectator?.player).toBeUndefined();
+    expect(spectator?.spectatorOnly).toBe(true);
+    expect(spectator?.spectating).toBeSamePlayer(target);
+    expect(game.playerBarn.players).toHaveLength(participantCount);
+    expect(() => spectator?.sendMsgs()).not.toThrow();
+});
 
 test("Spectate killer", () => {
     const game = createGame(TeamMode.Solo, "test_normal");

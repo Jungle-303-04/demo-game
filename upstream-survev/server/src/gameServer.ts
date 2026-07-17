@@ -34,6 +34,8 @@ const zOpsiaFindGame = z.object({
     autoFill: z.boolean(),
     gameModeIdx: z.number(),
     opsiaSessionId: z.string().min(16).max(128).optional(),
+    spectator: z.boolean().optional(),
+    spectateSessionId: z.string().min(16).max(128).optional(),
 }).passthrough();
 
 const controlToken = readControlToken();
@@ -186,6 +188,8 @@ class GameServer {
                     userId: null,
                     ip,
                     opsiaSessionId: body.opsiaSessionId,
+                    spectator: body.spectator === true,
+                    spectateSessionId: body.spectator === true ? body.spectateSessionId : undefined,
                 }],
             });
         } catch (error) {

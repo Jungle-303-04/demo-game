@@ -50,7 +50,7 @@ export class ClientBarn {
         this.msgsToSend.stream.index = 0;
     }
 
-    addClientWithPlayer(socket: ClientSocket<Client | undefined>, joinMsg: net.JoinMsg) {
+    addClient(socket: ClientSocket<Client | undefined>, joinMsg: net.JoinMsg) {
         const joinData = this.game.joinTokens.get(joinMsg.matchPriv);
 
         if (!joinData || joinData.expiresAt < Date.now()) {
@@ -84,6 +84,18 @@ export class ClientBarn {
 
         const client = new Client(this.game, socket, joinData.userId, joinData.findGameIp);
         this.clients.push(client);
+
+        if (joinData.spectator) {
+            client.spectatorOnly = true;
+            client.spectateSessionId = joinData.spectateSessionId;
+            const requestedPlayer = joinData.spectateSessionId
+                ? this.game.playerBarn.livingPlayers.find(
+                    (player) => player.opsiaSessionId === joinData.spectateSessionId,
+                )
+                : undefined;
+            client.spectating = requestedPlayer ?? client.getNewPlayerToSpectate();
+            return client;
+        }
 
         const player = this.game.playerBarn.addPlayer(client, joinMsg, joinData);
         client.player = player;
@@ -213,7 +225,7 @@ export class ClientBarn {
         if (!msg) return;
 
         if (type === net.MsgType.Join && !client) {
-            client = this.game.clientBarn.addClientWithPlayer(socket, msg as net.JoinMsg);
+            client = this.game.clientBarn.addClient(socket, msg as net.JoinMsg);
             return;
         }
 
@@ -228,7 +240,7 @@ export class ClientBarn {
         }
         // Validate at the actual survev decoded-input boundary. There is no
         // parallel demo protocol or synthetic movement loop.
-        if (type === net.MsgType.Input && !validateInput(this.game, client.player!)) {
+        if (type === net.MsgType.Input && client.player && !validateInput(this.game, client.player)) {
             return;
         }
         client.handleMsg(type, msg);
@@ -283,6 +295,8 @@ export class Client {
 
     lastPlayerId = 0;
     player?: Player = undefined;
+    spectatorOnly = false;
+    spectateSessionId?: string;
 
     /** true when player starts spectating new player, only stays true for that given tick */
     startedSpectating: boolean = false;
@@ -373,6 +387,15 @@ export class Client {
     }
 
     update(dt: number) {
+        if (this.spectatorOnly && !this.spectating) {
+            const requestedPlayer = this.spectateSessionId
+                ? this.game.playerBarn.livingPlayers.find(
+                    (player) => player.opsiaSessionId === this.spectateSessionId,
+                )
+                : undefined;
+            this.spectating = requestedPlayer ?? this.getNewPlayerToSpectate();
+        }
+
         if (this.spectating) {
             let newPlayerToSpectate: Player | undefined = undefined;
 
@@ -788,7 +811,7 @@ export class Client {
         }
     }
 
-    getNewPlayerToSpectate(): Player {
+    getNewPlayerToSpectate(): Player | undefined {
         const spectateTeam = this.shouldSpectateTeam();
         let killer: Player | undefined = undefined;
         if (this.player && !spectateTeam) {

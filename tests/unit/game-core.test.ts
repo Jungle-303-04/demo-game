@@ -59,7 +59,7 @@ test("public find-game admission is bounded and always terminates on internal fa
 test("decoded survev InputMsg is rate-validated and strict mode disconnects the violating real Client", async () => {
   const client = await readFile(upstream("server/src/game/client.ts"), "utf8");
   const runtime = await readFile(upstream("server/src/opsia/runtime.ts"), "utf8");
-  assert.match(client, /type === net\.MsgType\.Input && !validateInput/);
+  assert.match(client, /type === net\.MsgType\.Input && client\.player && !validateInput/);
   assert.match(runtime, /timestamps\.length > 60/);
   assert.match(runtime, /player\.client\.disconnect\("input_rate_exceeded"\)/);
 });

@@ -46,6 +46,11 @@ export const zFindGamePrivateBody = z.object({
             // Only consumed by the game-process reconnect adapter. It is never
             // surfaced to an Opsia recovery action or a Kubernetes mutation.
             opsiaSessionId: z.string().min(16).max(128).optional(),
+            // Broadcast clients use the real Survev protocol without creating
+            // a Player in playerBarn. An optional target keeps admin viewing
+            // pinned to the selected live session.
+            spectator: z.boolean().optional(),
+            spectateSessionId: z.string().min(16).max(128).optional(),
             loadout: loadoutSchema.optional(),
             quests: z.array(z.string()).optional(),
         }),
