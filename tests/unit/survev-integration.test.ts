@@ -37,6 +37,9 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /url\.searchParams\.set\("target", player\.id\)/);
   assert.match(adminUi, /function PlayerSpectatorView/);
   assert.match(adminUi, /<iframe/);
+  assert.match(adminUi, /documentPictureInPicture/);
+  assert.match(adminUi, /documentPip\.requestWindow/);
+  assert.match(adminUi, /PIP로 관전/);
   assert.match(adminUi, /전체 맵으로 돌아가기/);
   assert.match(adminUi, /상세 화면에서 실시간 전술 맵 확인/);
   assert.match(adminUi, /className="player-marker-core"/);

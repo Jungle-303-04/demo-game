@@ -29,6 +29,13 @@ import {
 
 type StyleWithVariables = CSSProperties & Record<`--${string}`, string | number>;
 type DetailTab = "world" | "manage";
+interface DocumentPictureInPictureApi {
+  readonly window: Window | null;
+  requestWindow(options: { width: number; height: number }): Promise<Window>;
+}
+type WindowWithDocumentPictureInPicture = Window & {
+  documentPictureInPicture?: DocumentPictureInPictureApi;
+};
 type ModalState =
   | { type: "create" }
   | { type: "edit"; roomId: string }
@@ -630,6 +637,83 @@ function PlayerSpectatorView({
   room: GameRoom;
   player: PlayerTelemetry;
 }) {
+  const pipWindowRef = useRef<Window | null>(null);
+  const [isPipOpen, setIsPipOpen] = useState(false);
+  const [pipError, setPipError] = useState("");
+  const watchUrl = roomWatchUrl(room, player);
+  const documentPip = (window as WindowWithDocumentPictureInPicture)
+    .documentPictureInPicture;
+
+  useEffect(() => {
+    return () => {
+      const pipWindow = pipWindowRef.current;
+      pipWindowRef.current = null;
+      if (pipWindow && !pipWindow.closed) pipWindow.close();
+    };
+  }, [watchUrl]);
+
+  async function togglePictureInPicture() {
+    const currentPipWindow = pipWindowRef.current;
+    if (currentPipWindow && !currentPipWindow.closed) {
+      currentPipWindow.close();
+      return;
+    }
+
+    if (!documentPip || pipError) {
+      window.open(watchUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+
+    try {
+      const pipRequest = documentPip.requestWindow({
+        width: 520,
+        height: 360,
+      });
+      setPipError("");
+      const pipWindow = await pipRequest;
+      pipWindowRef.current = pipWindow;
+      pipWindow.document.title = `${player.name} 실시간 관전`;
+      pipWindow.document.documentElement.lang = "ko";
+
+      const style = pipWindow.document.createElement("style");
+      style.textContent = `
+        html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; background: #020403; }
+        iframe { display: block; width: 100%; height: 100%; border: 0; background: #020403; }
+        .pip-live { position: fixed; z-index: 2; left: 10px; top: 10px; padding: 6px 8px;
+          border: 1px solid rgba(184, 229, 120, 0.4); border-radius: 5px;
+          background: rgba(3, 8, 5, 0.78); color: #dff5b9; font: 700 10px monospace; }
+      `;
+
+      const frame = pipWindow.document.createElement("iframe");
+      frame.allow = "autoplay; fullscreen";
+      frame.src = watchUrl;
+      frame.title = `${player.name} Survev PIP 관전`;
+
+      const liveLabel = pipWindow.document.createElement("div");
+      liveLabel.className = "pip-live";
+      liveLabel.textContent = `LIVE · ${player.name}`;
+
+      pipWindow.document.head.append(style);
+      pipWindow.document.body.append(frame, liveLabel);
+      pipWindow.addEventListener(
+        "pagehide",
+        () => {
+          if (pipWindowRef.current !== pipWindow) return;
+          pipWindowRef.current = null;
+          setIsPipOpen(false);
+        },
+        { once: true },
+      );
+      setIsPipOpen(true);
+    } catch (error) {
+      setPipError(
+        error instanceof Error
+          ? error.message
+          : "PIP 창을 열지 못했습니다. 새 창 관전을 이용해 주세요.",
+      );
+    }
+  }
+
   if (!isRoomActive(room.status)) {
     return (
       <div className="player-spectator-view is-unavailable">
@@ -640,19 +724,25 @@ function PlayerSpectatorView({
     );
   }
 
-  const watchUrl = roomWatchUrl(room, player);
-
   return (
     <div
       className="player-spectator-view"
       aria-label={`${player.name} 실제 관전 화면`}
     >
-      <iframe
-        allow="autoplay; fullscreen"
-        key={`${room.id}:${player.id}`}
-        src={watchUrl}
-        title={`${player.name} Survev 실시간 관전`}
-      />
+      {isPipOpen ? (
+        <div className="player-spectator-pip-placeholder">
+          <span>PIP ACTIVE</span>
+          <strong>{player.name} 관전 중</strong>
+          <small>항상 위에 표시되는 PIP 창에서 실시간 시점을 보고 있습니다.</small>
+        </div>
+      ) : (
+        <iframe
+          allow="autoplay; fullscreen"
+          key={`${room.id}:${player.id}`}
+          src={watchUrl}
+          title={`${player.name} Survev 실시간 관전`}
+        />
+      )}
       <div className="player-spectator-source">
         <span><i />SURVEV SPECTATOR · LIVE</span>
         <strong>{player.name}</strong>
@@ -660,14 +750,36 @@ function PlayerSpectatorView({
           {player.isBot ? "LOAD TEST BOT" : "CONNECTED PLAYER"} · {player.squad}
         </small>
       </div>
-      <a
-        className="player-spectator-popout"
-        href={watchUrl}
-        rel="noreferrer"
-        target="_blank"
-      >
-        새 창에서 관전 ↗
-      </a>
+      <div className="player-spectator-actions">
+        <button
+          className="player-spectator-pip"
+          onClick={() => void togglePictureInPicture()}
+          type="button"
+        >
+          {documentPip && !pipError
+            ? isPipOpen
+              ? "PIP 닫기"
+              : "PIP로 관전"
+            : "새 창으로 관전"}
+        </button>
+        <a
+          className="player-spectator-popout"
+          href={watchUrl}
+          rel="noreferrer"
+          target="_blank"
+        >
+          새 창 ↗
+        </a>
+      </div>
+      {pipError && (
+        <div
+          className="player-spectator-pip-error"
+          role="status"
+          title={pipError}
+        >
+          PIP 열기 실패 · 새 창 관전을 이용해 주세요
+        </div>
+      )}
     </div>
   );
 }
