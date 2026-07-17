@@ -459,6 +459,7 @@ function AdminTacticalMap({
 
   const coastInset = Math.max(0, map.shoreInset);
   const grassInset = coastInset + Math.max(0, map.grassInset);
+  const mapAspect = map.width / map.height;
 
   return (
     <div
@@ -466,10 +467,21 @@ function AdminTacticalMap({
       aria-label={`${room.name} 실시간 관리자 전술 맵`}
       data-map-seed={room.seed}
     >
+      <div
+        className="admin-map-viewport"
+        data-map-native-size={`${map.width}x${map.height}`}
+        style={
+          {
+            "--map-aspect": `${map.width} / ${map.height}`,
+            "--map-width-by-height": `${mapAspect * 100}cqh`,
+            "--map-height-by-width": `${(1 / mapAspect) * 100}cqw`,
+          } as StyleWithVariables
+        }
+      >
       <svg
         aria-hidden="true"
         className="admin-map-surface"
-        preserveAspectRatio="none"
+        preserveAspectRatio="xMidYMid meet"
         viewBox={`0 0 ${map.width} ${map.height}`}
       >
         <rect className="admin-map-water" width={map.width} height={map.height} />
@@ -624,6 +636,7 @@ function AdminTacticalMap({
         <span><i className="legend-red" />RED</span>
         <span><i className="legend-blue" />BLUE</span>
         <span><i className="legend-zone" />GAS</span>
+      </div>
       </div>
     </div>
   );

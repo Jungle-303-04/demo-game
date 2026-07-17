@@ -1364,10 +1364,28 @@ select:focus-visible {
 
 .admin-tactical-map {
   position: relative;
+  display: grid;
+  place-items: center;
   height: clamp(560px, calc(100vh - 250px), 820px);
   min-height: 560px;
   overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(77, 110, 78, 0.16), transparent 58%),
+    linear-gradient(135deg, #07110f 0%, #0c1b18 50%, #07110f 100%);
+  container-type: size;
+  isolation: isolate;
+}
+
+.admin-map-viewport {
+  position: relative;
+  width: min(100cqw, var(--map-width-by-height));
+  height: min(100cqh, var(--map-height-by-width));
+  overflow: hidden;
+  aspect-ratio: var(--map-aspect);
   background: #102532;
+  box-shadow:
+    0 0 0 1px rgba(196, 224, 179, 0.16),
+    0 18px 48px rgba(0, 0, 0, 0.32);
   isolation: isolate;
 }
 
