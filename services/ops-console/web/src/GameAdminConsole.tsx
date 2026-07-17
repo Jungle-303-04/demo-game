@@ -158,6 +158,15 @@ function StatusBadge({ status }: { status: RoomStatus }) {
   );
 }
 
+function roomWatchUrl(room: GameRoom, player: PlayerTelemetry) {
+  const url = new URL(room.serviceUrl, window.location.origin);
+  url.pathname = url.pathname.replace(/\/play\/(room-\d+)\/?$/, "/watch/$1/");
+  url.search = "";
+  url.searchParams.set("view", "player");
+  url.searchParams.set("target", player.id);
+  return url.toString();
+}
+
 function RoomCard({
   room,
   canScale,
@@ -393,8 +402,8 @@ function RoomDirectory({
         <i>→</i>
         <div>
           <span>02</span>
-          <strong>관리자 전술 맵</strong>
-          <p>실제 맵 좌표 위에서 모든 플레이어를 동시에 추적</p>
+          <strong>전술 맵 & 플레이어 관전</strong>
+          <p>전체 위치를 확인하고 실제 플레이어 시점으로 전환</p>
         </div>
         <i>→</i>
         <div>
@@ -614,6 +623,55 @@ function AdminTacticalMap({
   );
 }
 
+function PlayerSpectatorView({
+  room,
+  player,
+}: {
+  room: GameRoom;
+  player: PlayerTelemetry;
+}) {
+  if (!isRoomActive(room.status)) {
+    return (
+      <div className="player-spectator-view is-unavailable">
+        <span className="map-empty-signal" />
+        <strong>게임 서버가 중지되어 있습니다</strong>
+        <p>서버가 다시 실행되면 실제 플레이어 관전을 연결합니다.</p>
+      </div>
+    );
+  }
+
+  const watchUrl = roomWatchUrl(room, player);
+
+  return (
+    <div
+      className="player-spectator-view"
+      aria-label={`${player.name} 실제 관전 화면`}
+    >
+      <iframe
+        allow="autoplay; fullscreen"
+        key={`${room.id}:${player.id}`}
+        src={watchUrl}
+        title={`${player.name} Survev 실시간 관전`}
+      />
+      <div className="player-spectator-source">
+        <span><i />SURVEV SPECTATOR · LIVE</span>
+        <strong>{player.name}</strong>
+        <small>
+          {player.isBot ? "LOAD TEST BOT" : "CONNECTED PLAYER"} · {player.squad}
+        </small>
+      </div>
+      <a
+        className="player-spectator-popout"
+        href={watchUrl}
+        rel="noreferrer"
+        target="_blank"
+      >
+        새 창에서 관전 ↗
+      </a>
+    </div>
+  );
+}
+
 function PlayerRoster({
   room,
   selectedPlayerId,
@@ -713,7 +771,7 @@ function PlayerRoster({
               <i style={{ width: `${player.health}%` }} />
             </span>
             <span className="player-list-kills">{player.kills}K</span>
-            <span className="player-watch-label">찾기</span>
+            <span className="player-watch-label">관전</span>
           </button>
         ))}
         {filteredPlayers.length === 0 && (
@@ -723,7 +781,7 @@ function PlayerRoster({
         )}
       </div>
       <div className="roster-hint">
-        맵 마커나 목록을 누르면 관리자 전술 맵에서 해당 플레이어를 강조합니다.
+        맵 마커나 목록을 누르면 실제 Survev 플레이어 관전으로 전환됩니다.
       </div>
     </aside>
   );
@@ -759,9 +817,17 @@ function WorldTab({
     >
       <div className="world-toolbar">
         <div>
-          <span className="eyebrow">LIVE ADMIN TACTICAL MAP</span>
-          <h2>실시간 관리자 전술 맵</h2>
-          <p>게임 프로세스의 실제 GameMap과 모든 플레이어 좌표를 한 화면에서 동시에 추적합니다.</p>
+          <span className="eyebrow">
+            {selectedPlayer ? "LIVE PLAYER SPECTATOR" : "LIVE ADMIN TACTICAL MAP"}
+          </span>
+          <h2>
+            {selectedPlayer ? `${selectedPlayer.name} 실시간 관전` : "실시간 관리자 전술 맵"}
+          </h2>
+          <p>
+            {selectedPlayer
+              ? "실제 Survev spectator 연결로 선택한 플레이어의 게임 시점을 봅니다."
+              : "게임 프로세스의 실제 GameMap과 모든 플레이어 좌표를 한 화면에서 동시에 추적합니다."}
+          </p>
         </div>
         <div className="world-toolbar-actions">
           <a
@@ -778,7 +844,7 @@ function WorldTab({
               onClick={onClearPlayer}
               type="button"
             >
-              선택 해제
+              전체 맵으로 돌아가기
             </button>
           )}
           <span>
@@ -788,7 +854,7 @@ function WorldTab({
             봇 <strong>{bots}</strong>
           </span>
           <span>
-            추적 <strong>{room.players.length}</strong>
+            플레이어 <strong>{room.players.length}</strong>
           </span>
           <button
             aria-controls="player-roster"
@@ -818,12 +884,16 @@ function WorldTab({
             <span>Seed {room.seed}</span>
             <span>{room.tickRate.toFixed(1)}Hz measured</span>
           </div>
-          <AdminTacticalMap
-            room={room}
-            selectedPlayer={selectedPlayer}
-            onSelectPlayer={onSelectPlayer}
-            onClearPlayer={onClearPlayer}
-          />
+          {selectedPlayer ? (
+            <PlayerSpectatorView room={room} player={selectedPlayer} />
+          ) : (
+            <AdminTacticalMap
+              room={room}
+              selectedPlayer={selectedPlayer}
+              onSelectPlayer={onSelectPlayer}
+              onClearPlayer={onClearPlayer}
+            />
+          )}
           {room.status === "stopped" && (
             <button
               className="map-management-cta"
@@ -1648,7 +1718,7 @@ function RoomDetail({
         >
           <span className="tab-number">01</span>
           <span>
-            <strong>관리자 전술 맵 & 플레이어 추적</strong>
+            <strong>관리자 전술 맵 & 플레이어 관전</strong>
             <small>전체 위치에서 한 명의 2D 시점까지</small>
           </span>
         </button>

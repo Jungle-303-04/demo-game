@@ -33,13 +33,17 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /className="admin-map-viewport"/);
   assert.match(adminUi, /"--map-width-by-height": `\$\{mapAspect \* 100\}cqh`/);
   assert.match(adminUi, /preserveAspectRatio="xMidYMid meet"/);
+  assert.match(adminUi, /function roomWatchUrl/);
+  assert.match(adminUi, /url\.searchParams\.set\("target", player\.id\)/);
+  assert.match(adminUi, /function PlayerSpectatorView/);
+  assert.match(adminUi, /<iframe/);
+  assert.match(adminUi, /전체 맵으로 돌아가기/);
   assert.match(adminUi, /상세 화면에서 실시간 전술 맵 확인/);
   assert.match(adminUi, /className="player-marker-core"/);
   assert.match(adminUi, /capabilities\.scalingAvailable && \(/);
   assert.doesNotMatch(adminUi, /방 배포 사용 불가|현재 런타임은 Kubernetes StatefulSet/);
   assert.doesNotMatch(adminUi, /RoomMiniMap|LIVE COORDINATES|mini-map-zone/);
   assert.doesNotMatch(adminUi, /preserveAspectRatio="none"/);
-  assert.doesNotMatch(adminUi, /<iframe|roomWatchUrl/);
   assert.doesNotMatch(adminUi, /PlayerPerspective|MAP_OBJECTS|MAP_LABELS/);
   assert.match(docker, /WORKDIR \/app\/upstream-survev\/server/);
   assert.match(docker, /CMD \["node", "--enable-source-maps", "dist\/gameServer\.js"\]/);
