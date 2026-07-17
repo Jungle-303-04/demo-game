@@ -158,41 +158,6 @@ function StatusBadge({ status }: { status: RoomStatus }) {
   );
 }
 
-function RoomMiniMap({ room }: { room: GameRoom }) {
-  return (
-    <div className="room-mini-map" aria-hidden="true">
-      <span className="mini-map-source">LIVE COORDINATES</span>
-      <div
-        className="mini-map-zone"
-        style={{
-          left: `${room.zone.x}%`,
-          top: `${room.zone.y}%`,
-          width: `${room.zone.radius * 1.35}%`,
-        }}
-      />
-      {room.players.slice(0, 32).map((player) => (
-        <i
-          className={player.isBot ? "is-bot" : ""}
-          key={player.id}
-          style={
-            {
-              left: `${player.x}%`,
-              top: `${player.y}%`,
-              "--player-color": player.color,
-            } as StyleWithVariables
-          }
-        />
-      ))}
-      {room.status === "stopped" && (
-        <div className="mini-map-offline">
-          <span />
-          SCALE TO ZERO
-        </div>
-      )}
-    </div>
-  );
-}
-
 function RoomCard({
   room,
   canScale,
@@ -233,7 +198,14 @@ function RoomCard({
       </div>
       <button className="room-card-open" onClick={onOpen} type="button">
         <div className="room-card-preview">
-          <RoomMiniMap room={room} />
+          <div className="room-card-cover" aria-hidden="true">
+            <i><span /></i>
+            <div>
+              <span>MANAGED GAME ROOM</span>
+              <strong>{room.map}</strong>
+              <small>상세 화면에서 실시간 전술 맵 확인</small>
+            </div>
+          </div>
           <div className="room-card-preview-top">
             <StatusBadge status={room.status} />
             <span className={`health-chip health-${health.tone}`}>
@@ -241,8 +213,8 @@ function RoomCard({
             </span>
           </div>
           <div className="room-card-preview-bottom">
-            <span>{room.map}</span>
-            <span>{MATCH_PHASE_LABEL[room.matchPhase]}</span>
+            <span>{room.mode}</span>
+            <span>OPEN ADMIN VIEW ↗</span>
           </div>
         </div>
         <div className="room-card-body">
