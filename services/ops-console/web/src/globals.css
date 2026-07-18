@@ -4540,6 +4540,1090 @@ select:focus-visible {
   }
 }
 
+/* Presentation mode is the console's default density. The demo is usually
+ * viewed from several metres away, so secondary telemetry must remain
+ * readable without browser zoom shrinking the responsive viewport. */
+:root {
+  --ui-micro: 12px;
+  --ui-label: 13px;
+  --ui-body: 15px;
+  --ui-control: 16px;
+  --ui-value: 20px;
+}
+
+body {
+  font-size: var(--ui-body);
+  line-height: 1.5;
+}
+
+.console-shell {
+  padding: 0 32px 30px;
+}
+
+.console-topbar {
+  min-height: 92px;
+}
+
+.brand-mark {
+  width: 48px;
+  height: 48px;
+  flex-basis: 48px;
+}
+
+.console-brand strong {
+  font-size: 19px;
+}
+
+.console-brand small,
+.console-connection small,
+.console-environment,
+.console-connection strong,
+.console-connection > b,
+.environment-chip {
+  font-size: var(--ui-micro);
+}
+
+.control-plane-notice {
+  padding: 13px 16px;
+  font-size: var(--ui-body);
+}
+
+.control-plane-notice strong,
+.eyebrow {
+  font-size: var(--ui-label);
+}
+
+.room-directory {
+  width: min(1740px, 100%);
+  padding: 48px 0 36px;
+}
+
+.directory-hero {
+  gap: 64px;
+  margin-bottom: 38px;
+}
+
+.directory-copy h1 {
+  font-size: clamp(48px, 4vw, 64px);
+}
+
+.directory-copy p {
+  max-width: 760px;
+  font-size: 18px;
+  line-height: 1.7;
+}
+
+.directory-summary > div {
+  padding: 23px 19px;
+}
+
+.directory-summary span {
+  font-size: var(--ui-label);
+}
+
+.directory-summary strong {
+  font-size: 32px;
+}
+
+.directory-summary small {
+  font-size: var(--ui-control);
+}
+
+.room-grid {
+  gap: 22px;
+}
+
+.room-card,
+.add-room-card {
+  min-height: 560px;
+}
+
+.room-card-actions button {
+  min-width: 58px;
+  min-height: 44px;
+  padding: 0 13px;
+  font-size: 14px;
+}
+
+.room-card-preview {
+  height: 214px;
+}
+
+.room-card-cover {
+  gap: 22px;
+  padding: 48px 28px 32px;
+}
+
+.room-card-cover > i {
+  width: 58px;
+  height: 58px;
+  flex-basis: 58px;
+}
+
+.room-card-cover > div span,
+.room-card-cover > div small {
+  font-size: var(--ui-micro);
+}
+
+.room-card-cover > div strong {
+  font-size: 22px;
+}
+
+.room-card-preview-bottom,
+.status-badge,
+.health-chip {
+  font-size: var(--ui-label);
+}
+
+.status-badge,
+.health-chip {
+  padding: 7px 9px;
+}
+
+.status-badge i,
+.status-dot,
+.pod-ready-dot {
+  width: 9px;
+  height: 9px;
+  flex-basis: 9px;
+}
+
+.room-card-body {
+  padding: 23px 24px 22px;
+}
+
+.room-card-title h2 {
+  font-size: 26px;
+}
+
+.room-card-title p {
+  margin-top: 7px;
+  font-size: var(--ui-body);
+}
+
+.room-open-arrow {
+  font-size: 25px;
+}
+
+.room-card-tags span,
+.room-capacity-summary,
+.room-card-pod {
+  font-size: var(--ui-label);
+}
+
+.room-card-tags span {
+  padding: 6px 9px;
+}
+
+.room-capacity-summary {
+  margin-top: 21px;
+}
+
+.room-capacity-summary strong {
+  font-size: 24px;
+}
+
+.room-capacity-bar {
+  height: 8px;
+  margin-top: 10px;
+}
+
+.room-card-metrics > div {
+  padding: 13px 10px;
+}
+
+.room-card-metrics span {
+  font-size: var(--ui-micro);
+}
+
+.room-card-metrics strong {
+  margin-top: 7px;
+  font-size: var(--ui-body);
+}
+
+.room-card-pod {
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  margin-top: 16px;
+}
+
+.add-room-card > strong {
+  font-size: 26px;
+}
+
+.add-room-card > p,
+.add-room-flow {
+  font-size: var(--ui-body);
+}
+
+.presentation-flow {
+  padding: 27px 31px;
+}
+
+.presentation-flow > div > span {
+  font-size: 28px;
+}
+
+.presentation-flow strong {
+  font-size: 18px;
+}
+
+.presentation-flow p {
+  font-size: 14px;
+}
+
+.room-detail {
+  width: min(1820px, 100%);
+  padding: 16px 0 26px;
+}
+
+.room-detail-header {
+  grid-template-columns: 124px minmax(360px, 1fr) auto;
+  gap: 20px;
+  min-height: 88px;
+  padding: 12px 16px;
+}
+
+.back-to-rooms {
+  min-height: 48px;
+  padding: 0 15px;
+  font-size: var(--ui-body);
+}
+
+.back-to-rooms span {
+  font-size: 21px;
+}
+
+.room-detail-title {
+  column-gap: 13px;
+  row-gap: 3px;
+}
+
+.room-detail-title .status-badge,
+.room-detail-title .match-phase-chip,
+.match-phase-chip,
+.room-id-chip,
+.capacity-chip,
+.event-live-chip {
+  font-size: var(--ui-micro);
+}
+
+.room-detail-title .status-badge,
+.room-detail-title .match-phase-chip {
+  padding: 5px 7px;
+}
+
+.room-detail-title h1 {
+  font-size: 28px;
+}
+
+.room-detail-title p {
+  font-size: var(--ui-body);
+}
+
+.room-detail-quick-stats {
+  grid-template-columns: repeat(4, minmax(112px, 1fr));
+}
+
+.room-detail-quick-stats > div {
+  padding: 10px 14px;
+}
+
+.room-detail-quick-stats span,
+.room-detail-quick-stats small {
+  font-size: var(--ui-micro);
+}
+
+.room-detail-quick-stats strong {
+  margin-top: 5px;
+  font-size: 19px;
+}
+
+.primary-tabs {
+  gap: 5px;
+  margin-top: 10px;
+  padding: 5px;
+}
+
+.primary-tabs > button {
+  min-height: 48px;
+  gap: 9px;
+  padding: 0 17px;
+}
+
+.tab-number {
+  font-size: var(--ui-label);
+}
+
+.primary-tabs strong {
+  font-size: var(--ui-control);
+}
+
+.detail-tab-panel {
+  margin-top: 10px;
+}
+
+.world-tab-panel,
+.management-tab-panel {
+  border-radius: 10px;
+}
+
+.world-toolbar,
+.management-intro {
+  gap: 20px;
+  padding-bottom: 14px;
+}
+
+.world-toolbar > div:first-child,
+.management-intro > div:first-child {
+  gap: 14px;
+}
+
+.world-toolbar .eyebrow,
+.management-intro .eyebrow {
+  font-size: var(--ui-label);
+}
+
+.world-toolbar h2,
+.management-intro h2 {
+  font-size: 23px;
+}
+
+.world-toolbar p,
+.management-intro p {
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.world-toolbar-actions {
+  gap: 10px;
+}
+
+.world-toolbar-actions > span {
+  min-width: 86px;
+  padding: 9px 11px;
+  font-size: var(--ui-label);
+}
+
+.world-toolbar-actions strong {
+  font-size: var(--ui-body);
+}
+
+.world-toolbar-actions .button,
+.button {
+  min-height: 48px;
+  padding: 0 18px;
+  font-size: var(--ui-body);
+}
+
+.roster-toggle {
+  min-width: 150px;
+}
+
+.world-stage-meta {
+  min-height: 45px;
+  padding: 0 15px;
+  font-size: var(--ui-label);
+}
+
+.player-spectator-source,
+.admin-map-source {
+  min-width: 280px;
+  padding: 14px 16px;
+}
+
+.player-spectator-source span,
+.player-spectator-source small,
+.admin-map-source span,
+.admin-map-source small,
+.admin-map-selection > div,
+.admin-map-selection small,
+.admin-map-selection button,
+.admin-map-no-players,
+.player-spectator-pip,
+.player-spectator-popout,
+.player-spectator-pip-error {
+  font-size: var(--ui-micro);
+}
+
+.player-spectator-source strong,
+.admin-map-source strong,
+.admin-map-selection strong {
+  font-size: 18px;
+}
+
+.player-spectator-pip,
+.player-spectator-popout {
+  min-width: 46px;
+  min-height: 46px;
+}
+
+.player-spectator-view.is-unavailable p,
+.admin-tactical-map.is-unavailable p,
+.map-empty-state p {
+  font-size: var(--ui-body);
+}
+
+.admin-map-places text {
+  font-size: 22px;
+}
+
+.map-label {
+  font-size: clamp(12px, 0.85vw, 15px);
+}
+
+.player-marker {
+  width: 46px;
+  height: 46px;
+}
+
+.player-marker-core {
+  inset: 8px;
+  border-width: 3px;
+}
+
+.player-marker-direction {
+  left: 21px;
+  top: -1px;
+  width: 5px;
+  height: 17px;
+  transform-origin: 50% 24px;
+}
+
+.player-marker-label {
+  top: 50px;
+  padding: 5px 8px;
+  font-size: var(--ui-label);
+}
+
+.map-empty-state {
+  width: min(480px, 78%);
+  padding: 36px 30px;
+}
+
+.map-empty-state strong {
+  font-size: 20px;
+}
+
+.map-compass {
+  width: 46px;
+  height: 46px;
+  font-size: var(--ui-label);
+}
+
+.map-scale,
+.map-legend,
+.live-follow-badge,
+.perspective-top-left > small,
+.perspective-mini-map > span,
+.perspective-coordinate {
+  font-size: var(--ui-micro);
+}
+
+.perspective-top-left {
+  padding: 16px 18px;
+}
+
+.perspective-top-left > strong {
+  font-size: 26px;
+}
+
+.perspective-mini-map {
+  width: 190px;
+  height: 142px;
+}
+
+.perspective-combat-hud {
+  grid-template-columns: 220px 220px 220px 96px;
+  gap: 10px;
+  padding: 12px;
+}
+
+.perspective-combat-hud > div {
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.perspective-combat-hud span,
+.hud-weapon b {
+  font-size: var(--ui-micro);
+}
+
+.perspective-combat-hud strong {
+  font-size: var(--ui-body);
+}
+
+.hud-kills strong {
+  font-size: 24px;
+}
+
+.player-roster-panel {
+  width: 420px;
+}
+
+.player-roster-heading {
+  min-height: 82px;
+  padding: 17px 19px;
+}
+
+.player-roster-heading span,
+.section-heading span,
+.deployment-flow-heading span {
+  font-size: var(--ui-label);
+}
+
+.player-roster-heading strong,
+.deployment-flow-heading strong,
+.section-heading strong {
+  font-size: 19px;
+}
+
+.player-roster-heading > b {
+  min-width: 48px;
+  padding: 8px 10px;
+  font-size: var(--ui-body);
+}
+
+.player-search {
+  height: 52px;
+  margin: 14px 14px 10px;
+  padding: 0 13px;
+}
+
+.player-search input,
+.player-filter button {
+  font-size: var(--ui-body);
+}
+
+.player-filter {
+  gap: 7px;
+  padding: 0 14px 13px;
+}
+
+.player-filter button {
+  min-height: 42px;
+}
+
+.player-list-row {
+  min-height: 70px;
+  grid-template-columns: 44px minmax(0, 1fr) 52px 34px auto;
+  gap: 10px;
+  padding: 8px 10px;
+}
+
+.player-list-avatar {
+  width: 42px;
+  height: 42px;
+  font-size: var(--ui-micro);
+}
+
+.player-list-name strong {
+  font-size: var(--ui-body);
+}
+
+.player-list-name small,
+.player-list-kills,
+.player-watch-label,
+.roster-hint {
+  font-size: var(--ui-micro);
+}
+
+.player-list-empty {
+  font-size: var(--ui-body);
+}
+
+.management-tab-panel {
+  padding: 26px;
+}
+
+.overall-health {
+  min-width: 230px;
+  padding: 11px 15px;
+}
+
+.overall-health span,
+.overall-health small {
+  font-size: var(--ui-micro);
+}
+
+.overall-health strong {
+  font-size: var(--ui-value);
+}
+
+.deployment-flow-card,
+.load-test-card,
+.runtime-card,
+.operations-card,
+.event-timeline-card {
+  padding: 22px;
+}
+
+.section-heading p {
+  max-width: 640px;
+  font-size: var(--ui-body);
+}
+
+.deployment-flow {
+  gap: 15px;
+  margin-top: 20px;
+}
+
+.deployment-node {
+  min-height: 92px;
+  grid-template-columns: 50px minmax(0, 1fr);
+  column-gap: 13px;
+  padding: 17px;
+}
+
+.deployment-node > span,
+.deployment-node small,
+.node-state,
+.recovery-progress strong {
+  font-size: var(--ui-micro);
+}
+
+.deployment-node-icon {
+  width: 50px;
+  height: 50px;
+  font-size: 17px;
+}
+
+.deployment-node strong,
+.recovery-progress span,
+.recovery-scope-note {
+  font-size: var(--ui-body);
+}
+
+.management-metrics-grid {
+  grid-template-columns: repeat(3, minmax(210px, 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.metric-card {
+  min-height: 166px;
+  padding: 19px 19px 42px;
+}
+
+.metric-card > span,
+.metric-card > small {
+  font-size: var(--ui-label);
+}
+
+.metric-card > strong {
+  margin-top: 10px;
+  font-size: clamp(27px, 2vw, 36px);
+}
+
+.metric-spark {
+  left: 18px;
+  right: 18px;
+  bottom: 13px;
+  height: 30px;
+}
+
+.management-main-grid,
+.management-bottom-grid {
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.load-visual {
+  grid-template-columns: 1fr 140px;
+  gap: 24px;
+  padding: 19px;
+}
+
+.load-visual-copy > span,
+.load-visual-copy p,
+.bot-count-control > span,
+.ramp-control > span,
+.bot-load-progress > div:first-child,
+.resource-gauge span,
+.resource-gauge strong {
+  font-size: var(--ui-body);
+}
+
+.load-visual-copy > strong {
+  font-size: 40px;
+}
+
+.load-visual-copy > strong small {
+  font-size: 22px;
+}
+
+.load-ring {
+  width: 122px;
+  height: 122px;
+}
+
+.load-ring > strong {
+  font-size: 24px;
+}
+
+.bot-count-control {
+  grid-template-columns: 135px 170px minmax(0, 1fr);
+  gap: 13px;
+  margin-top: 18px;
+}
+
+.bot-count-control > div:nth-child(2) {
+  grid-template-columns: 48px 1fr 48px;
+}
+
+.bot-count-control > div:nth-child(2) button,
+.bot-count-control input {
+  height: 48px;
+  font-size: var(--ui-control);
+}
+
+.bot-presets,
+.ramp-control > div {
+  gap: 8px;
+}
+
+.bot-presets button,
+.ramp-control button {
+  min-height: 46px;
+  padding: 0 14px;
+  font-size: var(--ui-label);
+}
+
+.ramp-control {
+  grid-template-columns: 135px 1fr;
+  gap: 13px;
+  margin-top: 13px;
+}
+
+.resource-gauges {
+  gap: 18px;
+}
+
+.resource-track {
+  height: 10px;
+  margin-top: 9px;
+}
+
+.network-grid > div,
+.runtime-details > div {
+  padding: 14px;
+}
+
+.network-grid span,
+.runtime-details span,
+.network-grid strong,
+.runtime-details strong {
+  font-size: var(--ui-label);
+}
+
+.operation-buttons {
+  gap: 10px;
+  margin-top: 19px;
+}
+
+.operation-button {
+  min-height: 92px;
+  gap: 13px;
+  padding: 14px;
+}
+
+.operation-button > i {
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
+  font-size: var(--ui-control);
+}
+
+.operation-button strong {
+  font-size: var(--ui-body);
+}
+
+.operation-button small {
+  font-size: var(--ui-micro);
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.event-timeline {
+  gap: 11px;
+}
+
+.event-timeline::before {
+  left: 92px;
+}
+
+.timeline-event {
+  grid-template-columns: 76px 16px minmax(0, 1fr);
+  gap: 10px;
+}
+
+.timeline-event time,
+.timeline-event > div span,
+.timeline-event p {
+  font-size: var(--ui-micro);
+}
+
+.event-empty,
+.console-footer {
+  font-size: var(--ui-body);
+}
+
+.console-footer span {
+  font-size: var(--ui-micro);
+}
+
+.room-modal,
+.delete-modal {
+  width: min(800px, 100%);
+}
+
+.modal-header h2,
+.delete-modal h2 {
+  font-size: 30px;
+}
+
+.modal-header span,
+.modal-deployment-preview strong,
+.modal-deployment-preview small,
+.delete-room-summary {
+  font-size: var(--ui-label);
+}
+
+.modal-header p,
+.delete-modal p,
+.form-field > span,
+.form-field input,
+.form-field select,
+.modal-deployment-preview span {
+  font-size: var(--ui-body);
+}
+
+.form-field input,
+.form-field select {
+  height: 52px;
+}
+
+.modal-close {
+  width: 48px;
+  height: 48px;
+  flex-basis: 48px;
+}
+
+.is-world-focused .console-topbar {
+  min-height: 78px;
+  height: 78px;
+  padding: 0 22px;
+}
+
+.is-world-focused .brand-mark {
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
+}
+
+.is-world-focused .room-detail {
+  height: calc(100vh - 78px);
+}
+
+.is-world-focused .room-detail-header,
+.is-world-focused .primary-tabs,
+.is-world-focused .world-toolbar {
+  top: 14px;
+}
+
+.is-world-focused .room-detail-header {
+  left: 16px;
+}
+
+.is-world-focused .back-to-rooms {
+  min-height: 48px;
+}
+
+.is-world-focused .primary-tabs {
+  left: 158px;
+}
+
+.is-world-focused .world-toolbar {
+  right: 16px;
+  max-width: calc(100% - 850px);
+}
+
+.is-world-focused .world-toolbar-actions {
+  padding: 5px;
+}
+
+.is-world-focused .world-toolbar-actions .button {
+  min-height: 42px;
+}
+
+.is-world-focused .player-roster-panel {
+  top: 76px;
+  right: 16px;
+  bottom: 16px;
+  width: min(440px, calc(100% - 32px));
+}
+
+.is-world-focused .player-spectator-actions {
+  top: 76px;
+}
+
+@media (max-width: 1450px) {
+  .directory-hero {
+    gap: 30px;
+  }
+
+  .management-intro > div:first-child {
+    flex-wrap: wrap;
+    row-gap: 5px;
+  }
+
+  .management-intro p {
+    flex-basis: 100%;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .is-world-focused .world-toolbar {
+    max-width: calc(100% - 660px);
+  }
+
+  .is-world-focused .world-toolbar-actions > span {
+    display: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .room-detail-header {
+    grid-template-columns: 124px 1fr;
+  }
+
+  .management-main-grid,
+  .management-bottom-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .is-world-focused .primary-tabs strong {
+    max-width: 145px;
+  }
+
+  .perspective-combat-hud {
+    grid-template-columns: 190px 190px 200px 90px;
+  }
+}
+
+@media (max-width: 820px) {
+  .console-shell {
+    padding: 0 16px 24px;
+  }
+
+  .console-topbar {
+    min-height: 78px;
+  }
+
+  .room-directory {
+    padding-top: 38px;
+  }
+
+  .directory-copy h1 {
+    font-size: 44px;
+  }
+
+  .directory-copy p {
+    font-size: var(--ui-control);
+  }
+
+  .room-card,
+  .add-room-card {
+    min-height: 540px;
+  }
+
+  .room-detail-header {
+    grid-template-columns: 1fr;
+  }
+
+  .management-metrics-grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
+  .management-tab-panel {
+    padding: 18px;
+  }
+
+  .operation-buttons {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .is-world-focused .console-topbar {
+    min-height: 68px;
+    height: 68px;
+  }
+
+  .is-world-focused .room-detail {
+    height: calc(100vh - 68px);
+  }
+
+  .is-world-focused .room-detail-header,
+  .is-world-focused .primary-tabs,
+  .is-world-focused .world-toolbar {
+    top: 10px;
+  }
+
+  .is-world-focused .primary-tabs {
+    left: 148px;
+  }
+
+  .is-world-focused .primary-tabs > button {
+    padding: 0 10px;
+  }
+
+  .is-world-focused .primary-tabs strong {
+    max-width: 115px;
+  }
+
+  .is-world-focused .world-toolbar {
+    right: 10px;
+  }
+}
+
+@media (max-width: 620px) {
+  .is-world-focused .primary-tabs,
+  .is-world-focused .world-toolbar {
+    top: 64px;
+  }
+
+  .is-world-focused .player-roster-panel,
+  .is-world-focused .player-spectator-actions,
+  .is-world-focused .player-spectator-source {
+    top: 122px;
+  }
+}
+
+@media (max-width: 520px) {
+  .directory-copy h1 {
+    font-size: 38px;
+  }
+
+  .directory-summary strong {
+    font-size: 27px;
+  }
+
+  .room-card-metrics,
+  .room-detail-quick-stats,
+  .management-metrics-grid,
+  .operation-buttons {
+    grid-template-columns: 1fr;
+  }
+
+  .primary-tabs strong {
+    font-size: 14px;
+  }
+
+  .bot-count-control,
+  .ramp-control {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
