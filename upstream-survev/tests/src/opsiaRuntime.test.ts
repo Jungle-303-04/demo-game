@@ -19,6 +19,7 @@ afterEach(() => {
 });
 
 const fakeGame = (): Game => ({
+    mapName: "faction",
     gas: {
         circleIdx: 0,
         currentPos: { x: 0, y: 0 },
@@ -35,8 +36,9 @@ describe("Opsia recovery ownership", () => {
         process.env.ROOM_ID = "room-restore-once";
         const game = fakeGame();
         const snapshot: LooseGameSnapshot = {
-            schemaVersion: 2,
+            schemaVersion: 3,
             roomId: "room-restore-once",
+            mapName: "faction",
             savedAt: Date.now(),
             gasPhase: 0,
             destroyedObstacleIds: [],
@@ -70,6 +72,22 @@ describe("Opsia recovery ownership", () => {
         player.pos.x = 99;
         expect(restorePlayer(game, player, join)).toBe(false);
         expect(player.pos.x).toBe(99);
+    });
+
+    it("rejects a player projection captured from a different map", () => {
+        process.env.ROOM_ID = "room-map-mismatch";
+        const game = fakeGame();
+        const snapshot: LooseGameSnapshot = {
+            schemaVersion: 3,
+            roomId: "room-map-mismatch",
+            mapName: "desert",
+            savedAt: Date.now(),
+            gasPhase: 0,
+            destroyedObstacleIds: [],
+            players: [],
+        };
+
+        expect(() => restoreGame(game, snapshot)).toThrow("invalid_opsia_snapshot");
     });
 
     it("prevents a stale store from clearing or releasing the new owner's state", async () => {

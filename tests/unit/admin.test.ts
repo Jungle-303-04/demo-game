@@ -71,6 +71,8 @@ test("admin room projection uses real map dimensions, live player fields, and bo
       capturedAt,
       map: {
         name: "faction",
+        factionMode: true,
+        maxPlayers: 100,
         seed: 4242,
         width: 880,
         height: 500,
@@ -101,6 +103,7 @@ test("admin room projection uses real map dimensions, live player fields, and bo
         {
           sessionId: "session-bot-1",
           nickname: "ProtocolClient",
+          teamId: 1,
           team: "red",
           x: 440,
           y: 100,
@@ -119,6 +122,7 @@ test("admin room projection uses real map dimensions, live player fields, and bo
         {
           sessionId: "disconnected",
           nickname: "Gone",
+          teamId: 2,
           team: "blue",
           x: 1,
           y: 1,

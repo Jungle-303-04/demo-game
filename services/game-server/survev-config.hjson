@@ -16,5 +16,9 @@
   database: { enabled: false }
   logging: { logDate: false, infoLogs: true, debugLogs: false, warnLogs: true, errorLogs: true }
   debug: { allowBots: true, allowEditMsg: false, allowMockAccount: false }
-  modes: [{ mapName: "faction", teamMode: 1, enabled: true }]
+  modes: [
+    { mapName: "faction", teamMode: 1, enabled: true }
+    { mapName: "desert", teamMode: 1, enabled: true }
+    { mapName: "snow", teamMode: 1, enabled: true }
+  ]
 }

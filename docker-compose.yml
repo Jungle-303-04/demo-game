@@ -17,6 +17,7 @@ services:
     environment:
       <<: *control-environment
       ROOM_ID: room-0
+      OPSIA_MAP_NAME: faction
       POD_NAME: game-0
       REDIS_URL: redis://redis:6379
       PUBLIC_BASE_URL: http://localhost:8090
@@ -27,6 +28,7 @@ services:
     environment:
       <<: *control-environment
       ROOM_ID: room-1
+      OPSIA_MAP_NAME: desert
       POD_NAME: game-1
       REDIS_URL: redis://redis:6379
       PUBLIC_BASE_URL: http://localhost:8091
@@ -37,6 +39,7 @@ services:
     environment:
       <<: *control-environment
       ROOM_ID: room-2
+      OPSIA_MAP_NAME: snow
       POD_NAME: game-2
       REDIS_URL: redis://redis:6379
       PUBLIC_BASE_URL: http://localhost:8092

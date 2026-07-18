@@ -8,6 +8,7 @@ import { createClient, type RedisClientType } from "redis";
 import { App, type HttpRequest, type HttpResponse, SSLApp, type WebSocket } from "uWebSockets.js";
 import { z } from "zod";
 import pkgJson from "../../package.json" with { type: "json" };
+import { MapDefs } from "../../shared/defs/mapDefs.ts";
 import { GameConfig } from "../../shared/gameConfig.ts";
 import * as net from "../../shared/net/net.ts";
 import { Config } from "./config.ts";
@@ -37,6 +38,18 @@ const zOpsiaFindGame = z.object({
     spectator: z.boolean().optional(),
     spectateSessionId: z.string().min(16).max(128).optional(),
 }).passthrough();
+
+const opsiaMapName = z.enum(["faction", "desert", "snow"]).parse(
+    process.env.OPSIA_MAP_NAME ?? "faction",
+);
+const getOpsiaMode = () => {
+    const mode = Config.modes.find((candidate) => candidate.enabled && candidate.mapName === opsiaMapName);
+    if (!mode) throw new Error(`OPSIA_MAP_NAME=${opsiaMapName} must be enabled in Config.modes`);
+    return mode;
+};
+const opsiaMode = getOpsiaMode();
+const opsiaModeLabel = opsiaMapName === "faction" ? "Faction 50v50" : "Solo FFA";
+const opsiaMaxPlayers = MapDefs[opsiaMapName].gameMode.maxPlayers;
 
 const controlToken = readControlToken();
 const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
@@ -169,11 +182,9 @@ class GameServer {
         // unavailable. A join-lock lookup must never leave admission hanging.
         await withTimeout(this.refreshJoinLock(), 1_500, "join_lock_unavailable");
         if (this.joinLocked) return { error: "room_join_locked" };
-        // A room-pod is always the live 50v50 faction game. The client still
-        // renders upstream's mode menu, but no request can create another map.
-        const mode = Config.modes.find((candidate) => candidate.mapName === "faction") ?? Config.modes[body.gameModeIdx]
-            ?? Config.modes[0];
-        if (!mode) return { error: "mode_disabled" };
+        // Each room pod owns one configured map. The client still renders the
+        // upstream mode menu, but admission can never switch this pod's map.
+        const mode = opsiaMode;
         const token = randomUUID();
         let result: FindGamePrivateRes;
         try {
@@ -299,7 +310,7 @@ const server = new GameServer();
 await server.initializeOpsiaControls();
 
 if (process.env.OPSIA_ROOM === "true") {
-    server.manager.newGame(Config.modes.find((mode) => mode.mapName === "faction") ?? Config.modes[0]!);
+    server.manager.newGame(opsiaMode);
 } else if (process.env.NODE_ENV !== "production") {
     server.manager.newGame(Config.modes[0]!);
 }
@@ -352,7 +363,7 @@ const returnSiteInfo = (res: Parameters<typeof uwsHelpers.returnJson>[0]) => {
         country: "local",
         gitRevision: GIT_VERSION,
         captchaEnabled: false,
-        modes: Config.modes,
+        modes: process.env.OPSIA_ROOM === "true" ? [opsiaMode] : Config.modes,
         clientTheme: Config.clientTheme,
         pops: { [server.regionId]: { playerCount: server.manager.getPlayerCount(), l10n: server.region.l10n } },
         youtube: { name: "", link: "" },
@@ -368,6 +379,9 @@ app.get("/summary", (res) => {
     const snapshot = server.manager.getOpsiaSnapshot();
     uwsHelpers.returnJson(res, {
         roomId: process.env.ROOM_ID ?? "room-0",
+        mapName: opsiaMapName,
+        mode: opsiaModeLabel,
+        maxPlayers: opsiaMaxPlayers,
         status: server.manager.isOpsiaReady() ? "running" : "initializing",
         players: snapshot?.players.filter((player) => player.connected).length ?? 0,
         alive: snapshot?.players.filter((player) => player.connected && player.alive).length ?? 0,

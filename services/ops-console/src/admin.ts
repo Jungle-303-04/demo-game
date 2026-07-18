@@ -1,4 +1,10 @@
 import { readControlToken, withControlToken } from "../../control-plane-auth.js";
+import {
+  type GameMap,
+  type GameMode,
+  roomProfileForMapKey,
+  roomProfileForOrdinal,
+} from "../../room-profiles.js";
 
 const controlToken = readControlToken();
 
@@ -6,8 +12,8 @@ interface RoomSpec {
   name: string;
   description: string;
   region: string;
-  map: string;
-  mode: "Faction 50v50";
+  map: GameMap;
+  mode: GameMode;
   maxPlayers: number;
   createdAt: string;
 }
@@ -34,6 +40,9 @@ export interface RegistryState {
 
 interface GameSummary {
   roomId: string;
+  mapName?: string;
+  mode?: GameMode;
+  maxPlayers?: number;
   status: string;
   players: number;
   alive: number;
@@ -50,6 +59,7 @@ interface GameSummary {
 interface SnapshotPlayer {
   sessionId: string;
   nickname: string;
+  teamId?: number;
   team: "red" | "blue";
   x: number;
   y: number;
@@ -68,6 +78,8 @@ interface SnapshotPlayer {
 
 interface SnapshotMap {
   name: string;
+  factionMode?: boolean;
+  maxPlayers?: number;
   seed?: number;
   width: number;
   height: number;
@@ -163,7 +175,7 @@ export interface AdminRoom {
   description: string;
   region: string;
   map: string;
-  mode: "Faction 50v50";
+  mode: GameMode;
   maxPlayers: number;
   status: "running" | "provisioning" | "stopped" | "recovering" | "degraded";
   matchPhase: "lobby" | "in_match" | "finished";
@@ -260,15 +272,12 @@ const publicRoomUrl = (room: RegistryRoom): string => {
     .replaceAll("{roomId}", room.roomId)
     .replaceAll("{ordinal}", String(room.ordinal));
 };
-const roomDefaults = (room: RegistryRoom): RoomSpec => ({
-  name: `Faction Room ${room.ordinal + 1}`,
-  description: "Survev 50:50 faction live room",
-  region: "Seoul / ap-northeast-2",
-  map: "Faction Island",
-  mode: "Faction 50v50",
-  maxPlayers: 100,
-  createdAt: new Date(0).toISOString(),
-});
+const roomDefaults = (room: RegistryRoom): RoomSpec => {
+  const { mapKey: _mapKey, ...profile } = roomProfileForOrdinal(room.ordinal);
+  return { ...profile, createdAt: new Date(0).toISOString() };
+};
+
+const soloPlayerColors = ["#f6c85f", "#65d6c4", "#c497ff", "#ff8ca1", "#78b7ff"];
 
 async function optionalJson<T>(url: string): Promise<T | undefined> {
   try { return await fetchJson<T>(url); }
@@ -307,6 +316,8 @@ export async function buildAdminRooms(
       ])
       : [undefined, undefined];
     const capturedAt = snapshot?.capturedAt ?? summary?.capturedAt ?? 0;
+    const runtimeProfile = roomProfileForMapKey(summary?.mapName ?? snapshot?.map?.name ?? "", record.ordinal);
+    const factionMode = snapshot?.map?.factionMode ?? runtimeProfile.mode === "Faction 50v50";
     const telemetryLagMs = capturedAt ? Math.max(0, Date.now() - capturedAt) : 0;
     const mapWidth = Math.max(1, snapshot?.map?.width ?? 880);
     const mapHeight = Math.max(1, snapshot?.map?.height ?? 880);
@@ -330,8 +341,10 @@ export async function buildAdminRooms(
         weapon: player.weapon ?? "unknown",
         ammo: player.ammo ?? 0,
         ping: 0,
-        squad: player.team === "red" ? "RED" : "BLUE",
-        color: player.team === "red" ? "#ff7c72" : "#75a8ff",
+        squad: factionMode ? (player.team === "red" ? "RED" : "BLUE") : "SOLO",
+        color: factionMode
+          ? (player.team === "red" ? "#ff7c72" : "#75a8ff")
+          : soloPlayerColors[Math.abs(player.teamId ?? 0) % soloPlayerColors.length]!,
         isBot,
       };
     });
@@ -354,9 +367,9 @@ export async function buildAdminRooms(
       name: spec.name,
       description: spec.description,
       region: spec.region,
-      map: "Faction Island",
-      mode: "Faction 50v50",
-      maxPlayers: 100,
+      map: runtimeProfile.map,
+      mode: summary?.mode ?? runtimeProfile.mode,
+      maxPlayers: summary?.maxPlayers ?? snapshot?.map?.maxPlayers ?? runtimeProfile.maxPlayers,
       status,
       matchPhase: players.length > 0 ? "in_match" : status === "stopped" ? "finished" : "lobby",
       players,

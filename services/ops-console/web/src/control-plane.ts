@@ -6,7 +6,7 @@ export type RoomStatus =
   | "degraded";
 
 export type MatchPhase = "lobby" | "in_match" | "finished";
-export type GameMode = "Faction 50v50";
+export type GameMode = "Faction 50v50" | "Solo FFA";
 export type EventTone = "info" | "success" | "warning" | "danger";
 
 export interface PlayerTelemetry {

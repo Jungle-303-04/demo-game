@@ -2,6 +2,7 @@ import { GameObjectDefs } from "../../../shared/defs/register.ts";
 
 export interface BotBrainPlayer {
     sessionId: string;
+    teamId: number;
     team: "red" | "blue";
     x: number;
     y: number;
@@ -325,7 +326,12 @@ export const decideBotIntent = (
     updateStuckState(snapshot, self, state, now, random);
 
     const enemies = snapshot.players
-        .filter((player) => player.connected && player.alive && player.team !== self.team)
+        .filter((player) =>
+            player.connected
+            && player.alive
+            && player.sessionId !== sessionId
+            && player.teamId !== self.teamId
+        )
         .map((player) => ({
             player,
             distance: distance(self.x, self.y, player.x, player.y),
@@ -333,7 +339,10 @@ export const decideBotIntent = (
         .sort((left, right) => left.distance - right.distance);
     const allies = snapshot.players
         .filter((player) =>
-            player.connected && player.alive && player.team === self.team && player.sessionId !== sessionId
+            player.connected
+            && player.alive
+            && player.teamId === self.teamId
+            && player.sessionId !== sessionId
         )
         .map((player) => ({
             player,

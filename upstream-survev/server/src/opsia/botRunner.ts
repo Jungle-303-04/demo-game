@@ -304,9 +304,10 @@ const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs
     if ([...jobs.values()].some((job) => job.roomId === roomId && job.state === "running")) {
         throw new Error("bot_job_already_running");
     }
-    const summary = await summaryResponse.json() as { players?: number };
+    const summary = await summaryResponse.json() as { players?: number; maxPlayers?: number };
     const connecting = [...bots.values()].filter((bot) => bot.roomId === roomId && !bot.summary().connected).length;
-    const available = Math.max(0, 100 - Number(summary.players ?? 0) - connecting);
+    const capacity = Number(summary.maxPlayers ?? 100);
+    const available = Math.max(0, capacity - Number(summary.players ?? 0) - connecting);
     if (count > available) throw new Error("bot_capacity_exceeded");
     const job: BotJob = {
         jobId: `load-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,

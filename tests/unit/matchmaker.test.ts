@@ -23,7 +23,7 @@ test("matchmaker rejects when every active room is join locked", async () => {
 
 test("matchmaker excludes rooms that report their real player capacity is full", async () => {
   const full = { ...recordForOrdinal(0), status: "running" as const, players: 100, joinLocked: false };
-  const open = { ...recordForOrdinal(1), status: "running" as const, players: 99, joinLocked: false };
+  const open = { ...recordForOrdinal(1), status: "running" as const, players: 79, joinLocked: false };
   const directory: RoomDirectory = { list: async () => [full, open] };
   const selected = await new Matchmaker(directory).findGame("session-2", "Grace");
   assert.equal(selected.roomId, "room-1");

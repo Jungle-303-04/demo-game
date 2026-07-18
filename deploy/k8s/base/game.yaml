@@ -25,7 +25,20 @@ spec:
         - name: game-server
           image: ghcr.io/jungle-303-04/demo-game/game-server:stable
           imagePullPolicy: Always
-          command: ["sh", "-ec", "ordinal=${HOSTNAME##*-}; export ROOM_ID=room-${ordinal}; export POD_NAME=${HOSTNAME}; exec node --enable-source-maps dist/gameServer.js"]
+          command:
+            - sh
+            - -ec
+            - |
+              ordinal="${HOSTNAME##*-}"
+              case "${ordinal}" in
+                0) export OPSIA_MAP_NAME=faction ;;
+                1) export OPSIA_MAP_NAME=desert ;;
+                2) export OPSIA_MAP_NAME=snow ;;
+                *) echo "unsupported game pod ordinal: ${ordinal}" >&2; exit 1 ;;
+              esac
+              export ROOM_ID="room-${ordinal}"
+              export POD_NAME="${HOSTNAME}"
+              exec node --enable-source-maps dist/gameServer.js
           env:
             - { name: REDIS_URL, value: redis://redis:6379 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }

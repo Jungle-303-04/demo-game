@@ -1,9 +1,11 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { readFile } from "node:fs/promises";
 import { controlTokenMatches, readControlToken, withControlToken } from "../../control-plane-auth.js";
+import { GAME_MAPS, GAME_MODES, ROOM_PROFILES } from "../../room-profiles.js";
 import {
   createRoomRegistry,
   RoomReconciler,
+  specForOrdinal,
   type RoomRegistryRecord,
   type RoomSpec,
 } from "./registry.js";
@@ -18,7 +20,7 @@ const reconciler = new RoomReconciler(registry);
 const port = Number(process.env.PORT ?? 8082);
 const controlToken = readControlToken();
 const maxRooms = Number(process.env.MAX_ROOMS ?? 3);
-if (!Number.isInteger(maxRooms) || maxRooms < 1) throw new Error("invalid_max_rooms");
+if (!Number.isInteger(maxRooms) || maxRooms < 1 || maxRooms > ROOM_PROFILES.length) throw new Error("invalid_max_rooms");
 const endpointBase = process.env.GAME_ENDPOINT_BASE ?? "http://game-";
 const kubeTokenPath = "/var/run/secrets/kubernetes.io/serviceaccount/token";
 const configuredKubeToken = process.env.KUBE_TOKEN?.trim() ?? "";
@@ -54,24 +56,30 @@ const send = (response: ServerResponse, status: number, body: unknown): void => 
 const activeRooms = (records: RoomRegistryRecord[]) => records.filter((room) => room.status !== "inactive");
 const roomIdFrom = (path: string): string | undefined => path.match(/^\/rooms\/(room-\d+)(?:\/|$)/)?.[1];
 
-const parseSpec = (body: Record<string, unknown>, current?: RoomSpec): RoomSpec => {
-  if (body.mode !== undefined && body.mode !== "Faction 50v50") throw new Error("unsupported_game_mode");
-  if (body.map !== undefined && body.map !== "Faction Island") throw new Error("unsupported_game_map");
+const validateSpecFields = (body: Record<string, unknown>): void => {
+  if (body.mode !== undefined && !GAME_MODES.some((mode) => mode === body.mode)) throw new Error("unsupported_game_mode");
+  if (body.map !== undefined && !GAME_MAPS.some((map) => map === body.map)) throw new Error("unsupported_game_map");
   if (body.region !== undefined && body.region !== "Seoul / ap-northeast-2") throw new Error("unsupported_game_region");
-  if (body.maxPlayers !== undefined && Number(body.maxPlayers) !== 100) throw new Error("unsupported_max_players");
-  const text = (key: keyof Omit<RoomSpec, "mode" | "maxPlayers" | "createdAt">, fallback: string) => {
+  if (body.maxPlayers !== undefined && ![80, 100].includes(Number(body.maxPlayers))) throw new Error("unsupported_max_players");
+};
+
+const parseSpec = (body: Record<string, unknown>, ordinal: number, current?: RoomSpec): RoomSpec => {
+  validateSpecFields(body);
+  const canonical = specForOrdinal(ordinal, current);
+  if (body.mode !== undefined && body.mode !== canonical.mode) throw new Error("unsupported_game_mode");
+  if (body.map !== undefined && body.map !== canonical.map) throw new Error("unsupported_game_map");
+  if (body.maxPlayers !== undefined && Number(body.maxPlayers) !== canonical.maxPlayers) {
+    throw new Error("unsupported_max_players");
+  }
+  const text = (key: "name" | "description", fallback: string) => {
     const value = String(body[key] ?? fallback).trim();
     if (!value || value.length > 160) throw new Error(`invalid_${key}`);
     return value;
   };
   return {
-    name: text("name", current?.name ?? "Survev Faction Room"),
-    description: text("description", current?.description ?? "Survev 50:50 faction live room"),
-    region: "Seoul / ap-northeast-2",
-    map: "Faction Island",
-    mode: "Faction 50v50",
-    maxPlayers: 100,
-    createdAt: current?.createdAt ?? new Date().toISOString(),
+    ...canonical,
+    name: text("name", canonical.name),
+    description: text("description", canonical.description),
   };
 };
 
@@ -123,10 +131,11 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && path === "/rooms/create") {
       const body = await readJson(request);
-      const requestedSpec = parseSpec(body);
+      validateSpecFields(body);
       const room = await serializeMutation(async () => {
         const active = activeRooms(await registry.list());
         if (active.length >= maxRooms) throw new Error("room_capacity_reached");
+        const requestedSpec = parseSpec(body, active.length);
         const rooms = await scaleAndReconcile(active.length + 1);
         const created = rooms.find((candidate) => candidate.ordinal === active.length);
         if (!created) throw new Error("room_reconcile_failed");
@@ -146,7 +155,7 @@ const server = createServer(async (request, response) => {
       const updated = await serializeMutation(async () => {
         const current = await registry.get(room.roomId);
         if (!current) throw new Error("room_not_found");
-        const next = { ...current, spec: parseSpec(body, current.spec) };
+        const next = { ...current, spec: parseSpec(body, current.ordinal, current.spec) };
         await registry.put(next);
         return next;
       });

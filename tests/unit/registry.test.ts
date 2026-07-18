@@ -21,7 +21,7 @@ test("registry preserves room metadata and does not expose mutable spec referenc
   const original = await registry.get("room-0");
   assert.ok(original?.spec);
   original.spec.name = "mutated outside registry";
-  assert.equal((await registry.get("room-0"))?.spec?.name, "Faction Room 1");
+  assert.equal((await registry.get("room-0"))?.spec?.name, "Faction Front");
 
   const stored = await registry.get("room-0");
   assert.ok(stored?.spec);
@@ -33,4 +33,17 @@ test("registry preserves room metadata and does not expose mutable spec referenc
   assert.equal(reconciled?.spec?.name, "Production Faction");
   assert.equal(reconciled?.joinLocked, true);
   assert.equal(reconciled?.spec?.mode, "Faction 50v50");
+});
+
+test("registry assigns the fixed map profile for each StatefulSet ordinal", async () => {
+  const registry = new MemoryRoomRegistry();
+  const reconciler = new RoomReconciler(registry);
+  await reconciler.reconcile(3);
+  const rooms = await registry.list();
+
+  assert.deepEqual(rooms.map((room) => [room.spec?.map, room.spec?.mode, room.spec?.maxPlayers]), [
+    ["Faction Island", "Faction 50v50", 100],
+    ["Desert", "Solo FFA", 80],
+    ["Snow", "Solo FFA", 80],
+  ]);
 });

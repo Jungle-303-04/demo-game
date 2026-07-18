@@ -45,11 +45,29 @@ test("compose starts three actual survev rooms, distributes 30 protocol bots, an
   assert.ok(before, "room_registry_not_ready");
   assert.equal(before.rooms.length, 3);
   const adminState = await (await fetch(`${opsUrl}/api/admin/rooms`)).json() as {
-    rooms: Array<{ id: string }>;
+    rooms: Array<{ id: string; map: string; mode: string; maxPlayers: number }>;
     capabilities: { scalingAvailable: boolean; maxRooms: number };
   };
   assert.equal(adminState.rooms.length, 3);
+  assert.deepEqual(adminState.rooms.map((room) => [room.id, room.map, room.mode, room.maxPlayers]), [
+    ["room-0", "Faction Island", "Faction 50v50", 100],
+    ["room-1", "Desert", "Solo FFA", 80],
+    ["room-2", "Snow", "Solo FFA", 80],
+  ]);
   assert.deepEqual(adminState.capabilities, { scalingAvailable: false, maxRooms: 3 });
+
+  const mapSnapshots = await Promise.all([8090, 8091, 8092].map(async (port) => {
+    const response = await fetch(`http://localhost:${port}/ops/snapshot`, { headers: controlHeaders });
+    assert.equal(response.status, 200);
+    return response.json() as Promise<{ map: { name: string; maxPlayers: number } }>;
+  }));
+  assert.deepEqual(mapSnapshots.map((snapshot) => snapshot.map.name), ["faction", "desert", "snow"]);
+  assert.deepEqual(mapSnapshots.map((snapshot) => snapshot.map.maxPlayers), [100, 80, 80]);
+  for (const preview of ["faction", "desert", "snow"]) {
+    const response = await fetch(`${opsUrl}/map-previews/${preview}.png`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("content-type"), "image/png");
+  }
 
   const invalidCreate = await fetch(`${opsUrl}/api/admin/rooms`, {
     method: "POST",
@@ -58,6 +76,14 @@ test("compose starts three actual survev rooms, distributes 30 protocol bots, an
   });
   assert.equal(invalidCreate.status, 400);
   assert.deepEqual(await invalidCreate.json(), { error: "unsupported_game_mode" });
+
+  const mismatchedRoomProfile = await fetch(`${opsUrl}/api/admin/rooms/room-1`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ map: "Snow", mode: "Solo FFA", maxPlayers: 80 }),
+  });
+  assert.equal(mismatchedRoomProfile.status, 400);
+  assert.deepEqual(await mismatchedRoomProfile.json(), { error: "unsupported_game_map" });
 
   const snapshotAck = await fetch(`${opsUrl}/api/admin/rooms/room-0/commands`, {
     method: "POST",

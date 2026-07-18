@@ -1,4 +1,9 @@
 import { createClient, type RedisClientType } from "redis";
+import {
+  type GameMap,
+  type GameMode,
+  roomProfileForOrdinal,
+} from "../../room-profiles.js";
 
 export type RegistryStatus = "waiting" | "running" | "ended" | "inactive";
 
@@ -6,8 +11,8 @@ export interface RoomSpec {
   name: string;
   description: string;
   region: string;
-  map: string;
-  mode: "Faction 50v50";
+  map: GameMap;
+  mode: GameMode;
   maxPlayers: number;
   createdAt: string;
 }
@@ -89,27 +94,37 @@ export class RedisRoomRegistry implements RoomRegistry {
 
 export const createRoomRegistry = (redisUrl = process.env.REDIS_URL): RoomRegistry => redisUrl ? new RedisRoomRegistry(redisUrl) : new MemoryRoomRegistry();
 
-export const recordForOrdinal = (ordinal: number, endpoint?: string): RoomRegistryRecord => ({
-  roomId: `room-${ordinal}`,
-  ordinal,
-  podName: `game-${ordinal}`,
-  endpoint: endpoint ?? `http://game-${ordinal}:8080`,
-  status: "waiting",
-  players: 0,
-  alive: 0,
-  strictMode: false,
-  joinLocked: false,
-  statusChangedAt: new Date().toISOString(),
-  spec: {
-    name: `Faction Room ${ordinal + 1}`,
-    description: "Survev 50:50 faction live room",
-    region: "Seoul / ap-northeast-2",
-    map: "Faction Island",
-    mode: "Faction 50v50",
-    maxPlayers: 100,
-    createdAt: new Date().toISOString(),
-  },
-});
+const legacyRoomName = (name: string, ordinal: number): boolean =>
+  name === `Faction Room ${ordinal + 1}` || name === "Survev Faction Room";
+
+export const specForOrdinal = (ordinal: number, current?: RoomSpec): RoomSpec => {
+  const { mapKey: _mapKey, ...profile } = roomProfileForOrdinal(ordinal);
+  return {
+    ...profile,
+    name: current && !legacyRoomName(current.name, ordinal) ? current.name : profile.name,
+    description: current && current.description !== "Survev 50:50 faction live room"
+      ? current.description
+      : profile.description,
+    createdAt: current?.createdAt ?? new Date().toISOString(),
+  };
+};
+
+export const recordForOrdinal = (ordinal: number, endpoint?: string): RoomRegistryRecord => {
+  const createdAt = new Date().toISOString();
+  return {
+    roomId: `room-${ordinal}`,
+    ordinal,
+    podName: `game-${ordinal}`,
+    endpoint: endpoint ?? `http://game-${ordinal}:8080`,
+    status: "waiting",
+    players: 0,
+    alive: 0,
+    strictMode: false,
+    joinLocked: false,
+    statusChangedAt: createdAt,
+    spec: { ...specForOrdinal(ordinal), createdAt },
+  };
+};
 
 export class RoomReconciler {
   constructor(private readonly registry: RoomRegistry) {}
@@ -124,6 +139,7 @@ export class RoomReconciler {
         ...record,
         endpoint: endpointForOrdinal(ordinal),
         status,
+        spec: specForOrdinal(ordinal, record.spec),
         joinLocked: record.joinLocked ?? false,
         statusChangedAt: status === record.status
           ? record.statusChangedAt ?? record.spec?.createdAt ?? changedAt

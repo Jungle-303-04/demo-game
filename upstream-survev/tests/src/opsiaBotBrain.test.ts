@@ -8,6 +8,7 @@ import {
 
 const player = (overrides: Partial<BotBrainPlayer> = {}): BotBrainPlayer => ({
     sessionId: "self",
+    teamId: overrides.team === "blue" ? 2 : 1,
     team: "red",
     x: 500,
     y: 500,
@@ -134,6 +135,20 @@ describe("Opsia protocol bot brain", () => {
 
         expect(intent.mode).toBe("combat");
         expect(intent.aimAngle).toBeCloseTo(Math.PI / 2);
+    });
+
+    test("treats solo players with unique team IDs as enemies even when their color matches", () => {
+        const state = createBotBrainState(() => 0.5);
+        const stateSnapshot = snapshot({
+            players: [
+                player({ team: "blue", teamId: 2 }),
+                player({ sessionId: "solo-enemy", team: "blue", teamId: 3, x: 600 }),
+            ],
+        });
+        const intent = decideBotIntent(stateSnapshot, "self", state, 1_000, () => 0.5);
+
+        expect(intent.mode).toBe("combat");
+        expect(intent.aimAngle).toBeCloseTo(0);
     });
 
     test("holds a target briefly to avoid aim jitter, then retargets", () => {

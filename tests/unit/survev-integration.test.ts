@@ -21,6 +21,9 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   const adminUi = await readFile(join(process.cwd(), "services/ops-console/web/src/GameAdminConsole.tsx"), "utf8");
   const adminCss = await readFile(join(process.cwd(), "services/ops-console/web/src/globals.css"), "utf8");
   const adminHtml = await readFile(join(process.cwd(), "services/ops-console/web/index.html"), "utf8");
+  const mapPreviewImages = await Promise.all(["faction", "desert", "snow"].map((name) =>
+    readFile(join(process.cwd(), `services/ops-console/web/public/map-previews/${name}.png`))
+  ));
   const docker = await readFile(join(process.cwd(), "services/game-server/Dockerfile"), "utf8");
   assert.match(gameServer, /new GameServer\(\)/);
   assert.match(gameServer, /app\.ws<GameSocketData>\("\/play"/);
@@ -78,7 +81,35 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.doesNotMatch(adminUi, /RoomMiniMap|LIVE COORDINATES|mini-map-zone/);
   assert.doesNotMatch(adminUi, /preserveAspectRatio="none"/);
   assert.doesNotMatch(adminUi, /PlayerPerspective|MAP_OBJECTS|MAP_LABELS/);
+  const roomCard = adminUi.slice(adminUi.indexOf("function RoomCard"), adminUi.indexOf("function RoomDirectory"));
+  assert.match(roomCard, /className="room-choice-preview"/);
+  assert.match(roomCard, /<img/);
+  assert.doesNotMatch(roomCard, /<iframe/);
+  assert.match(adminUi, /\/map-previews\/faction\.png/);
+  assert.match(adminUi, /\/map-previews\/desert\.png/);
+  assert.match(adminUi, /\/map-previews\/snow\.png/);
+  assert.ok(mapPreviewImages.every((image) => image.byteLength > 100_000));
   assert.match(docker, /WORKDIR \/app\/upstream-survev\/server/);
   assert.match(docker, /CMD \["node", "--enable-source-maps", "dist\/gameServer\.js"\]/);
   assert.doesNotMatch(docker, /services\/game-server\/src\/main/);
+});
+
+test("the three room pods run distinct validated maps", async () => {
+  const gameServer = await readFile(join(process.cwd(), "upstream-survev/server/src/gameServer.ts"), "utf8");
+  const roomConfig = await readFile(join(process.cwd(), "services/game-server/survev-config.hjson"), "utf8");
+  const compose = await readFile(join(process.cwd(), "docker-compose.yml"), "utf8");
+  const statefulSet = await readFile(join(process.cwd(), "deploy/k8s/base/game.yaml"), "utf8");
+
+  assert.match(gameServer, /z\.enum\(\["faction", "desert", "snow"\]\)/);
+  assert.match(gameServer, /process\.env\.OPSIA_MAP_NAME \?\? "faction"/);
+  assert.match(gameServer, /server\.manager\.newGame\(opsiaMode\)/);
+  assert.match(gameServer, /modes: process\.env\.OPSIA_ROOM === "true" \? \[opsiaMode\] : Config\.modes/);
+  assert.match(gameServer, /mapName: opsiaMapName/);
+  assert.match(gameServer, /mode: opsiaModeLabel/);
+  assert.match(gameServer, /maxPlayers: opsiaMaxPlayers/);
+  for (const mapName of ["faction", "desert", "snow"]) {
+    assert.match(roomConfig, new RegExp(`mapName: "${mapName}"`));
+    assert.match(compose, new RegExp(`OPSIA_MAP_NAME: ${mapName}`));
+    assert.match(statefulSet, new RegExp(`export OPSIA_MAP_NAME=${mapName}`));
+  }
 });

@@ -70,15 +70,46 @@ interface BotLoadRun {
   intervalMs: number;
 }
 
-const EMPTY_FORM: CreateRoomInput = {
-  name: "New Demo Room",
-  description: "서비스 배포 시연을 위한 게임 방",
-  region: "Seoul / ap-northeast-2",
-  map: "Faction Island",
-  mode: "Faction 50v50",
-  maxPlayers: 100,
-  initialBots: 8,
+const ROOM_FORM_DEFAULTS: ReadonlyArray<CreateRoomInput> = [
+  {
+    name: "Faction Front",
+    description: "Survev 50:50 faction live room",
+    region: "Seoul / ap-northeast-2",
+    map: "Faction Island",
+    mode: "Faction 50v50",
+    maxPlayers: 100,
+    initialBots: 8,
+  },
+  {
+    name: "Desert Run",
+    description: "Survev desert solo live room",
+    region: "Seoul / ap-northeast-2",
+    map: "Desert",
+    mode: "Solo FFA",
+    maxPlayers: 80,
+    initialBots: 8,
+  },
+  {
+    name: "Snowfield",
+    description: "Survev snow solo live room",
+    region: "Seoul / ap-northeast-2",
+    map: "Snow",
+    mode: "Solo FFA",
+    maxPlayers: 80,
+    initialBots: 8,
+  },
+];
+
+const MAP_PREVIEW_IMAGE: Record<string, string> = {
+  "Faction Island": "/map-previews/faction.png",
+  Desert: "/map-previews/desert.png",
+  Snow: "/map-previews/snow.png",
 };
+
+function emptyRoomForm(rooms: GameRoom[]): CreateRoomInput {
+  const ordinal = rooms.filter((room) => room.status !== "stopped").length;
+  return ROOM_FORM_DEFAULTS[Math.min(ordinal, ROOM_FORM_DEFAULTS.length - 1)]!;
+}
 
 const STATUS_DESCRIPTION: Record<RoomStatus, string> = {
   running: "서비스 중",
@@ -206,7 +237,7 @@ function RoomCard({
   return (
     <article className="room-card room-choice-card">
       <button
-        aria-label={`${room.name} 열기`}
+        aria-label={`${room.name}, ${room.map}, ${room.mode} 열기`}
         aria-description="상세 화면에서 실시간 전술 맵 확인"
         className="room-card-open room-choice-open"
         onClick={onOpen}
@@ -215,8 +246,12 @@ function RoomCard({
         <span className="room-choice-number">
           {String(ordinal).padStart(2, "0")}
         </span>
-        <div className="room-choice-emblem" aria-hidden="true">
-          <i><span /></i>
+        <div className="room-choice-preview">
+          <img
+            alt={`${room.map} 정적 맵 미리보기`}
+            src={MAP_PREVIEW_IMAGE[room.map] ?? MAP_PREVIEW_IMAGE["Faction Island"]}
+          />
+          <span>MAP PREVIEW</span>
         </div>
         <div className="room-choice-copy">
           <span>GAME ROOM</span>
@@ -2221,7 +2256,7 @@ function RoomEditorModal({
             <p id="room-modal-description">
               {mode === "create"
                 ? "Room 설정을 저장하고 방 전용 Survev Pod 하나를 할당합니다."
-                : "이름과 설명을 변경합니다. 게임 규칙은 Faction 50v50으로 고정됩니다."}
+                : "이름과 설명을 변경합니다. 맵과 게임 규칙은 방 슬롯에 맞게 고정됩니다."}
             </p>
           </div>
           <button
@@ -2289,7 +2324,7 @@ function RoomEditorModal({
               }
               value={form.mode}
             >
-              <option>Faction 50v50</option>
+              <option>{form.mode}</option>
             </select>
           </label>
           <label className="form-field">
@@ -2304,15 +2339,15 @@ function RoomEditorModal({
               }
               value={form.map}
             >
-              <option>Faction Island</option>
+              <option>{form.map}</option>
             </select>
           </label>
           <label className="form-field">
             <span>최대 인원</span>
             <input
               disabled
-              max={100}
-              min={100}
+              max={form.maxPlayers}
+              min={form.maxPlayers}
               onChange={(event) =>
                 setForm((current) => ({
                   ...current,
@@ -2933,7 +2968,7 @@ export function GameAdminConsole() {
         <RoomEditorModal
           key="create-room"
           mode="create"
-          initialValue={EMPTY_FORM}
+          initialValue={emptyRoomForm(rooms)}
           minPlayers={2}
           onCancel={() => setModal(null)}
           onSubmit={(input) => void createRoom(input)}

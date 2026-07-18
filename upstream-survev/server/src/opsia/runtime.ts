@@ -21,8 +21,9 @@ export interface LoosePlayerState {
 }
 
 export interface LooseGameSnapshot {
-    schemaVersion: 2;
+    schemaVersion: 3;
     roomId: string;
+    mapName: string;
     savedAt: number;
     gasPhase: number;
     destroyedObstacleIds: number[];
@@ -32,6 +33,7 @@ export interface LooseGameSnapshot {
 export interface OpsiaPlayerSnapshot {
     sessionId: string;
     nickname: string;
+    teamId: number;
     team: "red" | "blue";
     x: number;
     y: number;
@@ -54,6 +56,8 @@ export type OpsiaMapObjectKind = "building" | "structure" | "tree" | "rock" | "w
 
 export interface OpsiaMapSnapshot {
     name: string;
+    factionMode: boolean;
+    maxPlayers: number;
     seed: number;
     width: number;
     height: number;
@@ -160,6 +164,8 @@ const makeOpsMapSnapshot = (game: Game): OpsiaMapSnapshot => {
         }));
     const snapshot: OpsiaMapSnapshot = {
         name: game.mapName,
+        factionMode: game.map.factionMode,
+        maxPlayers: game.map.mapDef.gameMode.maxPlayers,
         seed: game.map.seed,
         width: game.map.width,
         height: game.map.height,
@@ -184,8 +190,9 @@ const makeOpsMapSnapshot = (game: Game): OpsiaMapSnapshot => {
 };
 
 export const serializeGame = (game: Game): LooseGameSnapshot => ({
-    schemaVersion: 2,
+    schemaVersion: 3,
     roomId: opsiaRoomId(),
+    mapName: game.mapName,
     savedAt: Date.now(),
     gasPhase: game.gas.circleIdx,
     // The state projection deliberately omits projectiles. Map object IDs are
@@ -204,7 +211,11 @@ export const serializeGame = (game: Game): LooseGameSnapshot => ({
 });
 
 export const restoreGame = (game: Game, snapshot: LooseGameSnapshot): void => {
-    if (snapshot.schemaVersion !== 2 || snapshot.roomId !== opsiaRoomId()) {
+    if (
+        snapshot.schemaVersion !== 3
+        || snapshot.roomId !== opsiaRoomId()
+        || snapshot.mapName !== game.mapName
+    ) {
         throw new Error("invalid_opsia_snapshot");
     }
     restoredPlayers.set(game, new Map(snapshot.players.map((player) => [player.sessionId, player])));
@@ -315,6 +326,7 @@ export const makeOpsSnapshot = (game: Game, tickP95Ms: number, tickRate: number)
         players: game.playerBarn.players.map((player) => ({
             sessionId: playerSessionId(player),
             nickname: player.name,
+            teamId: player.teamId,
             team: player.teamId === 1 ? "red" : "blue",
             x: player.pos.x,
             y: player.pos.y,
@@ -371,13 +383,27 @@ export class OpsiaSnapshotStore {
         if (!acquired) throw new Error("room_lease_not_acquired");
         const snapshot = await this.load();
         if (snapshot) {
-            restoreGame(game, snapshot);
-            // `PlayerBarn` materializes a restored player only once its session
-            // reconnects. Preserve these projections while the public gateway
-            // keeps retrying, instead of a newly-empty Game overwriting Redis.
-            this.pendingPlayers = snapshot.players;
-            this.pendingRestoreUntil = Date.now() + 2 * 60_000;
-            jsonLog("info", "snapshot_restored", { savedAt: snapshot.savedAt, players: snapshot.players.length });
+            const compatible = snapshot.schemaVersion === 3
+                && snapshot.roomId === opsiaRoomId()
+                && snapshot.mapName === game.mapName;
+            if (compatible) {
+                restoreGame(game, snapshot);
+                // `PlayerBarn` materializes a restored player only once its session
+                // reconnects. Preserve these projections while the public gateway
+                // keeps retrying, instead of a newly-empty Game overwriting Redis.
+                this.pendingPlayers = snapshot.players;
+                this.pendingRestoreUntil = Date.now() + 2 * 60_000;
+                jsonLog("info", "snapshot_restored", { savedAt: snapshot.savedAt, players: snapshot.players.length });
+            } else {
+                // A rollout can change the room's map while Redis still holds a
+                // legacy or differently-sized projection. Starting fresh avoids
+                // restoring invalid teams and out-of-bounds coordinates.
+                jsonLog("warn", "snapshot_skipped_incompatible_map", {
+                    schemaVersion: snapshot.schemaVersion,
+                    savedMapName: snapshot.mapName,
+                    currentMapName: game.mapName,
+                });
+            }
         }
         this.ready = true;
         this.leaseTimer = setInterval(() => {

@@ -9,8 +9,9 @@ test("real survev Game snapshot projection round-trips player, team, score, inve
   const runtime = await readFile(upstream("server/src/opsia/runtime.ts"), "utf8");
   const game = await readFile(upstream("server/src/game/game.ts"), "utf8");
   const projected = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     roomId: "room-0",
+    mapName: "faction",
     gasPhase: 0,
     players: [{ sessionId: "browser-token-123456", name: "Ada", teamId: 1, x: 44, y: 32, health: 87, score: 9, inventory: { "9mm": 30 } }],
   };
@@ -20,6 +21,7 @@ test("real survev Game snapshot projection round-trips player, team, score, inve
   assert.match(runtime, /player\.invManager\.set/);
   assert.match(runtime, /player\.name = state\.name/);
   assert.match(runtime, /game\.grid\.updateObject\(player\)/);
+  assert.match(runtime, /snapshot\.mapName !== game\.mapName/);
   assert.match(game, /opsiaSessionId/);
 });
 
