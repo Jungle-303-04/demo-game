@@ -313,7 +313,7 @@ function AdminTacticalMap({
           }
         >
           <iframe
-            allow="autoplay; fullscreen"
+            allow="fullscreen"
             aria-hidden="true"
             className="admin-map-game-frame"
             src={watchUrl}
@@ -617,13 +617,13 @@ function PlayerSpectatorView({
       `;
 
       const frame = pipWindow.document.createElement("iframe");
-      frame.allow = "autoplay; fullscreen";
+      frame.allow = "fullscreen";
       frame.src = watchUrl;
       frame.title = `${player.name} Survev PIP 관전`;
 
       const liveLabel = pipWindow.document.createElement("div");
       liveLabel.className = "pip-live";
-      liveLabel.textContent = `LIVE · ${player.name}`;
+      liveLabel.textContent = `LIVE · MUTED · ${player.name}`;
 
       pipWindow.document.head.append(style);
       pipWindow.document.body.append(frame, liveLabel);
@@ -669,14 +669,14 @@ function PlayerSpectatorView({
         </div>
       ) : (
         <iframe
-          allow="autoplay; fullscreen"
+          allow="fullscreen"
           key={`${room.id}:${player.id}`}
           src={watchUrl}
           title={`${player.name} Survev 실시간 관전`}
         />
       )}
       <div className="player-spectator-source">
-        <span><i />SURVEV SPECTATOR · LIVE</span>
+        <span><i />SURVEV SPECTATOR · LIVE · MUTED</span>
         <strong>{player.name}</strong>
         <small>
           {player.isBot ? "LOAD TEST BOT" : "CONNECTED PLAYER"} · {player.squad}

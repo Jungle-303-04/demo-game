@@ -13,6 +13,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   const gameServer = await readFile(join(process.cwd(), "upstream-survev/server/src/gameServer.ts"), "utf8");
   const game = await readFile(join(process.cwd(), "upstream-survev/server/src/game/game.ts"), "utf8");
   const client = await readFile(join(process.cwd(), "upstream-survev/client/src/main.ts"), "utf8");
+  const audioManager = await readFile(join(process.cwd(), "upstream-survev/client/src/audioManager.ts"), "utf8");
   const clientCss = await readFile(join(process.cwd(), "upstream-survev/client/css/game.css"), "utf8");
   const gameClient = await readFile(join(process.cwd(), "upstream-survev/client/src/game.ts"), "utf8");
   const serverClient = await readFile(join(process.cwd(), "upstream-survev/server/src/game/client.ts"), "utf8");
@@ -26,6 +27,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(client, /pixi\.js-legacy/);
   assert.match(client, /matchArgs\.spectator = true/);
   assert.match(client, /opsia-watch-\$\{this\.opsiaWatchView\}/);
+  assert.match(audioManager, /forcedMute = this\.permanentlyMuted/);
+  assert.match(audioManager, /this\.forcedMute = this\.permanentlyMuted \|\| mute/);
   assert.match(clientCss, /html\.opsia-watch-player #game-area-wrapper > \*/);
   assert.match(clientCss, /html\.opsia-watch-map #ui-game > :not\(#big-map\)/);
   assert.match(gameClient, /m_opsiaMapView/);
@@ -50,6 +53,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /documentPictureInPicture/);
   assert.match(adminUi, /documentPip\.requestWindow/);
   assert.match(adminUi, /PIP로 관전/);
+  assert.match(adminUi, /SURVEV SPECTATOR · LIVE · MUTED/);
+  assert.doesNotMatch(adminUi, /allow="autoplay; fullscreen"/);
   assert.match(adminUi, /전체 맵으로 돌아가기/);
   assert.match(adminUi, /상세 화면에서 실시간 전술 맵 확인/);
   assert.match(adminUi, /className="player-marker-core"/);
