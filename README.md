@@ -49,15 +49,15 @@ npm run demo:reset
 
 운영 화면은 `http://localhost:8085`, 룸 선택 API는 `http://localhost:8081/api/find-game`이다. 로컬 참가자 URL은 `http://localhost:809{ordinal}/play/room-{ordinal}`이며 그 URL이 실제 PixiJS 클라이언트와 해당 survev WebSocket을 함께 제공한다.
 
-## cluster-2 실제 데모
+## game-server 실제 데모
 
-`target`의 에이전트/관측 워크로드는 보존한 상태에서 아래 overlay를 적용한다. gateway가 생성한 외부 주소의
+`game-server` 클러스터의 에이전트/관측 워크로드는 보존한 상태에서 아래 overlay를 적용한다. gateway가 생성한 외부 주소의
 루트는 운영 중계 화면이며, 룸 이름을 누르면 해당 룸의 실제 PixiJS 전체 화면으로 이동한다. `관전`은 같은
 실제 클라이언트를 iframe 중계 화면에 열어 자동 입장시킨다.
 
 ```bash
-kubectl --context cluster-2 apply -k deploy/k8s/overlays/cluster-2
-kubectl --context cluster-2 -n sandbox get service demo-game-gateway
+kubectl --context game-server apply -k deploy/k8s/overlays/game-server
+kubectl --context game-server -n sandbox get service demo-game-gateway
 # http://<EXTERNAL-HOST>/       운영 중계
 # http://<EXTERNAL-HOST>/play/room-0  참가자 화면
 # http://<EXTERNAL-HOST>/watch/room-0 관전 화면
