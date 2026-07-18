@@ -176,120 +176,37 @@ function roomWatchUrl(room: GameRoom, player?: PlayerTelemetry) {
 
 function RoomCard({
   room,
-  canScale,
+  ordinal,
   onOpen,
-  onEdit,
-  onDelete,
 }: {
   room: GameRoom;
-  canScale: boolean;
+  ordinal: number;
   onOpen: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
 }) {
-  const { bots, humans } = playerCounts(room);
-  const occupancy = (room.players.length / room.maxPlayers) * 100;
-  const memoryPercent =
-    room.metrics.memoryLimitMb > 0
-      ? (room.metrics.memoryMb / room.metrics.memoryLimitMb) * 100
-      : 0;
-  const health = roomHealth(room);
-
   return (
-    <article className="room-card">
-      <div className="room-card-actions">
-        <button onClick={onEdit} type="button" aria-label={`${room.name} 수정`}>
-          수정
-        </button>
-        <button
-          className="danger-link"
-          disabled={!canScale}
-          onClick={onDelete}
-          title={canScale ? undefined : "Kubernetes 배포에서만 삭제할 수 있습니다"}
-          type="button"
-          aria-label={`${room.name} 삭제`}
-        >
-          삭제
-        </button>
-      </div>
-      <button className="room-card-open" onClick={onOpen} type="button">
-        <div className="room-card-preview">
-          <div className="room-card-cover" aria-hidden="true">
-            <i><span /></i>
-            <div>
-              <span>MANAGED GAME ROOM</span>
-              <strong>{room.map}</strong>
-              <small>상세 화면에서 실시간 전술 맵 확인</small>
-            </div>
-          </div>
-          <div className="room-card-preview-top">
-            <StatusBadge status={room.status} />
-            <span className={`health-chip health-${health.tone}`}>
-              {health.label}
-            </span>
-          </div>
-          <div className="room-card-preview-bottom">
-            <span>{room.mode}</span>
-            <span>OPEN ADMIN VIEW ↗</span>
-          </div>
+    <article className="room-card room-choice-card">
+      <button
+        aria-label={`${room.name} 열기`}
+        aria-description="상세 화면에서 실시간 전술 맵 확인"
+        className="room-card-open room-choice-open"
+        onClick={onOpen}
+        type="button"
+      >
+        <span className="room-choice-number">
+          {String(ordinal).padStart(2, "0")}
+        </span>
+        <div className="room-choice-emblem" aria-hidden="true">
+          <i><span /></i>
         </div>
-        <div className="room-card-body">
-          <div className="room-card-title">
-            <div>
-              <h2>{room.name}</h2>
-              <p>{room.description}</p>
-            </div>
-            <span className="room-open-arrow">↗</span>
-          </div>
-          <div className="room-card-tags">
-            <span>{room.mode}</span>
-            <span>{room.region.split(" / ")[0]}</span>
-            <span>{room.imageTag.split(":")[1]}</span>
-          </div>
-          <div className="room-capacity-summary">
-            <span>
-              <strong>{room.players.length}</strong> / {room.maxPlayers} players
-            </span>
-            <span>
-              사람 {humans} · 봇 {bots}
-            </span>
-          </div>
-          <div className="room-capacity-bar">
-            <i style={{ width: `${clamp(occupancy, 0, 100)}%` }} />
-          </div>
-          <div className="room-card-metrics">
-            <div>
-              <span>MEASURED TICK</span>
-              <strong>{room.tickRate.toFixed(1)} Hz</strong>
-            </div>
-            <div>
-              <span>GAME CPU</span>
-              <strong>{room.metrics.cpuPercent.toFixed(0)}%</strong>
-            </div>
-            <div>
-              <span>GAME RSS</span>
-              <strong>{room.metrics.memoryMb.toFixed(0)} MB</strong>
-            </div>
-            <div>
-              <span>SNAPSHOT</span>
-              <strong>{formatSnapshotAge(room.snapshotAgeSeconds)}</strong>
-            </div>
-          </div>
-          <div className="room-card-pod">
-            <span
-              className={`pod-ready-dot ${
-                room.readyReplicas === room.desiredReplicas &&
-                room.desiredReplicas > 0
-                  ? "is-ready"
-                  : ""
-              }`}
-            />
-            <span>{room.podName}</span>
-            <b>
-              {room.readyReplicas}/{room.desiredReplicas}
-            </b>
-          </div>
+        <div className="room-choice-copy">
+          <span>GAME ROOM</span>
+          <h2>{room.name}</h2>
+          <p>{room.map}</p>
+          <strong>{room.mode}</strong>
         </div>
+        <span className="room-choice-cta">
+          이 방 보기 <i>→</i>
+        </span>
       </button>
     </article>
   );
@@ -300,34 +217,12 @@ function RoomDirectory({
   capabilities,
   onOpenRoom,
   onCreate,
-  onEdit,
-  onDelete,
 }: {
   rooms: GameRoom[];
   capabilities: ControlPlaneCapabilities;
   onOpenRoom: (roomId: string) => void;
   onCreate: () => void;
-  onEdit: (roomId: string) => void;
-  onDelete: (roomId: string) => void;
 }) {
-  const runningRooms = rooms.filter((room) =>
-    isRoomActive(room.status),
-  ).length;
-  const totalPlayers = rooms.reduce(
-    (total, room) => total + room.players.length,
-    0,
-  );
-  const totalBots = rooms.reduce(
-    (total, room) => total + playerCounts(room).bots,
-    0,
-  );
-  const averageCpu =
-    runningRooms > 0
-      ? rooms
-          .filter((room) => isRoomActive(room.status))
-          .reduce((total, room) => total + room.metrics.cpuPercent, 0) /
-        runningRooms
-      : 0;
   const activeRoomCount = rooms.filter((room) => room.status !== "stopped").length;
   const canCreate = capabilities.scalingAvailable && activeRoomCount < capabilities.maxRooms;
 
@@ -335,45 +230,21 @@ function RoomDirectory({
     <section className="room-directory">
       <div className="directory-hero">
         <div className="directory-copy">
-          <span className="eyebrow">DEPLOYED GAME ROOMS</span>
-          <h1>관리할 게임 방을 선택하세요</h1>
+          <span className="eyebrow">SELECT GAME ROOM</span>
+          <h1>관전할 방을 선택하세요</h1>
           <p>
-            각 카드는 우리 서비스가 배포한 Survev 전용 Pod 하나를 나타냅니다.
-            방을 선택하면 전체 게임 상황과 운영 상태를 크게 확인할 수 있습니다.
+            방을 고르면 전체 맵, 플레이어 관전, 운영 관리 화면으로 이동합니다.
           </p>
-        </div>
-        <div className="directory-summary">
-          <div>
-            <span>ACTIVE ROOMS</span>
-            <strong>
-              {runningRooms}
-              <small> / {rooms.length}</small>
-            </strong>
-          </div>
-          <div>
-            <span>CONNECTED</span>
-            <strong>{totalPlayers}</strong>
-          </div>
-          <div>
-            <span>LOAD BOTS</span>
-            <strong>{totalBots}</strong>
-          </div>
-          <div>
-            <span>AVG CPU</span>
-            <strong>{averageCpu.toFixed(0)}%</strong>
-          </div>
         </div>
       </div>
 
       <div className="room-grid" aria-label="게임 방 목록">
-        {rooms.map((room) => (
+        {rooms.map((room, index) => (
           <RoomCard
-            canScale={capabilities.scalingAvailable}
             key={room.id}
             room={room}
+            ordinal={index + 1}
             onOpen={() => onOpenRoom(room.id)}
-            onEdit={() => onEdit(room.id)}
-            onDelete={() => onDelete(room.id)}
           />
         ))}
         {capabilities.scalingAvailable && (
@@ -389,35 +260,10 @@ function RoomDirectory({
             type="button"
           >
             <span className="add-room-icon">+</span>
-            <strong>{canCreate ? "새 게임 방 배포" : "최대 방 수 도달"}</strong>
-            <p>
-              {`Room 설정을 만들고 ordinal Pod를 할당합니다. (${activeRoomCount}/${capabilities.maxRooms})`}
-            </p>
-            <span className="add-room-flow">
-              Room record <i>→</i> StatefulSet ordinal <i>→</i> Pod
-            </span>
+            <strong>{canCreate ? "새 방 만들기" : "방 추가 불가"}</strong>
+            <p>{canCreate ? "새 게임 방을 배포합니다." : "최대 방 수에 도달했습니다."}</p>
           </button>
         )}
-      </div>
-
-      <div className="presentation-flow">
-        <div>
-          <span>01</span>
-          <strong>방 선택</strong>
-          <p>배포·인원·부하 상태를 카드에서 빠르게 확인</p>
-        </div>
-        <i>→</i>
-        <div>
-          <span>02</span>
-          <strong>전술 맵 & 플레이어 관전</strong>
-          <p>전체 위치를 확인하고 실제 플레이어 시점으로 전환</p>
-        </div>
-        <i>→</i>
-        <div>
-          <span>03</span>
-          <strong>게임 관리</strong>
-          <p>Pod, Redis, 실시간 지표와 봇 부하를 한 화면에서 제어</p>
-        </div>
       </div>
     </section>
   );
@@ -2564,7 +2410,7 @@ export function GameAdminConsole() {
     <main
       className={`console-shell ${
         selectedRoom && activeTab === "world" ? "is-world-focused" : ""
-      }`}
+      } ${!selectedRoom ? "is-room-directory" : ""}`}
     >
       <header className="console-topbar">
         <button
@@ -2679,16 +2525,16 @@ export function GameAdminConsole() {
           capabilities={capabilities}
           onOpenRoom={openRoom}
           onCreate={() => openModal({ type: "create" })}
-          onEdit={(roomId) => openModal({ type: "edit", roomId })}
-          onDelete={(roomId) => openModal({ type: "delete", roomId })}
         />
       )}
 
-      <footer className="console-footer">
-        <span>LIVE CONTROL PLANE</span>
-        방·Pod·Redis·플레이어·LoadBot 정보는 demo-game 서버에서 1초마다
-        동기화됩니다. 지원되지 않는 클러스터 명령은 서버가 안전하게 거부합니다.
-      </footer>
+      {selectedRoom && (
+        <footer className="console-footer">
+          <span>LIVE CONTROL PLANE</span>
+          방·Pod·Redis·플레이어·LoadBot 정보는 demo-game 서버에서 1초마다
+          동기화됩니다. 지원되지 않는 클러스터 명령은 서버가 안전하게 거부합니다.
+        </footer>
+      )}
 
       {modal?.type === "create" && (
         <RoomEditorModal
