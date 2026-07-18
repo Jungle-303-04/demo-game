@@ -20,6 +20,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   const opsiaRuntime = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/runtime.ts"), "utf8");
   const adminUi = await readFile(join(process.cwd(), "services/ops-console/web/src/GameAdminConsole.tsx"), "utf8");
   const adminCss = await readFile(join(process.cwd(), "services/ops-console/web/src/globals.css"), "utf8");
+  const adminHtml = await readFile(join(process.cwd(), "services/ops-console/web/index.html"), "utf8");
   const docker = await readFile(join(process.cwd(), "services/game-server/Dockerfile"), "utf8");
   assert.match(gameServer, /new GameServer\(\)/);
   assert.match(gameServer, /app\.ws<GameSocketData>\("\/play"/);
@@ -40,6 +41,20 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /className="admin-map-game-frame"/);
   assert.match(adminUi, /selectedRoom && activeTab === "world" \? "is-world-focused"/);
   assert.match(adminCss, /\.console-shell\.is-world-focused/);
+  assert.match(adminUi, /THEME_STORAGE_KEY = "survev-control-theme"/);
+  assert.match(adminUi, /aria-label="라이트 모드"/);
+  assert.match(adminUi, /aria-pressed=\{colorTheme === "light"\}/);
+  assert.match(adminUi, /<strong>라이트<\/strong>/);
+  assert.match(adminUi, /document\.documentElement\.dataset\.theme = colorTheme/);
+  assert.match(adminUi, /window\.addEventListener\("storage", syncTheme\)/);
+  assert.match(adminHtml, /window\.localStorage\.getItem\("survev-control-theme"\)/);
+  assert.match(adminHtml, /document\.documentElement\.dataset\.theme = theme/);
+  assert.ok(
+    adminHtml.indexOf("survev-control-theme") < adminHtml.indexOf('src="/src/main.tsx"'),
+    "saved theme must be applied before the React bundle loads",
+  );
+  assert.match(adminCss, /:root\[data-theme="light"\]/);
+  assert.match(adminCss, /\.console-shell\.is-world-focused \{/);
   assert.match(adminUi, /room\.mapLayout/);
   assert.match(adminUi, /className="admin-map-viewport"/);
   assert.match(adminUi, /"--map-width-by-height": `\$\{mapAspect \* 100\}cqh`/);

@@ -30,6 +30,9 @@ import {
 type StyleWithVariables = CSSProperties & Record<`--${string}`, string | number>;
 type DetailTab = "world" | "manage";
 type ManagementSection = "overview" | "load" | "control";
+type ColorTheme = "dark" | "light";
+
+const THEME_STORAGE_KEY = "survev-control-theme";
 
 const MANAGEMENT_SECTIONS: ReadonlyArray<{
   id: ManagementSection;
@@ -40,6 +43,11 @@ const MANAGEMENT_SECTIONS: ReadonlyArray<{
   { id: "load", label: "부하 테스트", description: "봇·자원" },
   { id: "control", label: "제어·이벤트", description: "명령·기록" },
 ];
+
+function initialColorTheme(): ColorTheme {
+  if (typeof document === "undefined") return "dark";
+  return document.documentElement.dataset.theme === "light" ? "light" : "dark";
+}
 
 interface DocumentPictureInPictureApi {
   readonly window: Window | null;
@@ -2463,6 +2471,7 @@ export function GameAdminConsole() {
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
   const [pendingAction, setPendingAction] = useState("");
   const [needsAdminToken, setNeedsAdminToken] = useState(false);
+  const [colorTheme, setColorTheme] = useState<ColorTheme>(initialColorTheme);
   const [capabilities, setCapabilities] = useState<ControlPlaneCapabilities>({
     scalingAvailable: false,
     maxRooms: 3,
@@ -2484,6 +2493,28 @@ export function GameAdminConsole() {
         : [],
     [events, selectedRoom],
   );
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = colorTheme;
+    document.documentElement.style.colorScheme = colorTheme;
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, colorTheme);
+    } catch {
+      // The selected theme still applies when storage is unavailable.
+    }
+  }, [colorTheme]);
+
+  useEffect(() => {
+    function syncTheme(event: StorageEvent) {
+      if (event.key !== THEME_STORAGE_KEY) return;
+      if (event.newValue === "dark" || event.newValue === "light") {
+        setColorTheme(event.newValue);
+      }
+    }
+
+    window.addEventListener("storage", syncTheme);
+    return () => window.removeEventListener("storage", syncTheme);
+  }, []);
 
   async function refreshControlPlane(options: { quiet?: boolean } = {}) {
     try {
@@ -2777,25 +2808,44 @@ export function GameAdminConsole() {
           <i />
           <span>ap-northeast-2</span>
         </div>
-        <div
-          className={`console-connection ${connected ? "" : "is-degraded"}`}
-        >
-          <i />
-          <span>
-            <strong>
-              {connected
-                ? "CONTROL PLANE CONNECTED"
-                : connection === "connecting"
-                  ? "CONTROL PLANE CONNECTING"
-                  : "CONTROL PLANE DEGRADED"}
-            </strong>
-            <small>
-              {lastUpdatedAt
-                ? `실데이터 동기화 ${lastUpdatedAt.toLocaleTimeString("ko-KR")}`
-                : "Room telemetry 연결 중"}
-            </small>
-          </span>
-          <b>LIVE</b>
+        <div className="console-topbar-actions">
+          <button
+            aria-label="라이트 모드"
+            aria-pressed={colorTheme === "light"}
+            className="theme-toggle"
+            onClick={() =>
+              setColorTheme((current) =>
+                current === "dark" ? "light" : "dark",
+              )
+            }
+            title={`${colorTheme === "dark" ? "라이트" : "다크"} 모드로 전환`}
+            type="button"
+          >
+            <span className="theme-toggle-track" aria-hidden="true">
+              <i />
+            </span>
+            <strong>라이트</strong>
+          </button>
+          <div
+            className={`console-connection ${connected ? "" : "is-degraded"}`}
+          >
+            <i />
+            <span>
+              <strong>
+                {connected
+                  ? "CONTROL PLANE CONNECTED"
+                  : connection === "connecting"
+                    ? "CONTROL PLANE CONNECTING"
+                    : "CONTROL PLANE DEGRADED"}
+              </strong>
+              <small>
+                {lastUpdatedAt
+                  ? `실데이터 동기화 ${lastUpdatedAt.toLocaleTimeString("ko-KR")}`
+                  : "Room telemetry 연결 중"}
+              </small>
+            </span>
+            <b>LIVE</b>
+          </div>
         </div>
       </header>
 

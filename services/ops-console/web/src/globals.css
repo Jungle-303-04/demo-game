@@ -19,6 +19,26 @@
   color-scheme: dark;
 }
 
+:root[data-theme="light"] {
+  --bg: #f4f7f3;
+  --panel: #ffffff;
+  --panel-2: #f7faf6;
+  --panel-3: #edf3eb;
+  --line: rgba(25, 52, 34, 0.14);
+  --line-strong: rgba(25, 52, 34, 0.25);
+  --text: #162019;
+  --text-soft: #405047;
+  --muted: #68776e;
+  --green: #3f761f;
+  --green-strong: #285c0e;
+  --cyan: #087980;
+  --amber: #925600;
+  --red: #b43c36;
+  --blue: #315fae;
+  --purple: #8544a2;
+  color-scheme: light;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -155,6 +175,92 @@ select:focus-visible {
   width: 1px;
   height: 18px;
   background: var(--line);
+}
+
+.console-topbar-actions {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
+.theme-toggle {
+  min-width: 96px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text-soft);
+  cursor: pointer;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+.theme-toggle:hover {
+  border-color: rgba(184, 229, 120, 0.42);
+  background: rgba(184, 229, 120, 0.07);
+  color: var(--text);
+}
+
+.theme-toggle-track {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  flex: 0 0 42px;
+  display: block;
+  border: 1px solid rgba(184, 229, 120, 0.28);
+  border-radius: 999px;
+  background: #101912;
+}
+
+.theme-toggle-track i {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--green);
+  color: #13200c;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  transition:
+    transform 180ms ease,
+    background-color 180ms ease,
+    color 180ms ease;
+}
+
+.theme-toggle-track i::before {
+  content: "●";
+  transform: translateY(-0.5px);
+}
+
+:root[data-theme="light"] .theme-toggle-track i {
+  transform: translateX(18px);
+}
+
+:root[data-theme="light"] .theme-toggle-track i::before {
+  content: "✦";
+}
+
+.theme-toggle strong {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
 }
 
 .environment-chip {
@@ -6386,6 +6492,459 @@ body {
   .infrastructure-modal-actions {
     padding: 12px 14px 14px;
   }
+}
+
+.is-room-directory .console-topbar {
+  position: relative;
+}
+
+.is-room-directory .console-topbar-actions {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+@media (max-width: 820px) {
+  .console-topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .theme-toggle {
+    min-width: 52px;
+    width: 52px;
+    padding: 0 4px;
+  }
+
+  .theme-toggle strong {
+    display: none;
+  }
+}
+
+@media (max-width: 520px) {
+  html {
+    min-width: 0;
+  }
+
+  .console-shell:not(.is-room-directory) .console-topbar {
+    gap: 8px;
+  }
+
+  .console-shell:not(.is-room-directory) .console-brand {
+    min-width: 0;
+    gap: 8px;
+  }
+
+  .console-shell:not(.is-room-directory) .console-brand > span:last-child {
+    min-width: 0;
+  }
+
+  .console-shell:not(.is-room-directory) .console-brand strong {
+    display: block;
+    max-width: 140px;
+    overflow: hidden;
+    font-size: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .console-shell:not(.is-room-directory) .console-brand small {
+    display: none;
+  }
+
+  .is-room-directory .console-brand {
+    gap: 10px;
+    transform: translateX(-22px);
+  }
+
+  .is-room-directory .console-brand strong {
+    font-size: 16px;
+  }
+
+  .is-room-directory .brand-mark {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+}
+
+/* Light mode brightens the control surfaces while the actual game canvas and
+ * tactical world view intentionally remain a dark, high-contrast island. */
+:root[data-theme="light"] body {
+  background:
+    radial-gradient(circle at 9% -10%, rgba(78, 128, 49, 0.13), transparent 34rem),
+    radial-gradient(circle at 91% 6%, rgba(43, 127, 112, 0.1), transparent 32rem),
+    linear-gradient(rgba(31, 57, 38, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(31, 57, 38, 0.035) 1px, transparent 1px),
+    var(--bg);
+  background-size: auto, auto, 44px 44px, 44px 44px, auto;
+}
+
+:root[data-theme="light"] .console-shell.is-world-focused {
+  --bg: #070b09;
+  --panel: #0d1410;
+  --panel-2: #111a15;
+  --panel-3: #151f19;
+  --line: rgba(201, 228, 181, 0.12);
+  --line-strong: rgba(201, 228, 181, 0.23);
+  --text: #eff5eb;
+  --text-soft: #b0bcb2;
+  --muted: #738078;
+  --green: #b8e578;
+  --green-strong: #d5faa1;
+  --cyan: #6fd2da;
+  --amber: #ffbd65;
+  --red: #ff756d;
+  --blue: #79a9ff;
+  color: var(--text);
+  color-scheme: dark;
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .brand-mark {
+  border-color: rgba(63, 118, 31, 0.34);
+  background:
+    linear-gradient(135deg, rgba(63, 118, 31, 0.15), transparent 62%),
+    #f9fcf7;
+  box-shadow: inset 0 0 16px rgba(63, 118, 31, 0.06);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .theme-toggle {
+  border-color: rgba(38, 74, 46, 0.2);
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 8px 24px rgba(35, 58, 41, 0.08);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .theme-toggle:hover {
+  border-color: rgba(63, 118, 31, 0.38);
+  background: #ffffff;
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .theme-toggle-track {
+  border-color: rgba(63, 118, 31, 0.28);
+  background: #dfe9dc;
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .theme-toggle-track
+  i {
+  background: #ffffff;
+  color: var(--green);
+  box-shadow: 0 2px 7px rgba(34, 57, 40, 0.2);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .control-plane-notice {
+  background: rgba(63, 118, 31, 0.08);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .directory-summary,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .room-card,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .add-room-card,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .room-detail-header,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .primary-tabs,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .world-tab-panel,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .management-tab-panel {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 18px 52px rgba(38, 62, 44, 0.09);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .room-choice-card {
+  border-color: rgba(63, 118, 31, 0.2);
+  background:
+    radial-gradient(circle at 50% 30%, rgba(77, 132, 45, 0.13), transparent 14rem),
+    linear-gradient(155deg, rgba(255, 255, 255, 0.98), rgba(235, 242, 232, 0.98));
+  box-shadow: 0 22px 60px rgba(38, 62, 44, 0.08);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .room-choice-card:hover {
+  border-color: rgba(63, 118, 31, 0.48);
+  box-shadow: 0 28px 70px rgba(38, 62, 44, 0.14);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .room-choice-emblem
+  > i {
+  border-color: rgba(63, 118, 31, 0.42);
+  box-shadow:
+    0 0 42px rgba(63, 118, 31, 0.12),
+    inset 0 0 35px rgba(63, 118, 31, 0.05);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .room-choice-emblem
+  > i
+  span {
+  border-color: rgba(63, 118, 31, 0.66);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .room-choice-cta {
+  border-color: rgba(63, 118, 31, 0.24);
+  background: rgba(63, 118, 31, 0.08);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .room-card-actions {
+  border-color: var(--line);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 24px rgba(38, 62, 44, 0.1);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .room-card-actions
+  button {
+  border-color: var(--line);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .room-card-preview {
+  background: #edf3eb;
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .room-card-cover {
+  background:
+    radial-gradient(circle at 72% 20%, rgba(63, 118, 31, 0.16), transparent 14rem),
+    linear-gradient(135deg, #f4f8f2, #e1ebde);
+  box-shadow: inset 0 0 70px rgba(55, 87, 62, 0.08);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .back-to-rooms,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .button-secondary,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .modal-close {
+  background: rgba(255, 255, 255, 0.78);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .button-primary {
+  color: #ffffff;
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .management-section-tabs {
+  background: #e9efe6;
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .management-section-tabs
+  > button:hover {
+  background: rgba(255, 255, 255, 0.55);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .management-section-tabs
+  > button.is-active {
+  border-color: rgba(63, 118, 31, 0.32);
+  background:
+    linear-gradient(115deg, rgba(63, 118, 31, 0.12), transparent 72%),
+    #ffffff;
+  box-shadow: inset 0 -2px 0 rgba(63, 118, 31, 0.7);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .management-summary-card,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .management-event-preview-card,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .deployment-flow-card,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .metric-card,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .load-test-card,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .runtime-card,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .operations-card,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .event-timeline-card {
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 14px 38px rgba(38, 62, 44, 0.06);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .overall-health,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .management-summary-list
+  > div,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .management-event-preview-list
+  > div,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .deployment-node,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .load-visual,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .bot-presets
+  button,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .ramp-control
+  button,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .operation-button,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .infrastructure-detail-grid
+  > div,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .delete-room-summary {
+  background: #f7faf6;
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .bot-count-control
+  > div:nth-child(2),
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .form-field
+  input,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .form-field
+  select {
+  background: #ffffff;
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .network-grid
+  > div,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .runtime-details
+  > div {
+  background: #ffffff;
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .load-ring
+  > span {
+  background: conic-gradient(
+    var(--green) 0 var(--load-angle),
+    rgba(35, 64, 42, 0.1) var(--load-angle) 360deg
+  );
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .resource-track,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .bot-load-progress
+  > div:last-child {
+  background: rgba(35, 64, 42, 0.1);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .recovery-scope-note {
+  border-left-color: rgba(146, 86, 0, 0.55);
+  background: rgba(146, 86, 0, 0.08);
+  color: #685632;
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .timeline-event
+  > i {
+  border-color: #ffffff;
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .timeline-event
+  p {
+  color: var(--text-soft);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .modal-backdrop {
+  background: rgba(23, 39, 28, 0.36);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .room-modal,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .delete-modal,
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .infrastructure-modal {
+  background:
+    radial-gradient(circle at 100% 0, rgba(63, 118, 31, 0.09), transparent 28rem),
+    #ffffff;
+  box-shadow: 0 30px 90px rgba(27, 48, 33, 0.22);
+}
+
+:root[data-theme="light"]
+  .console-shell:not(.is-world-focused)
+  .modal-deployment-preview {
+  background: rgba(8, 121, 128, 0.05);
 }
 
 @media (prefers-reduced-motion: reduce) {
