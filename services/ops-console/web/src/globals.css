@@ -5915,6 +5915,479 @@ body {
   }
 }
 
+/* Management workspace: keep the first view scannable and move deep
+ * infrastructure telemetry behind an explicit detail dialog. */
+.management-intro-actions {
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.management-intro-actions .overall-health {
+  min-width: 220px;
+}
+
+.infrastructure-open-button {
+  min-width: 130px;
+}
+
+.management-section-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #09100c;
+}
+
+.management-section-tabs > button {
+  position: relative;
+  min-width: 0;
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-content: center;
+  column-gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-soft);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    border-color 160ms ease,
+    background 160ms ease,
+    color 160ms ease;
+}
+
+.management-section-tabs > button:hover {
+  border-color: rgba(184, 229, 120, 0.14);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--text);
+}
+
+.management-section-tabs > button.is-active {
+  border-color: rgba(184, 229, 120, 0.3);
+  background:
+    linear-gradient(115deg, rgba(184, 229, 120, 0.11), transparent 72%),
+    rgba(255, 255, 255, 0.025);
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 rgba(184, 229, 120, 0.72);
+}
+
+.management-section-tabs > button > span {
+  grid-row: 1 / 3;
+  align-self: center;
+  color: #536057;
+  font-family: var(--mono);
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+
+.management-section-tabs > button.is-active > span {
+  color: var(--green);
+}
+
+.management-section-tabs strong {
+  overflow: hidden;
+  font-size: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.management-section-tabs small {
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.management-section-panel {
+  margin-top: 16px;
+}
+
+.management-section-panel > .management-main-grid,
+.management-section-panel > .management-bottom-grid {
+  margin-top: 0;
+}
+
+.management-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
+  gap: 16px;
+}
+
+.management-summary-card,
+.management-event-preview-card {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(184, 229, 120, 0.045), transparent 22rem),
+    rgba(8, 14, 10, 0.68);
+}
+
+.management-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.management-card-heading > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.management-card-heading span {
+  color: var(--green);
+  font-family: var(--mono);
+  font-size: var(--ui-label);
+  letter-spacing: 0.12em;
+}
+
+.management-card-heading strong {
+  font-size: 19px;
+}
+
+.management-card-heading > button {
+  flex: 0 0 auto;
+  padding: 6px 0;
+  border: 0;
+  background: transparent;
+  color: var(--green);
+  font-family: var(--mono);
+  font-size: var(--ui-label);
+  cursor: pointer;
+}
+
+.management-card-heading > button:hover {
+  color: var(--green-strong);
+}
+
+.management-summary-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.management-summary-list > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 9px;
+  row-gap: 5px;
+  padding: 13px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.management-summary-list i {
+  grid-row: 1 / 3;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  box-shadow: 0 0 0 4px rgba(115, 128, 120, 0.08);
+}
+
+.management-summary-list i.is-good {
+  background: var(--green);
+  box-shadow: 0 0 0 4px rgba(184, 229, 120, 0.08);
+}
+
+.management-summary-list i.is-warning {
+  background: var(--amber);
+  box-shadow: 0 0 0 4px rgba(255, 189, 101, 0.08);
+}
+
+.management-summary-list span {
+  overflow: hidden;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--ui-micro);
+  letter-spacing: 0.08em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.management-summary-list strong {
+  font-size: var(--ui-body);
+  white-space: nowrap;
+}
+
+.management-summary-list small {
+  grid-column: 2 / 4;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-family: var(--mono);
+  font-size: var(--ui-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.management-event-preview-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.management-event-preview-list > div {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 72px 90px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  min-height: 44px;
+  padding: 9px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.management-event-preview-list time,
+.management-event-preview-list span {
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: var(--ui-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.management-event-preview-list time {
+  color: var(--muted);
+}
+
+.management-event-preview-list span {
+  color: var(--green);
+}
+
+.management-event-preview-list span.is-warning {
+  color: var(--amber);
+}
+
+.management-event-preview-list span.is-danger {
+  color: var(--red);
+}
+
+.management-event-preview-list p {
+  margin: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  font-size: var(--ui-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.management-event-preview-empty {
+  margin: 0;
+  padding: 18px 0;
+  color: var(--muted);
+  font-size: var(--ui-body);
+  text-align: center;
+}
+
+.infrastructure-modal-backdrop {
+  z-index: 130;
+}
+
+.infrastructure-modal {
+  width: min(1180px, 100%);
+  max-height: calc(100vh - 36px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(184, 229, 120, 0.24);
+  border-radius: 13px;
+  background:
+    radial-gradient(circle at 100% 0, rgba(184, 229, 120, 0.08), transparent 28rem),
+    #0d1410;
+  box-shadow: 0 30px 100px rgba(0, 0, 0, 0.62);
+}
+
+.infrastructure-modal-header {
+  flex: 0 0 auto;
+}
+
+.infrastructure-modal-body {
+  min-height: 0;
+  padding: 20px 24px;
+  overflow: auto;
+}
+
+.infrastructure-modal-body .deployment-flow-card {
+  padding: 20px;
+}
+
+.infrastructure-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.infrastructure-detail-grid > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.infrastructure-detail-grid span {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--ui-micro);
+  letter-spacing: 0.08em;
+}
+
+.infrastructure-detail-grid strong,
+.infrastructure-detail-grid small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.infrastructure-detail-grid strong {
+  font-size: var(--ui-body);
+}
+
+.infrastructure-detail-grid small {
+  color: var(--text-soft);
+  font-family: var(--mono);
+  font-size: var(--ui-micro);
+}
+
+.infrastructure-modal-actions {
+  flex: 0 0 auto;
+  padding: 14px 24px 20px;
+  border-top: 1px solid var(--line);
+}
+
+@media (max-width: 1180px) {
+  .management-overview-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .management-intro-actions {
+    flex-direction: column;
+  }
+
+  .infrastructure-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .infrastructure-modal-body .deployment-flow {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .infrastructure-modal-body .flow-arrow {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .management-intro {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .management-intro-actions {
+    width: 100%;
+  }
+
+  .management-intro-actions .overall-health,
+  .infrastructure-open-button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .management-section-tabs > button {
+    min-height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 9px;
+    text-align: center;
+  }
+
+  .management-section-tabs > button > span,
+  .management-section-tabs small {
+    display: none;
+  }
+
+  .management-section-tabs strong {
+    font-size: 14px;
+    white-space: normal;
+  }
+
+  .management-summary-list,
+  .infrastructure-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .management-event-preview-list > div {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .management-event-preview-list p {
+    grid-column: 1 / 3;
+  }
+
+  .infrastructure-modal-backdrop {
+    padding: 10px;
+  }
+
+  .infrastructure-modal {
+    max-height: calc(100vh - 20px);
+  }
+
+  .infrastructure-modal-body {
+    padding: 14px;
+  }
+
+  .infrastructure-modal-body .deployment-flow {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 520px) {
+  .management-intro-actions {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .management-summary-card,
+  .management-event-preview-card {
+    padding: 16px;
+  }
+
+  .management-card-heading {
+    gap: 8px;
+  }
+
+  .infrastructure-modal-actions {
+    padding: 12px 14px 14px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

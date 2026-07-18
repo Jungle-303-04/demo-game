@@ -29,6 +29,18 @@ import {
 
 type StyleWithVariables = CSSProperties & Record<`--${string}`, string | number>;
 type DetailTab = "world" | "manage";
+type ManagementSection = "overview" | "load" | "control";
+
+const MANAGEMENT_SECTIONS: ReadonlyArray<{
+  id: ManagementSection;
+  label: string;
+  description: string;
+}> = [
+  { id: "overview", label: "현황", description: "핵심 지표" },
+  { id: "load", label: "부하 테스트", description: "봇·자원" },
+  { id: "control", label: "제어·이벤트", description: "명령·기록" },
+];
+
 interface DocumentPictureInPictureApi {
   readonly window: Window | null;
   requestWindow(options: { width: number; height: number }): Promise<Window>;
@@ -1058,6 +1070,67 @@ function ManagementTab({
   const loadProgress = loadForThisRoom
     ? (loadForThisRoom.completed / loadForThisRoom.total) * 100
     : 0;
+  const [managementSection, setManagementSection] =
+    useState<ManagementSection>("overview");
+  const [isInfrastructureOpen, setIsInfrastructureOpen] = useState(false);
+  const infrastructureOpenerRef = useRef<HTMLButtonElement | null>(null);
+
+  function selectManagementSection(section: ManagementSection) {
+    setManagementSection(section);
+  }
+
+  function openInfrastructureDetails(opener: HTMLButtonElement) {
+    infrastructureOpenerRef.current = opener;
+    setIsInfrastructureOpen(true);
+  }
+
+  function openControlSection() {
+    setManagementSection("control");
+    window.requestAnimationFrame(() => {
+      document.getElementById("management-tab-control")?.focus();
+    });
+  }
+
+  function handleManagementTabKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    section: ManagementSection,
+  ) {
+    const currentIndex = MANAGEMENT_SECTIONS.findIndex(
+      (candidate) => candidate.id === section,
+    );
+    let nextIndex = currentIndex;
+
+    if (event.key === "ArrowRight") {
+      nextIndex = (currentIndex + 1) % MANAGEMENT_SECTIONS.length;
+    } else if (event.key === "ArrowLeft") {
+      nextIndex =
+        (currentIndex - 1 + MANAGEMENT_SECTIONS.length) %
+        MANAGEMENT_SECTIONS.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = MANAGEMENT_SECTIONS.length - 1;
+    } else {
+      return;
+    }
+
+    event.preventDefault();
+    const nextSection = MANAGEMENT_SECTIONS[nextIndex]?.id;
+    if (!nextSection) return;
+    setManagementSection(nextSection);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`management-tab-${nextSection}`)?.focus();
+    });
+  }
+
+  function closeInfrastructureDetails() {
+    const opener = infrastructureOpenerRef.current;
+    setIsInfrastructureOpen(false);
+    window.requestAnimationFrame(() => {
+      opener?.focus();
+    });
+  }
+
   return (
     <section
       aria-labelledby="manage-tab"
@@ -1075,17 +1148,97 @@ function ManagementTab({
             화면 하나로 설명할 수 있습니다.
           </p>
         </div>
-        <div className={`overall-health overall-${health.tone}`}>
-          <span>ROOM HEALTH</span>
-          <strong>{health.label}</strong>
-          <small>
-            CPU {room.metrics.cpuPercent.toFixed(0)}% · Tick{" "}
-            {room.tickRate.toFixed(1)}Hz
-          </small>
+        <div className="management-intro-actions">
+          <div className={`overall-health overall-${health.tone}`}>
+            <span>ROOM HEALTH</span>
+            <strong>{health.label}</strong>
+            <small>
+              CPU {room.metrics.cpuPercent.toFixed(0)}% · Tick{" "}
+              {room.tickRate.toFixed(1)}Hz
+            </small>
+          </div>
+          <button
+            className="button button-secondary infrastructure-open-button"
+            id="infrastructure-open-button"
+            onClick={(event) => openInfrastructureDetails(event.currentTarget)}
+            type="button"
+          >
+            인프라 상세
+          </button>
         </div>
       </div>
 
-      <div className="deployment-flow-card">
+      <div
+        aria-label="운영 관리 섹션"
+        className="management-section-tabs"
+        role="tablist"
+      >
+        {MANAGEMENT_SECTIONS.map((section, index) => (
+          <button
+            aria-controls={`management-panel-${section.id}`}
+            aria-selected={managementSection === section.id}
+            className={managementSection === section.id ? "is-active" : ""}
+            id={`management-tab-${section.id}`}
+            key={section.id}
+            onClick={() => selectManagementSection(section.id)}
+            onKeyDown={(event) =>
+              handleManagementTabKeyDown(event, section.id)
+            }
+            role="tab"
+            tabIndex={managementSection === section.id ? 0 : -1}
+            type="button"
+          >
+            <span>{String(index + 1).padStart(2, "0")}</span>
+            <strong>{section.label}</strong>
+            <small>{section.description}</small>
+          </button>
+        ))}
+      </div>
+
+      {isInfrastructureOpen && (
+        <div
+          className="modal-backdrop infrastructure-modal-backdrop"
+          onMouseDown={(event) => {
+            if (event.currentTarget === event.target) {
+              closeInfrastructureDetails();
+            }
+          }}
+        >
+          <div
+            aria-describedby="infrastructure-modal-description"
+            aria-labelledby="infrastructure-modal-title"
+            aria-modal="true"
+            className="infrastructure-modal"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                closeInfrastructureDetails();
+                return;
+              }
+              trapDialogFocus(event);
+            }}
+            role="dialog"
+            tabIndex={-1}
+          >
+            <div className="modal-header infrastructure-modal-header">
+              <div>
+                <span className="eyebrow">INFRASTRUCTURE DETAIL</span>
+                <h2 id="infrastructure-modal-title">방 인프라 상세</h2>
+                <p id="infrastructure-modal-description">
+                  배포 경로와 런타임 식별자를 한 화면에서 확인합니다.
+                </p>
+              </div>
+              <button
+                aria-label="인프라 상세 닫기"
+                autoFocus
+                className="modal-close"
+                onClick={closeInfrastructureDetails}
+                type="button"
+              >
+                ×
+              </button>
+            </div>
+            <div className="infrastructure-modal-body">
+              <div className="deployment-flow-card">
         <div className="deployment-flow-heading">
           <div>
             <span>DEPLOYMENT PATH</span>
@@ -1165,9 +1318,177 @@ function ManagementTab({
           telemetry를 불러옵니다. 진행 중 경기 세션 자체를 정확히 재개하는
           checkpoint 데모는 아닙니다.
         </p>
-      </div>
+              </div>
 
-      <div className="management-metrics-grid">
+              <div className="infrastructure-detail-grid">
+                <div>
+                  <span>ROOM / POD</span>
+                  <strong>{room.id}</strong>
+                  <small>{room.podName}</small>
+                </div>
+                <div>
+                  <span>IMAGE</span>
+                  <strong>{room.imageTag}</strong>
+                  <small>deployed game image</small>
+                </div>
+                <div>
+                  <span>NODE / POD IP</span>
+                  <strong>{room.node}</strong>
+                  <small>{room.podIp}</small>
+                </div>
+                <div>
+                  <span>UPTIME</span>
+                  <strong>{formatDuration(room.uptimeSeconds)}</strong>
+                  <small>{ROOM_STATUS_LABEL[room.status]}</small>
+                </div>
+                <div>
+                  <span>NETWORK</span>
+                  <strong>
+                    {room.metrics.networkInKbps === null
+                      ? "N/A"
+                      : `${room.metrics.networkInKbps.toFixed(0)} kbps in`}
+                  </strong>
+                  <small>
+                    {room.metrics.networkOutKbps === null
+                      ? "N/A"
+                      : `${room.metrics.networkOutKbps.toFixed(0)} kbps out`}
+                  </small>
+                </div>
+                <div>
+                  <span>REDIS</span>
+                  <strong>
+                    {room.metrics.redisOpsPerSecond === null
+                      ? "N/A"
+                      : `${room.metrics.redisOpsPerSecond.toFixed(1)} ops/s`}
+                  </strong>
+                  <small>{room.redisKey}</small>
+                </div>
+                <div>
+                  <span>WEBSOCKETS</span>
+                  <strong>{room.metrics.websocketCount}</strong>
+                  <small>{room.players.length} player sessions</small>
+                </div>
+                <div>
+                  <span>TELEMETRY LAG</span>
+                  <strong>{room.metrics.telemetryLagMs.toFixed(0)} ms</strong>
+                  <small>500ms snapshot stream</small>
+                </div>
+              </div>
+            </div>
+            <div className="modal-actions infrastructure-modal-actions">
+              <button
+                className="button button-primary"
+                onClick={closeInfrastructureDetails}
+                type="button"
+              >
+                확인
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {managementSection === "overview" && (
+        <div
+          aria-labelledby="management-tab-overview"
+          className="management-section-panel"
+          id="management-panel-overview"
+          role="tabpanel"
+          tabIndex={0}
+        >
+          <div className="management-overview-grid">
+            <div className="management-summary-card">
+              <div className="management-card-heading">
+                <div>
+                  <span>ROOM AT A GLANCE</span>
+                  <strong>지금 확인해야 할 운영 상태</strong>
+                </div>
+                <button
+                  onClick={(event) =>
+                    openInfrastructureDetails(event.currentTarget)
+                  }
+                  type="button"
+                >
+                  인프라 상세
+                </button>
+              </div>
+              <div className="management-summary-list">
+                <div>
+                  <i className={room.podHealthy ? "is-good" : "is-warning"} />
+                  <span>POD</span>
+                  <strong>{room.podHealthy ? "Ready" : "확인 필요"}</strong>
+                  <small>{room.podName}</small>
+                </div>
+                <div>
+                  <i
+                    className={
+                      room.snapshotCapturedAt && room.snapshotAgeSeconds < 10
+                        ? "is-good"
+                        : "is-warning"
+                    }
+                  />
+                  <span>REDIS SNAPSHOT</span>
+                  <strong>
+                    {room.snapshotCapturedAt
+                      ? formatSnapshotAge(room.snapshotAgeSeconds)
+                      : "대기 중"}
+                  </strong>
+                  <small>{room.redisKey}</small>
+                </div>
+                <div>
+                  <i className={room.joinLocked ? "is-warning" : "is-good"} />
+                  <span>신규 입장</span>
+                  <strong>{room.joinLocked ? "잠김" : "허용"}</strong>
+                  <small>{room.players.length} connected</small>
+                </div>
+                <div>
+                  <i
+                    className={
+                      room.readyReplicas === room.desiredReplicas
+                        ? "is-good"
+                        : "is-warning"
+                    }
+                  />
+                  <span>REPLICA</span>
+                  <strong>
+                    {room.readyReplicas} / {room.desiredReplicas}
+                  </strong>
+                  <small>{room.imageTag}</small>
+                </div>
+              </div>
+            </div>
+
+            <div className="management-event-preview-card">
+              <div className="management-card-heading">
+                <div>
+                  <span>LATEST EVENTS</span>
+                  <strong>최근 운영 기록</strong>
+                </div>
+                <button
+                  onClick={openControlSection}
+                  type="button"
+                >
+                  전체 보기
+                </button>
+              </div>
+              <div className="management-event-preview-list">
+                {events.slice(0, 3).map((event) => (
+                  <div key={event.id}>
+                    <time>{event.time}</time>
+                    <span className={`is-${event.tone}`}>{event.source}</span>
+                    <p>{event.message}</p>
+                  </div>
+                ))}
+                {events.length === 0 && (
+                  <p className="management-event-preview-empty">
+                    아직 기록된 이벤트가 없습니다.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="management-metrics-grid">
         <MetricCard
           label="MEASURED TICK"
           value={`${room.tickRate.toFixed(1)} Hz`}
@@ -1227,9 +1548,19 @@ function ManagementTab({
                 : "danger"
           }
         />
-      </div>
+          </div>
+        </div>
+      )}
 
-      <div className="management-main-grid">
+      {managementSection === "load" && (
+        <div
+          aria-labelledby="management-tab-load"
+          className="management-section-panel"
+          id="management-panel-load"
+          role="tabpanel"
+          tabIndex={0}
+        >
+          <div className="management-main-grid">
         <div className="load-test-card">
           <div className="section-heading">
             <div>
@@ -1489,9 +1820,19 @@ function ManagementTab({
             </div>
           </div>
         </div>
-      </div>
+          </div>
+        </div>
+      )}
 
-      <div className="management-bottom-grid">
+      {managementSection === "control" && (
+        <div
+          aria-labelledby="management-tab-control"
+          className="management-section-panel"
+          id="management-panel-control"
+          role="tabpanel"
+          tabIndex={0}
+        >
+          <div className="management-bottom-grid">
         <div className="operations-card">
           <div className="section-heading">
             <div>
@@ -1622,7 +1963,9 @@ function ManagementTab({
             )}
           </div>
         </div>
-      </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
