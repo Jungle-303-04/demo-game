@@ -44,6 +44,8 @@ export interface OpsiaPlayerSnapshot {
     armor: number;
     weapon: string;
     ammo: number;
+    bandages?: number;
+    healthkits?: number;
     isBot: boolean;
     connected: boolean;
 }
@@ -327,6 +329,8 @@ export const makeOpsSnapshot = (game: Game, tickP95Ms: number, tickRate: number)
             ),
             weapon: player.activeWeapon || "fists",
             ammo: player.weapons[player.curWeapIdx]?.ammo ?? 0,
+            bandages: player.invManager.get("bandage"),
+            healthkits: player.invManager.get("healthkit"),
             isBot: player.bot,
             connected: !player.disconnected,
         })),

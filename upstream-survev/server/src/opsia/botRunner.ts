@@ -1,8 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { GameConfig } from "../../../shared/gameConfig.ts";
 import * as net from "../../../shared/net/net.ts";
-import { v2 } from "../../../shared/utils/v2.ts";
 import { type BotBrainSnapshot, createBotBrainState, decideBotIntent } from "./botBrain.ts";
+import { createBotInput } from "./botInput.ts";
 import { controlTokenMatches, readControlToken } from "./controlPlaneAuth.ts";
 
 type BotMode = "normal" | "hack";
@@ -200,22 +200,7 @@ class SurvevProtocolBot {
             this.brain,
         );
         const sendOne = () => {
-            const input = new net.InputMsg();
-            const moveX = Math.cos(intent.moveAngle);
-            const moveY = Math.sin(intent.moveAngle);
-            input.moveUp = moveY > 0.25;
-            input.moveDown = moveY < -0.25;
-            input.moveRight = moveX > 0.25;
-            input.moveLeft = moveX < -0.25;
-            input.shootHold = intent.shoot;
-            input.shootStart = intent.shoot && Math.random() < 0.22;
-            input.toMouseDir = v2.create(Math.cos(intent.aimAngle), Math.sin(intent.aimAngle));
-            input.toMouseLen = Math.min(64, Math.max(0, intent.aimDistance));
-            if (intent.interact) input.addInput(GameConfig.Input.Interact);
-            if (intent.equip === "primary") input.addInput(GameConfig.Input.EquipPrimary);
-            if (intent.equip === "secondary") input.addInput(GameConfig.Input.EquipSecondary);
-            if (intent.equip === "melee") input.addInput(GameConfig.Input.EquipMelee);
-            this.send(net.MsgType.Input, input);
+            this.send(net.MsgType.Input, createBotInput(intent));
         };
         // Hack mode is intentionally a protocol-valid input flood. The real
         // ClientBarn validation hook—not this runner—decides enforcement.

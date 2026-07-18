@@ -230,6 +230,15 @@ export async function fetchJson<T>(
 }
 
 const clamp = (value: number, min = 0, max = 100) => Math.min(max, Math.max(min, value));
+const screenY = (worldY: number, mapHeight: number): number =>
+  clamp(mapHeight - worldY, 0, mapHeight);
+const screenRotation = (worldRotation?: number): number => {
+  const rotation = typeof worldRotation === "number" && Number.isFinite(worldRotation)
+    ? worldRotation
+    : 0;
+  const projected = Math.PI / 2 - rotation;
+  return Math.atan2(Math.sin(projected), Math.cos(projected));
+};
 const publicRoomUrls = (): Map<string, string> => new Map(
   (process.env.PUBLIC_ROOM_URLS ?? "")
     .split(",")
@@ -311,10 +320,10 @@ export async function buildAdminRooms(
         id: player.sessionId,
         name: player.nickname,
         x: clamp(player.x / mapWidth * 100),
-        y: clamp(player.y / mapHeight * 100),
+        y: clamp(screenY(player.y, mapHeight) / mapHeight * 100),
         vx: (player.vx ?? 0) / mapWidth * 100,
-        vy: (player.vy ?? 0) / mapHeight * 100,
-        rotation: player.rotation ?? 0,
+        vy: -(player.vy ?? 0) / mapHeight * 100,
+        rotation: screenRotation(player.rotation),
         health: clamp(player.health ?? (player.alive ? 100 : 0)),
         armor: clamp(player.armor ?? 0),
         kills: player.score,
@@ -367,9 +376,23 @@ export async function buildAdminRooms(
         height: mapHeight,
         shoreInset: Math.max(0, snapshot?.map?.shoreInset ?? 0),
         grassInset: Math.max(0, snapshot?.map?.grassInset ?? 0),
-        rivers: snapshot?.map?.rivers ?? [],
-        places: snapshot?.map?.places ?? [],
-        objects: snapshot?.map?.objects ?? [],
+        rivers: (snapshot?.map?.rivers ?? []).map((river) => ({
+          ...river,
+          points: river.points.map((point) => ({
+            x: clamp(point.x, 0, mapWidth),
+            y: screenY(point.y, mapHeight),
+          })),
+        })),
+        places: (snapshot?.map?.places ?? []).map((place) => ({
+          x: clamp(place.x * mapWidth, 0, mapWidth),
+          y: clamp(place.y * mapHeight, 0, mapHeight),
+          name: place.name,
+        })),
+        objects: (snapshot?.map?.objects ?? []).map((object) => ({
+          ...object,
+          x: clamp(object.x, 0, mapWidth),
+          y: screenY(object.y, mapHeight),
+        })),
       },
       podHealthy: reachable && !stale,
       desiredReplicas: active ? 1 : 0,
@@ -380,10 +403,10 @@ export async function buildAdminRooms(
       zone: zone
         ? {
           x: clamp(zone.x / mapWidth * 100),
-          y: clamp(zone.y / mapHeight * 100),
+          y: clamp(screenY(zone.y, mapHeight) / mapHeight * 100),
           radius: clamp(zone.radius / mapScale * 100),
           nextX: clamp((zone.nextX ?? zone.x) / mapWidth * 100),
-          nextY: clamp((zone.nextY ?? zone.y) / mapHeight * 100),
+          nextY: clamp(screenY(zone.nextY ?? zone.y, mapHeight) / mapHeight * 100),
           nextRadius: clamp(zone.nextRadius / mapScale * 100),
         }
         : { x: 50, y: 50, radius: 45, nextX: 50, nextY: 50, nextRadius: 35 },

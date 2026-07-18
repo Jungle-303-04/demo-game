@@ -494,8 +494,8 @@ function AdminTacticalMap({
           {map.places.map((place) => (
             <text
               key={place.name}
-              x={place.x * map.width}
-              y={place.y * map.height}
+              x={place.x}
+              y={place.y}
             >
               {place.name}
             </text>

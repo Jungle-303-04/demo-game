@@ -54,6 +54,8 @@ export interface OpsiaSnapshotData {
         armor: number;
         weapon: string;
         ammo: number;
+        bandages?: number;
+        healthkits?: number;
         isBot: boolean;
         connected: boolean;
     }>;

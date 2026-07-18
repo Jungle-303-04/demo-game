@@ -88,7 +88,7 @@ test("admin room projection uses real map dimensions, live player fields, and bo
           height: 24,
         }],
       },
-      zone: { x: 440, y: 250, radius: 220, nextX: 660, nextY: 125, nextRadius: 110 },
+      zone: { x: 440, y: 100, radius: 220, nextX: 660, nextY: 125, nextRadius: 110 },
       tickP95Ms: 8,
       tickRate: 100,
       cpuPercent: 42,
@@ -141,21 +141,27 @@ test("admin room projection uses real map dimensions, live player fields, and bo
   assert.equal(room.serviceUrl, "/play/room-0/");
   assert.equal(room.players.length, 1);
   assert.equal(room.players[0]?.x, 50);
-  assert.equal(room.players[0]?.y, 20);
+  assert.equal(room.players[0]?.y, 80);
   assert.equal(room.players[0]?.vx, 1);
-  assert.equal(room.players[0]?.vy, 1);
+  assert.equal(room.players[0]?.vy, -1);
+  assert.ok(Math.abs((room.players[0]?.rotation ?? 0) - (Math.PI / 2 - 1.25)) < 1e-12);
   assert.equal(room.players[0]?.isBot, true);
   assert.equal(room.players[0]?.health, 87);
   assert.equal(room.seed, 4242);
   assert.equal(room.mapLayout.width, 880);
   assert.equal(room.mapLayout.shoreInset, 12);
-  assert.equal(room.mapLayout.rivers[0]?.points[1]?.y, 500);
+  assert.equal(room.mapLayout.rivers[0]?.points[0]?.y, 500);
+  assert.equal(room.mapLayout.rivers[0]?.points[1]?.y, 0);
   assert.equal(room.mapLayout.places[0]?.name, "Riverside");
+  assert.equal(room.mapLayout.places[0]?.x, 440);
+  assert.equal(room.mapLayout.places[0]?.y, 200);
   assert.equal(room.mapLayout.objects[0]?.kind, "building");
+  assert.equal(room.mapLayout.objects[0]?.x, 220);
+  assert.equal(room.mapLayout.objects[0]?.y, 375);
   assert.equal(room.zone.x, 50);
-  assert.equal(room.zone.y, 50);
+  assert.equal(room.zone.y, 80);
   assert.equal(room.zone.nextX, 75);
-  assert.equal(room.zone.nextY, 25);
+  assert.equal(room.zone.nextY, 75);
   assert.equal(room.podHealthy, true);
   assert.equal(room.metrics.websocketCount, 1);
 });

@@ -1626,7 +1626,7 @@ select:focus-visible {
 .admin-map-telemetry-layer {
   position: absolute;
   z-index: 4;
-  inset: 5.2%;
+  inset: 0;
   pointer-events: none;
 }
 
