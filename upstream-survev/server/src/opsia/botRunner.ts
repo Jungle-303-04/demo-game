@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { GameConfig } from "../../../shared/gameConfig.ts";
 import * as net from "../../../shared/net/net.ts";
 import { v2 } from "../../../shared/utils/v2.ts";
+import { type BotBrainSnapshot, createBotBrainState, decideBotIntent } from "./botBrain.ts";
 import { controlTokenMatches, readControlToken } from "./controlPlaneAuth.ts";
 
 type BotMode = "normal" | "hack";
@@ -31,6 +32,35 @@ type BotJob = {
 };
 
 const controlToken = readControlToken();
+type RoomAwareness = {
+    snapshot?: BotBrainSnapshot;
+    requestedAt: number;
+    pending?: Promise<void>;
+};
+const roomAwareness = new Map<string, RoomAwareness>();
+
+const requestRoomAwareness = (roomId: string, endpoint: string): void => {
+    const awareness = roomAwareness.get(roomId) ?? { requestedAt: 0 };
+    roomAwareness.set(roomId, awareness);
+    const now = Date.now();
+    if (awareness.pending || now - awareness.requestedAt < 250) return;
+    awareness.requestedAt = now;
+    awareness.pending = (async () => {
+        try {
+            const response = await fetch(`${endpoint}/ops/snapshot`, {
+                headers: controlToken ? { authorization: `Bearer ${controlToken}` } : undefined,
+                signal: AbortSignal.timeout(900),
+            });
+            if (!response.ok) return;
+            awareness.snapshot = await response.json() as BotBrainSnapshot;
+        } catch {
+            // A stale snapshot still produces safe wandering while a room is
+            // being replaced. The next shared refresh retries automatically.
+        } finally {
+            awareness.pending = undefined;
+        }
+    })();
+};
 
 class SurvevProtocolBot {
     readonly id: string;
@@ -47,7 +77,7 @@ class SurvevProtocolBot {
     private readonly readyPromise: Promise<void>;
     private resolveReady!: () => void;
     private rejectReady!: (error: Error) => void;
-    private angle = Math.random() * Math.PI * 2;
+    private readonly brain = createBotBrainState();
 
     constructor(
         id: string,
@@ -55,6 +85,7 @@ class SurvevProtocolBot {
         roomId: string,
         mode: BotMode,
         match: NonNullable<FindGameResponse["res"]>[number],
+        private readonly roomEndpoint: string,
         private readonly onStopped: (id: string) => void,
     ) {
         this.id = id;
@@ -162,14 +193,28 @@ class SurvevProtocolBot {
 
     private sendInputs(): void {
         if (!this.connected) return;
-        this.angle += 0.08;
+        requestRoomAwareness(this.roomId, this.roomEndpoint);
+        const intent = decideBotIntent(
+            roomAwareness.get(this.roomId)?.snapshot,
+            this.sessionId,
+            this.brain,
+        );
         const sendOne = () => {
             const input = new net.InputMsg();
-            input.moveUp = Math.sin(this.angle) > 0;
-            input.moveRight = Math.cos(this.angle) > 0;
-            input.shootStart = Math.random() < 0.12;
-            input.toMouseDir = v2.create(Math.cos(this.angle), Math.sin(this.angle));
-            input.toMouseLen = 40;
+            const moveX = Math.cos(intent.moveAngle);
+            const moveY = Math.sin(intent.moveAngle);
+            input.moveUp = moveY > 0.25;
+            input.moveDown = moveY < -0.25;
+            input.moveRight = moveX > 0.25;
+            input.moveLeft = moveX < -0.25;
+            input.shootHold = intent.shoot;
+            input.shootStart = intent.shoot && Math.random() < 0.22;
+            input.toMouseDir = v2.create(Math.cos(intent.aimAngle), Math.sin(intent.aimAngle));
+            input.toMouseLen = Math.min(64, Math.max(0, intent.aimDistance));
+            if (intent.interact) input.addInput(GameConfig.Input.Interact);
+            if (intent.equip === "primary") input.addInput(GameConfig.Input.EquipPrimary);
+            if (intent.equip === "secondary") input.addInput(GameConfig.Input.EquipSecondary);
+            if (intent.equip === "melee") input.addInput(GameConfig.Input.EquipMelee);
             this.send(net.MsgType.Input, input);
         };
         // Hack mode is intentionally a protocol-valid input flood. The real
@@ -246,6 +291,7 @@ const spawn = async (
             roomId,
             mode,
             match.res[0],
+            endpoint,
             (stoppedId) => bots.delete(stoppedId),
         );
         bots.set(id, bot);
