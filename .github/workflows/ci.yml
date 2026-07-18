@@ -21,3 +21,4 @@ jobs:
       - run: npm run test
       - uses: azure/setup-kubectl@v4
       - run: kubectl kustomize deploy/k8s/overlays/sandbox >/dev/null
+      - run: kubectl kustomize deploy/k8s/overlays/game-server >/dev/null

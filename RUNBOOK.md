@@ -17,14 +17,14 @@ npm run test:resilience
 
 정상 상태는 `room-0`부터 `room-2`까지 3개 룸이 보이고 각 룸의 `podName`이 `game-{ordinal}`과 일치하는 상태다.
 
-### cluster-2 중계 주소
+### game-server 중계 주소
 
 실제 데모는 `sandbox`의 management-server(단일 파드), `game-0`~`game-2`(고정 룸 파드), Redis PVC,
 그리고 2개 replica gateway로 구성한다. gateway를 먼저 확인한다.
 
 ```bash
-kubectl --context cluster-2 -n sandbox get pods
-kubectl --context cluster-2 -n sandbox get service demo-game-gateway
+kubectl --context game-server -n sandbox get pods
+kubectl --context game-server -n sandbox get service demo-game-gateway
 ```
 
 외부 주소의 `/`는 운영 중계이고 `/play/room-N`은 참가자 전체 화면, `/watch/room-N`은 실제 survev
@@ -56,7 +56,7 @@ curl -X POST http://localhost:8085/api/rooms/room-0/end
 ```bash
 npm run test:e2e
 # 실제 클러스터에서는 아래처럼 game-0만 삭제한 뒤 같은 브라우저(동일 localStorage 토큰)로 재접속한다.
-# kubectl --context cluster-2 -n sandbox delete pod game-0
+# kubectl --context game-server -n sandbox delete pod game-0
 # upstream Player의 character, team, kills(score)가 유지되는지 운영 스냅샷과 테스트 결과로 확인한다.
 ```
 
