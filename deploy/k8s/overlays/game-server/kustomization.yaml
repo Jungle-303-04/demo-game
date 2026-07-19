@@ -7,6 +7,8 @@ labels:
   - includeSelectors: false
     pairs:
       opsia.dev/cluster-role: game-server
+commonAnnotations:
+  opsia.dev/release: 20260720-real-spectator-1
 images:
   - name: ghcr.io/jungle-303-04/demo-game/game-server
     newTag: v20260720-real-spectator-1
