@@ -6,7 +6,9 @@ metadata:
   labels: { app: management-server, app.kubernetes.io/part-of: demo-game }
 spec:
   replicas: 1
-  strategy: { type: Recreate }
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
   selector: { matchLabels: { app: management-server } }
   template:
     metadata: { labels: { app: management-server, app.kubernetes.io/part-of: demo-game } }
@@ -54,7 +56,7 @@ spec:
               valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
           ports: [{ name: bots, containerPort: 8084 }]
           readinessProbe: { httpGet: { path: /healthz, port: bots }, initialDelaySeconds: 2 }
-          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+          resources: { requests: { cpu: 500m, memory: 512Mi }, limits: { cpu: "2", memory: 2Gi } }
         - name: ops-console
           image: ghcr.io/jungle-303-04/demo-game/ops-console:stable
           imagePullPolicy: Always
@@ -69,7 +71,7 @@ spec:
               valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
           ports: [{ name: console, containerPort: 8085 }]
           readinessProbe: { httpGet: { path: /healthz, port: console }, initialDelaySeconds: 2 }
-          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+          resources: { requests: { cpu: 250m, memory: 256Mi }, limits: { cpu: "1", memory: 1Gi } }
       volumes:
         - name: kube-api-access
           projected:
@@ -79,6 +81,13 @@ spec:
               - configMap:
                   name: kube-root-ca.crt
                   items: [{ key: ca.crt, path: ca.crt }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: management-server, namespace: sandbox }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: management-server } }
 ---
 apiVersion: v1
 kind: Service

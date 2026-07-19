@@ -33,6 +33,17 @@ patches:
         value:
           opsia.dev/game-pool: high-capacity
   - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: management-server
+      namespace: sandbox
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          opsia.dev/game-pool: high-capacity
+  - target:
       version: v1
       kind: ConfigMap
       name: demo-game-gateway
