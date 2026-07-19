@@ -8,19 +8,30 @@ labels:
     pairs:
       opsia.dev/cluster-role: game-server
 commonAnnotations:
-  opsia.dev/release: 20260720-real-spectator-1
+  opsia.dev/release: 20260720-demo-ready-1
 images:
   - name: ghcr.io/jungle-303-04/demo-game/game-server
-    newTag: v20260720-real-spectator-1
+    newTag: v20260720-demo-ready-1
   - name: ghcr.io/jungle-303-04/demo-game/api-server
-    newTag: v20260720-real-spectator-1
+    newTag: v20260720-demo-ready-1
   - name: ghcr.io/jungle-303-04/demo-game/bot-runner
-    newTag: v20260720-real-spectator-1
+    newTag: v20260720-demo-ready-1
   - name: ghcr.io/jungle-303-04/demo-game/ops-console
-    newTag: v20260720-real-spectator-1
+    newTag: v20260720-demo-ready-1
   - name: ghcr.io/jungle-303-04/demo-game/room-orchestrator
-    newTag: v20260720-real-spectator-1
+    newTag: v20260720-demo-ready-1
 patches:
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: game
+      namespace: sandbox
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          opsia.dev/game-pool: high-capacity
   - target:
       version: v1
       kind: ConfigMap

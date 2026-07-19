@@ -12,6 +12,7 @@ import {
   type RegistryRoom,
   UpstreamError,
 } from "./admin.js";
+import { isPublicControlPlaneRead } from "./public-api.js";
 
 interface TimelineEvent {
   at: string;
@@ -185,9 +186,12 @@ const server = createServer(async (request, response) => {
   try {
     if (request.method === "GET" && url.pathname === "/healthz") return send(response, 200, { status: "ok", ui: "react", data: "live" });
 
-    // Every ops API can expose room internals or mutate live state. The public
-    // matchmaker is a separate api-server route at the gateway.
-    const requiresAdmin = url.pathname.startsWith("/api/");
+    // The demo's live room directory and event stream are public read-only
+    // telemetry. Every mutation and deeper operational endpoint remains
+    // protected by the administrator token.
+    const requiresAdmin =
+      url.pathname.startsWith("/api/") &&
+      !isPublicControlPlaneRead(request.method, url.pathname);
     if (requiresAdmin && !tokenMatches(request)) {
       response.setHeader("www-authenticate", 'Bearer realm="Survev Control Room"');
       return send(response, 401, { error: "admin_token_required" });

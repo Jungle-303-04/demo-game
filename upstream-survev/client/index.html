@@ -1,6 +1,11 @@
 <!doctype html>
 <html lang="en">
   <head>
+    <script>
+      if (/^\/play\/room-\d+\/?$/.test(window.location.pathname)) {
+        document.documentElement.classList.add("opsia-play");
+      }
+    </script>
     %VITE_TURNSTILE_SCRIPT%
     <!-- Meta Properties -->
     <meta charset="UTF-8">
@@ -32,6 +37,10 @@
     %VITE_DEBUG_CSS_LINK%
   </head>
   <body>
+    <div id="opsia-quick-join-status" role="status">
+      <span></span>
+      <strong>게임에 바로 참가하는 중</strong>
+    </div>
     <div id="preroll-wrapper">
       <div id="preroll"></div>
     </div>

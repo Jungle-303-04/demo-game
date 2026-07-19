@@ -16,6 +16,7 @@ import { helpers } from "./helpers.ts";
 import { InputHandler } from "./input.ts";
 import { InputBinds, InputBindUi } from "./inputBinds.ts";
 import { PingTest } from "./pingTest.ts";
+import { createOpsiaGuestName, isOpsiaPlayPath } from "./opsiaQuickJoin.ts";
 import { proxy } from "./proxy.ts";
 import { ResourceManager } from "./resources.ts";
 import { SDK } from "./sdk/sdk.ts";
@@ -77,6 +78,7 @@ export class Application {
     initialized = false;
     active = false;
     readonly opsiaWatch = /^\/watch\/room-\d+\/?$/.test(window.location.pathname);
+    readonly opsiaPlay = isOpsiaPlayPath(window.location.pathname);
     readonly opsiaWatchView = new URLSearchParams(window.location.search).get("view") === "map"
         ? "map"
         : "player";
@@ -108,6 +110,10 @@ export class Application {
     }
 
     constructor() {
+        if (this.opsiaPlay) {
+            document.documentElement.classList.add("opsia-play");
+            document.title = "Survev quick play";
+        }
         if (this.opsiaWatch) {
             document.documentElement.classList.add(
                 "opsia-watch",
@@ -313,6 +319,9 @@ export class Application {
             if (currentNewsTime > lastSeenNewsTime) {
                 $(".news-toggle").find(".account-alert").css("display", "block");
             }
+            if (this.opsiaPlay) {
+                this.config.set("playerName", createOpsiaGuestName());
+            }
             this.setDOMFromConfig();
             this.setAppActive(true);
             const domCanvas = document.querySelector<HTMLCanvasElement>("#cvs")!;
@@ -358,6 +367,9 @@ export class Application {
                 this.localization,
             );
             const onJoin = () => {
+                if (this.opsiaPlay) {
+                    document.documentElement.classList.add("opsia-in-game");
+                }
                 this.loadoutDisplay!.free();
                 this.game!.init();
                 this.onResize();
@@ -380,7 +392,12 @@ export class Application {
                 if (errMsg == "rate_limited") {
                     this.onJoinGameError(errMsg);
                 }
-                if (errMsg) {
+                if (this.opsiaPlay) {
+                    document.documentElement.classList.remove("opsia-in-game");
+                    this.errorMessage = "";
+                    this.setAppActive(false);
+                    setTimeout(() => this.tryQuickStartGame(0), 1_000);
+                } else if (errMsg) {
                     this.showErrorModal(errMsg);
                     console.warn("Quitting", errMsg);
                 }
@@ -417,8 +434,8 @@ export class Application {
             SDK.gameLoadComplete();
             // `/watch/room-N` is an Opsia broadcast surface. It reuses the
             // upstream PixiJS client rather than drawing a separate minimap.
-            if (this.opsiaWatch) {
-                setTimeout(() => this.tryQuickStartGame(2), 0);
+            if (this.opsiaWatch || this.opsiaPlay) {
+                setTimeout(() => this.tryQuickStartGame(this.opsiaWatch ? 2 : 0), 0);
             }
         }
     }
@@ -834,7 +851,9 @@ export class Application {
         // remains on survev's /play/room-N endpoint. This keeps the public
         // spectator URL stable across a room-pod replacement.
         const watchedRoom = location.pathname.match(/^\/(?:play|watch)\/room-\d+\/?$/)?.[0];
-        const roomPath = watchedRoom?.replace(/\/$/, "").replace(/^\/watch/, "/play") ?? "/play";
+        const roomPath = watchedRoom
+            ? `${watchedRoom.replace(/\/$/, "").replace(/^\/watch/, "/play")}/`
+            : "/play";
         $("#opsia-reconnect-overlay").remove();
         $("body").append(
             "<div id=\"opsia-reconnect-overlay\" style=\"position:fixed;z-index:99999;inset:0;display:grid;place-items:center;background:#06101bdd;color:#fff;font:600 18px sans-serif\">게임 서버에 재연결 중…</div>",
@@ -868,6 +887,13 @@ export class Application {
     }
 
     onJoinGameError(err: FindGameError) {
+        if (this.opsiaPlay) {
+            this.quickPlayPendingModeIdx = -1;
+            this.errorMessage = "";
+            document.documentElement.classList.remove("opsia-in-game");
+            setTimeout(() => this.tryQuickStartGame(0), 1_000);
+            return;
+        }
         const errMap: Partial<Record<FindGameError, string>> = {
             full: this.localization.translate("index-failed-finding-game"),
             invalid_protocol: this.localization.translate("index-invalid-protocol"),

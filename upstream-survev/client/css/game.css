@@ -5569,3 +5569,52 @@ html.opsia-watch-map #big-map {
 html.opsia-watch-map #big-map-close {
   display: none !important;
 }
+
+html.opsia-play,
+html.opsia-play body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #071009;
+}
+
+html.opsia-play #start-menu-wrapper,
+html.opsia-play #preroll-wrapper {
+  display: none !important;
+}
+
+#opsia-quick-join-status {
+  display: none;
+}
+
+html.opsia-play #opsia-quick-join-status {
+  position: fixed;
+  z-index: 100000;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 14px;
+  background: #071009;
+  color: #eaf7db;
+  font: 700 16px/1.4 "Roboto Condensed", sans-serif;
+  letter-spacing: 0.04em;
+}
+
+html.opsia-play #opsia-quick-join-status span {
+  width: 30px;
+  height: 30px;
+  border: 3px solid rgba(184, 229, 120, 0.2);
+  border-top-color: #b8e578;
+  border-radius: 50%;
+  animation: opsia-quick-join-spin 700ms linear infinite;
+}
+
+html.opsia-play.opsia-in-game #opsia-quick-join-status {
+  display: none;
+}
+
+@keyframes opsia-quick-join-spin {
+  to { transform: rotate(360deg); }
+}
