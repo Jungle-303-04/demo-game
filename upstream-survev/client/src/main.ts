@@ -459,6 +459,10 @@ export class Application {
     }
 
     startPingTest() {
+        // Direct room routes already target one authoritative GameServer.
+        // Running the public region probe here only opens an irrelevant
+        // localhost /ptc socket in the production demo.
+        if (this.opsiaWatch || this.opsiaPlay) return;
         const regions = this.config.get("regionSelected")
             ? [this.config.get("region")!]
             : this.pingTest.getRegionList();
