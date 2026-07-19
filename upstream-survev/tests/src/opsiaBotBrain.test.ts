@@ -109,6 +109,27 @@ describe("Opsia protocol bot brain", () => {
         expect(intent.shoot).toBe(false);
     });
 
+    test("disengages a non-immediate enemy to arm itself", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                loot: [{ id: 10, type: "m9", kind: "gun", x: 520, y: 500, count: 1 }],
+                players: [
+                    player({ weapon: "fists", ammo: 0 }),
+                    player({ sessionId: "enemy", team: "blue", x: 580 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("loot");
+        expect(intent.moving).toBe(true);
+        expect(intent.shoot).toBe(false);
+    });
+
     test("leads a moving enemy instead of aiming at a stale position", () => {
         const state = createBotBrainState(() => 0.5);
         const intent = decideBotIntent(

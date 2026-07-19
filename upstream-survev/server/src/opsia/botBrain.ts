@@ -575,7 +575,7 @@ export const decideBotIntent = (
     const lootTarget = selectLootTarget(snapshot, self, state, now);
     const needsWeaponOrAmmo = weaponKind(self.weapon) !== "gun" || self.ammo <= 0;
     const canBreakForLoot = !target
-        || target.distance > (needsWeaponOrAmmo || (lootTarget?.utility ?? 0) >= 90 ? 180 : 520);
+        || target.distance > (needsWeaponOrAmmo || (lootTarget?.utility ?? 0) >= 90 ? 70 : 520);
     if (lootTarget && canBreakForLoot) {
         const lootAngle = angleTo(self.x, self.y, lootTarget.loot.x, lootTarget.loot.y);
         // The authoritative player pickup check uses player radius + loot radius
