@@ -1,23 +1,97 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-resources: [../../base]
+resources:
+  - ../../base
+  - bootstrap-secrets.yaml
 labels:
   - includeSelectors: false
     pairs:
       opsia.dev/cluster-role: game-server
 images:
   - name: ghcr.io/jungle-303-04/demo-game/game-server
-    newName: 183548421506.dkr.ecr.ap-northeast-2.amazonaws.com/demo-game-game-server
-    newTag: v20260717-3
+    newTag: v20260720-real-spectator-1
   - name: ghcr.io/jungle-303-04/demo-game/api-server
-    newName: 183548421506.dkr.ecr.ap-northeast-2.amazonaws.com/demo-game-api-server
-    newTag: v20260717-1
+    newTag: v20260720-real-spectator-1
   - name: ghcr.io/jungle-303-04/demo-game/bot-runner
-    newName: 183548421506.dkr.ecr.ap-northeast-2.amazonaws.com/demo-game-bot-runner
-    newTag: v20260717-1
+    newTag: v20260720-real-spectator-1
   - name: ghcr.io/jungle-303-04/demo-game/ops-console
-    newName: 183548421506.dkr.ecr.ap-northeast-2.amazonaws.com/demo-game-ops-console
-    newTag: v20260717-4
+    newTag: v20260720-real-spectator-1
   - name: ghcr.io/jungle-303-04/demo-game/room-orchestrator
-    newName: 183548421506.dkr.ecr.ap-northeast-2.amazonaws.com/demo-game-room-orchestrator
-    newTag: v20260717-1
+    newTag: v20260720-real-spectator-1
+patches:
+  - target:
+      version: v1
+      kind: ConfigMap
+      name: demo-game-gateway
+      namespace: sandbox
+    patch: |-
+      - op: replace
+        path: /data/default.conf.template
+        value: |
+          server {
+            listen 8080;
+            resolver ${DNS_RESOLVER} valid=10s ipv6=off;
+            client_max_body_size 1m;
+
+            location = /healthz {
+              add_header Content-Type text/plain;
+              return 200 'ok';
+            }
+
+            location = /api/find-game {
+              proxy_pass http://management-server.sandbox.svc.cluster.local:8081;
+              proxy_set_header Host $host;
+              proxy_set_header X-Forwarded-Host $host;
+              proxy_set_header X-Forwarded-Proto https;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            }
+
+            location ~ ^/(?:play|watch)/room-[0-2]$ {
+              return 308 $uri/;
+            }
+
+            location ~ ^/(?:play|watch)/room-(?<room_ordinal>[0-2])(?:/|$) {
+              set $game_backend game-$room_ordinal.game-headless.sandbox.svc.cluster.local;
+              proxy_pass http://$game_backend:8001;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+              proxy_set_header Upgrade $http_upgrade;
+              proxy_set_header Connection "upgrade";
+              proxy_set_header X-Forwarded-Host $host;
+              proxy_set_header X-Forwarded-Proto https;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_read_timeout 3600s;
+              proxy_send_timeout 3600s;
+              proxy_buffering off;
+            }
+
+            location / {
+              proxy_pass http://management-server.sandbox.svc.cluster.local:8085;
+              proxy_set_header Host $host;
+              proxy_set_header X-Forwarded-Host $host;
+              proxy_set_header X-Forwarded-Proto https;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            }
+          }
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      name: demo-game-gateway
+      namespace: sandbox
+    patch: |-
+      - op: remove
+        path: /spec/template/spec/containers/0/volumeMounts/1
+      - op: remove
+        path: /spec/template/spec/containers/0/ports/1
+      - op: remove
+        path: /spec/template/spec/volumes/1
+  - target:
+      version: v1
+      kind: Service
+      name: demo-game-gateway
+      namespace: sandbox
+    patch: |-
+      - op: remove
+        path: /spec/ports/1
