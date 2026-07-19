@@ -31,6 +31,13 @@ import { ProfileUi } from "./ui/profileUi.ts";
 import { TeamMenu } from "./ui/teamMenu.ts";
 import { loadStaticDomImages } from "./ui/ui2.ts";
 
+declare global {
+    interface Window {
+        __opsiaDriveSpectatorFrame?: () => void;
+        __opsiaDrivenSpectatorFrames?: number;
+    }
+}
+
 export class Application {
     nameInput = $("#player-name-input-solo");
     serverSelect = $("#server-select-main");
@@ -374,6 +381,19 @@ export class Application {
                 this.pixi.ticker.maxFPS = 5;
             }
             this.pixi.ticker.add(this.update, this);
+            if (this.opsiaWatch && this.opsiaWatchView === "player") {
+                let externallyDriven = false;
+                window.__opsiaDrivenSpectatorFrames = 0;
+                window.__opsiaDriveSpectatorFrame = () => {
+                    if (!externallyDriven) {
+                        this.pixi?.ticker.stop();
+                        externallyDriven = true;
+                    }
+                    this.pixi?.ticker.update(performance.now());
+                    window.__opsiaDrivenSpectatorFrames =
+                        (window.__opsiaDrivenSpectatorFrames ?? 0) + 1;
+                };
+            }
             this.pixi.renderer.background.color = 7378501;
             this.resourceManager = new ResourceManager(
                 this.pixi.renderer,

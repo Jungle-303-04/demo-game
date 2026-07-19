@@ -38,7 +38,7 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
-          tags: ghcr.io/jungle-303-04/demo-game/${{ matrix.image }}:v20260720-live-map-ai-4
+          tags: ghcr.io/jungle-303-04/demo-game/${{ matrix.image }}:v20260720-live-map-ai-5
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}

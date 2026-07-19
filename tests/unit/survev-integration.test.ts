@@ -36,6 +36,9 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(client, /type: "opsia-spectator-key"/);
   assert.match(client, /event\.stopImmediatePropagation\(\)/);
   assert.match(client, /this\.pixi\.ticker\.maxFPS = 5/);
+  assert.match(client, /__opsiaDriveSpectatorFrame/);
+  assert.match(client, /this\.pixi\?\.ticker\.stop\(\)/);
+  assert.match(client, /this\.pixi\?\.ticker\.update\(performance\.now\(\)\)/);
   assert.ok(clientHtml.includes("else if (/^\\/watch\\/room-\\d+\\/?$/.test(opsiaPath))"));
   assert.match(clientHtml, /`opsia-watch-\$\{opsiaWatchView\}`/);
   assert.ok(clientHtml.indexOf("opsia-watch-${opsiaWatchView}") < clientHtml.indexOf("css/app.css"));
@@ -66,6 +69,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /function roomWatchUrl/);
   assert.match(adminUi, /url\.searchParams\.set\("target", player\.id\)/);
   assert.match(adminUi, /function PlayerSpectatorView/);
+  assert.match(adminUi, /frameWindow\?\.__opsiaDriveSpectatorFrame\?\.\(\)/);
+  assert.match(adminUi, /requestAnimationFrame\(driveSpectatorFrame\)/);
   assert.match(gameClient, /m_opsiaPlayerView/);
   assert.match(gameClient, /this\.m_uiManager\.hideMiniMap\(\)/);
   assert.match(adminUi, /<iframe/);

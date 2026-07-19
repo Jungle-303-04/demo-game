@@ -263,11 +263,31 @@ function PlayerSpectatorView({
   room: GameRoom;
   player: PlayerTelemetry;
 }) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  useEffect(() => {
+    let animationFrame = 0;
+    const driveSpectatorFrame = () => {
+      try {
+        const frameWindow = iframeRef.current?.contentWindow as
+          | (Window & { __opsiaDriveSpectatorFrame?: () => void })
+          | null;
+        frameWindow?.__opsiaDriveSpectatorFrame?.();
+      } catch {
+        // A separately hosted development game client keeps its own ticker.
+      }
+      animationFrame = window.requestAnimationFrame(driveSpectatorFrame);
+    };
+    animationFrame = window.requestAnimationFrame(driveSpectatorFrame);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [player.id, room.id]);
+
   return (
     <div className="player-spectator">
       <iframe
         allow="fullscreen"
         key={`${room.id}:${player.id}`}
+        ref={iframeRef}
         src={roomWatchUrl(room, player)}
         tabIndex={-1}
         title={`${player.name} 실시간 관전`}
