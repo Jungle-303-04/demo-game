@@ -5518,3 +5518,54 @@ span.ui-stats-header-value {
     transform: scale(0.7);
   }
 }
+/* Opsia broadcast routes render the real Pixi game canvas without the
+ * interactive Survev shell. The administrator supplies its own controls. */
+html.opsia-watch,
+html.opsia-watch body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #020403;
+}
+
+html.opsia-watch body > :not(#cvs):not(#game-area-wrapper) {
+  display: none !important;
+}
+
+html.opsia-watch #cvs {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+html.opsia-watch #game-area-wrapper {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: none !important;
+}
+
+html.opsia-watch-player #game-area-wrapper > * {
+  display: none !important;
+}
+
+html.opsia-watch-map #game-area-wrapper > :not(#ui-game),
+html.opsia-watch-map #ui-game > :not(#big-map) {
+  display: none !important;
+}
+
+html.opsia-watch-map #ui-game,
+html.opsia-watch-map #big-map {
+  display: block !important;
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+html.opsia-watch-map #big-map-close {
+  display: none !important;
+}

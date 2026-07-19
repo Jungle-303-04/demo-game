@@ -1,51 +1,346 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { RoomRegistryRecord } from "../../room-orchestrator/src/registry.js";
+import { timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { extname, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  buildAdminRooms,
+  fetchJson,
+  getRegistryState,
+  listRegistryRooms,
+  type AdminRoom,
+  type RegistryRoom,
+  UpstreamError,
+} from "./admin.js";
 
-interface TimelineEvent { at: string; type: string; detail: Record<string, unknown>; }
+interface TimelineEvent {
+  at: string;
+  type: string;
+  detail: Record<string, unknown>;
+}
+
+type EventTone = "info" | "success" | "warning" | "danger";
+
 const port = Number(process.env.PORT ?? 8085);
 const orchestrator = process.env.ORCHESTRATOR_URL ?? "http://room-orchestrator:8082";
 const botRunner = process.env.BOT_RUNNER_URL ?? "http://bot-runner:8084";
-const events: TimelineEvent[] = [];
-const readJson = async (request: IncomingMessage): Promise<Record<string, unknown>> => { const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk)); return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown> : {}; };
-const send = (response: ServerResponse, status: number, body: unknown): void => { response.writeHead(status, { "content-type": "application/json" }); response.end(JSON.stringify(body)); };
-const roomRecords = async (): Promise<RoomRegistryRecord[]> => (await (await fetch(`${orchestrator}/rooms`)).json() as { rooms: RoomRegistryRecord[] }).rooms;
-const proxyJson = async (url: string, body: Record<string, unknown>): Promise<unknown> => { const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); if (!response.ok) throw new Error(`${url}:${response.status}`); return response.json(); };
+const webRoot = resolve(process.env.OPS_CONSOLE_WEB_ROOT ?? fileURLToPath(new URL("../web", import.meta.url)));
+const adminToken = process.env.OPS_ADMIN_TOKEN?.trim() ?? "";
+if (process.env.REQUIRE_ADMIN_TOKEN === "true" && !adminToken) {
+  throw new Error("OPS_ADMIN_TOKEN is required when REQUIRE_ADMIN_TOKEN=true");
+}
+const timeline: TimelineEvent[] = [];
 
-const page = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>Opsia Demo Game</title><style>body{font:14px system-ui;margin:2rem;background:#0d1117;color:#dbe4ee}button,input{margin:.2rem}table{border-collapse:collapse;width:100%;margin:1rem 0}th,td{padding:.45rem;border-bottom:1px solid #30363d;text-align:left}#map{width:480px;height:480px;border:1px solid #58a6ff;background:#111827}.red{color:#ff6b6b}.blue{color:#66b3ff}</style></head><body><h1>데모-게임 운영 화면</h1><form id="scale">룸 수 <input type="number" name="replicas" min="1" max="100" value="3"><button>적용</button></form><form id="bots">봇 수 <input type="number" name="count" min="1" max="500" value="30"><select name="mode"><option>normal</option><option>hack</option></select><button>투입</button></form><table><thead><tr><th>룸</th><th>상태</th><th>인원</th><th>생존</th><th>파드</th><th>QR</th><th>작업</th></tr></thead><tbody id="rooms"></tbody></table><h2 id="watch">관전</h2><button id="prev">이전 생존자</button><button id="next">다음 생존자</button><svg id="map" viewBox="0 0 480 480" role="img" aria-label="실제 survev playerBarn 미니맵"></svg><h2>Opsia 이벤트</h2><pre id="timeline"></pre><script>let current='room-0',focus=0;const $=s=>document.querySelector(s);async function api(p,o){return fetch(p,o).then(r=>r.json())}async function refresh(){let data=await api('/api/rooms');$('#rooms').innerHTML=data.rooms.map(r=>'<tr><td><button onclick="location.assign(\\''+r.qrUrl+'\\')">'+r.roomId+'</button></td><td>'+r.status+'</td><td>'+r.players+'</td><td>'+r.alive+'</td><td>'+r.podName+'</td><td><a href="'+r.qrUrl+'">QR</a></td><td><button onclick="endRoom(\\''+r.roomId+'\\')">논리적 종료</button></td></tr>').join('');let line=await api('/api/timeline');$('#timeline').textContent=line.events.map(e=>e.at+' '+e.type).join('\\n');if(current)draw(await api('/api/ops/snapshot/'+current));}function draw(s){let m=$('#map');m.replaceChildren(...(s.players||[]).map((p,i)=>{let c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('cx',p.x*4.8);c.setAttribute('cy',p.y*4.8);c.setAttribute('r',i===focus?8:4);c.setAttribute('fill',p.team==='red'?'#ff6b6b':'#66b3ff');return c;}));$('#watch').textContent='관전 '+s.roomId+' · '+((s.players||[])[focus]?.nickname||'생존자 없음');}window.watchRoom=r=>{current=r;focus=0;refresh()};window.endRoom=r=>api('/api/rooms/'+r+'/end',{method:'POST'}).then(refresh);$('#scale').onsubmit=e=>{e.preventDefault();api('/api/rooms',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({replicas:+e.target.replicas.value})}).then(refresh)};$('#bots').onsubmit=e=>{e.preventDefault();api('/api/bots/spawn',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({count:+e.target.count.value,mode:e.target.mode.value})}).then(refresh)};$('#next').onclick=()=>{focus++;refresh()};$('#prev').onclick=()=>{focus=Math.max(0,focus-1);refresh()};setInterval(refresh,500);refresh();</script></body></html>`;
-const enhancedPage = page.replace("</body>", `<script>const opsiaZoom=document.createElement('label');opsiaZoom.textContent='줌 ';const opsiaZoomInput=document.createElement('input');opsiaZoomInput.type='range';opsiaZoomInput.min='1';opsiaZoomInput.max='4';opsiaZoomInput.step='.5';opsiaZoomInput.value='1';opsiaZoom.append(opsiaZoomInput);document.querySelector('#map').before(opsiaZoom);function applyOpsiaZoom(){const map=document.querySelector('#map'),z=Number(opsiaZoomInput.value),focus=[...map.querySelectorAll('circle')].find(c=>c.getAttribute('r')==='8');if(z<=1||!focus)return map.setAttribute('viewBox','0 0 480 480');const span=480/z,x=Math.max(0,Number(focus.getAttribute('cx'))-span/2),y=Math.max(0,Number(focus.getAttribute('cy'))-span/2);map.setAttribute('viewBox',[x,y,span,span].join(' '));}function wireRoomNavigation(){document.querySelectorAll('#rooms tr').forEach(row=>{const buttons=row.querySelectorAll('button'),roomButton=buttons[0],resetButton=buttons[1],link=row.querySelector('a[href]');if(!roomButton||!resetButton||!link)return;roomButton.onclick=()=>window.location.assign(link.href);roomButton.title='실제 survev 게임 화면으로 이동';const cell=resetButton.parentElement;if(!cell||cell.querySelector('.opsia-watch'))return;const watch=document.createElement('button');watch.className='opsia-watch';watch.textContent='관전';watch.onclick=()=>window.watchRoom(roomButton.textContent);cell.prepend(watch);});}opsiaZoomInput.oninput=applyOpsiaZoom;setInterval(applyOpsiaZoom,100);setInterval(wireRoomNavigation,100);</script></body>`);
-const broadcastPage = enhancedPage.replace("</body>", `<h2>실시간 중계 화면</h2><p>룸을 누르면 실제 참가자 화면으로 이동합니다. <em>관전</em>은 아래에 해당 룸의 실제 PixiJS 화면을 연다.</p><iframe id="broadcast" title="survev 실시간 중계" allow="fullscreen" style="display:block;width:100%;height:min(72vh,900px);border:1px solid #58a6ff;background:#000"></iframe><script>const broadcast=document.querySelector('#broadcast');function wireBroadcast(){document.querySelectorAll('#rooms tr').forEach(row=>{const buttons=row.querySelectorAll('button'),roomButton=buttons[0],link=row.querySelector('a[href]');if(!roomButton||!link)return;const roomId=roomButton.textContent;link.href=window.location.origin+'/play/'+roomId;roomButton.onclick=()=>window.location.assign(link.href);const watch=row.querySelector('.opsia-watch');if(watch)watch.onclick=()=>{window.watchRoom(roomId);broadcast.src='/watch/'+roomId;broadcast.scrollIntoView({behavior:'smooth',block:'start'});};});}setInterval(wireBroadcast,100);</script></body>`);
+const tokenMatches = (request: IncomingMessage): boolean => {
+  if (!adminToken) return true;
+  const supplied = String(request.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
+  const expectedBytes = Buffer.from(adminToken);
+  const suppliedBytes = Buffer.from(supplied);
+  return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
+};
+
+const readJson = async (request: IncomingMessage): Promise<Record<string, unknown>> => {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.from(chunk);
+    size += buffer.length;
+    if (size > 64 * 1024) throw new UpstreamError(413, { error: "request_body_too_large" }, "request_body_too_large");
+    chunks.push(buffer);
+  }
+  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown> : {};
+};
+
+const send = (response: ServerResponse, status: number, body: unknown): void => {
+  response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
+  response.end(JSON.stringify(body));
+};
+
+const jsonRequest = <T>(url: string, method: string, body?: Record<string, unknown>, timeoutMs?: number) =>
+  fetchJson<T>(url, {
+    method,
+    headers: body ? { "content-type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  }, timeoutMs);
+
+const recordEvent = (
+  type: string,
+  roomId: string,
+  source: string,
+  message: string,
+  tone: EventTone = "info",
+  extra: Record<string, unknown> = {},
+) => {
+  timeline.unshift({ at: new Date().toISOString(), type, detail: { roomId, source, message, tone, ...extra } });
+  timeline.splice(80);
+};
+
+const adminEvents = () => timeline.map((event, index) => ({
+  id: `${event.at}-${index}`,
+  roomId: String(event.detail.roomId ?? "global"),
+  time: new Date(event.at).toLocaleTimeString("ko-KR", { hour12: false }),
+  tone: event.detail.tone ?? "info",
+  source: String(event.detail.source ?? "opsia"),
+  message: String(event.detail.message ?? event.type),
+}));
+
+const roomRecord = async (roomId: string): Promise<RegistryRoom> => {
+  const room = (await listRegistryRooms(orchestrator)).find((candidate) => candidate.roomId === roomId);
+  if (!room) throw new UpstreamError(404, { error: "room_not_found" }, "room_not_found");
+  return room;
+};
+
+const adminRoom = async (roomId: string): Promise<AdminRoom> => {
+  const room = (await buildAdminRooms(orchestrator, botRunner)).find((candidate) => candidate.id === roomId);
+  if (!room) throw new UpstreamError(404, { error: "room_not_found" }, "room_not_found");
+  return room;
+};
+
+interface BotJobResponse {
+  jobId: string;
+  roomId: string;
+  total: number;
+  completed: number;
+  intervalMs: number;
+  state: "running" | "completed" | "cancelled" | "failed";
+  error?: string;
+}
+
+const botJob = async (roomId: string, jobId: string): Promise<BotJobResponse> => {
+  const job = await fetchJson<BotJobResponse>(`${botRunner}/bots/jobs/${encodeURIComponent(jobId)}`);
+  if (job.roomId !== roomId) throw new UpstreamError(404, { error: "bot_job_not_found" }, "bot_job_not_found");
+  return job;
+};
+
+const legacyRooms = async (request: IncomingMessage) => {
+  const records = await listRegistryRooms(orchestrator);
+  const host = String(request.headers["x-forwarded-host"] ?? request.headers.host ?? "localhost");
+  const protocol = String(request.headers["x-forwarded-proto"] ?? "http").split(",")[0];
+  return Promise.all(records.filter((room) => room.status !== "inactive").map(async (room) => {
+    const summary = await fetchJson<Record<string, unknown>>(`${room.endpoint}/summary`).catch(() => undefined);
+    return {
+      ...room,
+      ...summary,
+      qrUrl: `${protocol}://${host}/play/${room.roomId}/`,
+    };
+  }));
+};
+
+const commandRoom = async (roomId: string, command: string) => {
+  const room = await roomRecord(roomId);
+  switch (command) {
+    case "start":
+      await jsonRequest(`${orchestrator}/rooms/${roomId}/start`, "POST");
+      recordEvent("ROOM_START_REQUESTED", roomId, "orchestrator", "게임 Pod 시작 요청", "info");
+      return { accepted: true };
+    case "stop":
+      await jsonRequest(`${orchestrator}/rooms/${roomId}/stop`, "POST");
+      recordEvent("ROOM_STOP_REQUESTED", roomId, "orchestrator", "snapshot 보존 후 scale-to-zero 요청", "warning");
+      return { accepted: true };
+    case "snapshot": {
+      const result = await jsonRequest<Record<string, unknown>>(`${room.endpoint}/ops/snapshot/save`, "POST", undefined, 8_000);
+      recordEvent("SNAPSHOT_SAVED", roomId, "redis", "수동 snapshot 저장 요청 완료", "success", result);
+      return result;
+    }
+    case "inject-pod-failure": {
+      const result = await jsonRequest<Record<string, unknown>>(`${orchestrator}/rooms/${roomId}/failure`, "POST");
+      recordEvent("POD_FAILURE_INJECTED", roomId, "orchestrator", `${room.podName} 삭제 및 Room Recovery 시작`, "danger");
+      return result;
+    }
+    default:
+      throw new UpstreamError(400, { error: "unsupported_room_command" }, "unsupported_room_command");
+  }
+};
+
+const contentType = (file: string) => ({
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".ico": "image/x-icon",
+}[extname(file)] ?? "application/octet-stream");
+
+const serveWeb = async (pathname: string, response: ServerResponse) => {
+  const relative = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+  let file = resolve(webRoot, relative);
+  if (file !== webRoot && !file.startsWith(`${webRoot}${sep}`)) return false;
+  let data = await readFile(file).catch(() => undefined);
+  if (!data && !extname(relative)) {
+    file = resolve(webRoot, "index.html");
+    data = await readFile(file).catch(() => undefined);
+  }
+  if (!data) return false;
+  response.writeHead(200, {
+    "content-type": contentType(file),
+    "cache-control": file.endsWith("index.html") ? "no-cache" : "public, max-age=31536000, immutable",
+  });
+  response.end(data);
+  return true;
+};
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", "http://localhost");
   try {
-    if (request.method === "GET" && url.pathname === "/") { response.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return response.end(broadcastPage); }
-    if (request.method === "GET" && url.pathname === "/healthz") return send(response, 200, { status: "ok" });
-    if (request.method === "GET" && url.pathname === "/api/rooms") {
-      const records = await roomRecords();
-      const host = String(request.headers["x-forwarded-host"] ?? request.headers.host ?? "localhost");
-      const protocol = String(request.headers["x-forwarded-proto"] ?? "http").split(",")[0];
-      const rooms = await Promise.all(records.filter((room) => room.status !== "inactive").map(async (room) => {
-        try {
-          const summary = await (await fetch(`${room.endpoint}/summary`)).json() as { status: string; players: number; alive: number; strictMode: boolean };
-          // Game pods only know their in-cluster service address. The browser must
-          // always receive the stable gateway URL so a pod replacement is hidden.
-          return { ...room, ...summary, qrUrl: `${protocol}://${host}/play/${room.roomId}` };
-        }
-        catch { return room; }
-      }));
-      return send(response, 200, { rooms });
+    if (request.method === "GET" && url.pathname === "/healthz") return send(response, 200, { status: "ok", ui: "react", data: "live" });
+
+    // Every ops API can expose room internals or mutate live state. The public
+    // matchmaker is a separate api-server route at the gateway.
+    const requiresAdmin = url.pathname.startsWith("/api/");
+    if (requiresAdmin && !tokenMatches(request)) {
+      response.setHeader("www-authenticate", 'Bearer realm="Survev Control Room"');
+      return send(response, 401, { error: "admin_token_required" });
     }
-    if (request.method === "POST" && url.pathname === "/api/rooms") return send(response, 200, await proxyJson(`${orchestrator}/rooms`, await readJson(request)));
+
+    if (request.method === "GET" && url.pathname === "/api/admin/rooms") {
+      const registryState = await getRegistryState(orchestrator);
+      return send(response, 200, {
+        rooms: await buildAdminRooms(orchestrator, botRunner, registryState.rooms),
+        capabilities: {
+          scalingAvailable: registryState.scalingAvailable,
+          maxRooms: registryState.maxRooms,
+        },
+      });
+    }
+    if (request.method === "GET" && url.pathname === "/api/admin/events") {
+      return send(response, 200, { events: adminEvents() });
+    }
+    if (request.method === "POST" && url.pathname === "/api/admin/rooms") {
+      const input = await readJson(request);
+      const created = await jsonRequest<{ room: RegistryRoom }>(`${orchestrator}/rooms/create`, "POST", input);
+      recordEvent("ROOM_CREATED", created.room.roomId, "orchestrator", `${created.room.spec?.name ?? created.room.roomId} 생성`, "success");
+      const initialBots = Number(input.initialBots ?? 0);
+      if (initialBots > 0) {
+        void (async () => {
+          for (let attempt = 0; attempt < 20; attempt++) {
+            const summary = await fetchJson(`${created.room.endpoint}/summary`, undefined, 750).catch(() => undefined);
+            if (summary) {
+              await jsonRequest(`${botRunner}/bots/jobs`, "POST", { room: created.room.roomId, count: initialBots, intervalMs: 300, mode: "normal" }).catch(() => undefined);
+              return;
+            }
+            await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
+          }
+        })();
+      }
+      return send(response, 201, { room: await adminRoom(created.room.roomId) });
+    }
+
+    const roomMatch = url.pathname.match(/^\/api\/admin\/rooms\/(room-\d+)$/);
+    if (roomMatch && request.method === "PATCH") {
+      const roomId = roomMatch[1]!;
+      const input = await readJson(request);
+      await jsonRequest(`${orchestrator}/rooms/${roomId}`, "PATCH", input);
+      recordEvent("ROOM_UPDATED", roomId, "admin", "방 설정 저장 완료", "success");
+      return send(response, 200, { room: await adminRoom(roomId) });
+    }
+    if (roomMatch && request.method === "DELETE") {
+      const roomId = roomMatch[1]!;
+      await jsonRequest(`${orchestrator}/rooms/${roomId}`, "DELETE");
+      recordEvent("ROOM_DELETED", roomId, "orchestrator", "게임 방과 registry 레코드 삭제", "warning");
+      return send(response, 200, { deleted: roomId });
+    }
+
+    const commandMatch = url.pathname.match(/^\/api\/admin\/rooms\/(room-\d+)\/commands$/);
+    if (commandMatch && request.method === "POST") {
+      const body = await readJson(request);
+      return send(response, 202, await commandRoom(commandMatch[1]!, String(body.command ?? "")));
+    }
+
+    const botsMatch = url.pathname.match(/^\/api\/admin\/rooms\/(room-\d+)\/bots$/);
+    if (botsMatch && request.method === "POST") {
+      const roomId = botsMatch[1]!;
+      const body = await readJson(request);
+      const job = await jsonRequest<{ jobId: string; total: number }>(`${botRunner}/bots/jobs`, "POST", {
+        room: roomId,
+        count: Number(body.count),
+        intervalMs: Number(body.intervalMs ?? 300),
+        mode: body.mode === "hack" ? "hack" : "normal",
+      });
+      recordEvent("BOT_LOAD_STARTED", roomId, "load-generator", `LoadBot ${job.total}명 투입 시작`, "info", { jobId: job.jobId });
+      return send(response, 202, { jobId: job.jobId, accepted: job.total });
+    }
+    if (botsMatch && request.method === "DELETE") {
+      const roomId = botsMatch[1]!;
+      const result = await jsonRequest<{ killed: number }>(`${botRunner}/bots/kill`, "POST", { room: roomId });
+      recordEvent("BOTS_REMOVED", roomId, "load-generator", `LoadBot ${result.killed}명 연결 종료`, "warning");
+      return send(response, 200, result);
+    }
+
+    const jobMatch = url.pathname.match(/^\/api\/admin\/rooms\/(room-\d+)\/bot-jobs\/([^/]+)$/);
+    if (jobMatch && request.method === "GET") {
+      return send(response, 200, await botJob(jobMatch[1]!, jobMatch[2]!));
+    }
+    const cancelJobMatch = url.pathname.match(/^\/api\/admin\/rooms\/(room-\d+)\/bot-jobs\/([^/]+)\/cancel$/);
+    if (cancelJobMatch && request.method === "POST") {
+      await botJob(cancelJobMatch[1]!, cancelJobMatch[2]!);
+      const result = await jsonRequest<Record<string, unknown>>(`${botRunner}/bots/jobs/${encodeURIComponent(cancelJobMatch[2]!)}/cancel`, "POST");
+      recordEvent("BOT_LOAD_CANCELLED", cancelJobMatch[1]!, "load-generator", "LoadBot ramp-up 취소", "warning");
+      return send(response, 200, result);
+    }
+
+    const joinLockMatch = url.pathname.match(/^\/api\/admin\/rooms\/(room-\d+)\/join-lock$/);
+    if (joinLockMatch && request.method === "PUT") {
+      const roomId = joinLockMatch[1]!;
+      const room = await roomRecord(roomId);
+      const locked = (await readJson(request)).locked === true;
+      await jsonRequest(`${orchestrator}/rooms/${roomId}/join-lock`, "PUT", { locked });
+      let liveResult: Record<string, unknown> | undefined;
+      for (let attempt = 0; attempt < 3 && !liveResult; attempt += 1) {
+        liveResult = await jsonRequest<Record<string, unknown>>(`${room.endpoint}/ops/join-lock/${locked}`, "POST", undefined, 2_000).catch(() => undefined);
+        if (!liveResult && attempt < 2) await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
+      }
+      recordEvent(
+        "JOIN_LOCK_CHANGED",
+        roomId,
+        "admin",
+        locked ? "신규 플레이어 입장 잠금" : "신규 플레이어 입장 허용",
+        locked ? "warning" : "success",
+        { appliedToLivePod: Boolean(liveResult), enforcement: "redis-on-admission" },
+      );
+      return send(response, liveResult ? 200 : 202, { roomId, locked, appliedToLivePod: Boolean(liveResult), enforcement: "redis-on-admission" });
+    }
+
+    // Backwards-compatible endpoints used by the existing scripts and tests.
+    if (request.method === "GET" && url.pathname === "/api/rooms") {
+      return send(response, 200, { rooms: await legacyRooms(request) });
+    }
+    if (request.method === "POST" && url.pathname === "/api/rooms") {
+      return send(response, 200, await jsonRequest(`${orchestrator}/rooms`, "POST", await readJson(request)));
+    }
     const end = url.pathname.match(/^\/api\/rooms\/(room-\d+)\/end$/);
-    if (request.method === "POST" && end) { const room = (await roomRecords()).find((record) => record.roomId === end[1]); if (!room) return send(response, 404, { error: "room_not_found" }); return send(response, 200, await proxyJson(`${room.endpoint}/ops/end`, {})); }
-    if (request.method === "POST" && url.pathname === "/api/bots/spawn") return send(response, 201, await proxyJson(`${botRunner}/bots/spawn`, await readJson(request)));
-    if (request.method === "POST" && url.pathname === "/api/bots/kill") return send(response, 200, await proxyJson(`${botRunner}/bots/kill`, await readJson(request)));
-    if (request.method === "GET" && url.pathname === "/api/bots") return send(response, 200, await (await fetch(`${botRunner}/bots`)).json());
+    if (request.method === "POST" && end) return send(response, 200, await commandRoom(end[1]!, "snapshot").then(async () => {
+      const room = await roomRecord(end[1]!);
+      const result = await jsonRequest<Record<string, unknown>>(`${room.endpoint}/ops/end`, "POST", undefined, 8_000);
+      recordEvent("ROOM_RESET", room.roomId, "game-server", "논리적 방 초기화 완료", "warning");
+      return result;
+    }));
+    if (request.method === "POST" && url.pathname === "/api/bots/spawn") return send(response, 201, await jsonRequest(`${botRunner}/bots/spawn`, "POST", await readJson(request), 30_000));
+    if (request.method === "POST" && url.pathname === "/api/bots/kill") return send(response, 200, await jsonRequest(`${botRunner}/bots/kill`, "POST", await readJson(request)));
+    if (request.method === "GET" && url.pathname === "/api/bots") return send(response, 200, await fetchJson(`${botRunner}/bots`));
     const snapshot = url.pathname.match(/^\/api\/ops\/snapshot\/(room-\d+)$/);
-    if (request.method === "GET" && snapshot) { const room = (await roomRecords()).find((record) => record.roomId === snapshot[1]); if (!room) return send(response, 404, { error: "room_not_found" }); return send(response, 200, await (await fetch(`${room.endpoint}/ops/snapshot`)).json()); }
-    if (request.method === "POST" && url.pathname === "/api/ops/events") { const body = await readJson(request); const type = String(body.type ?? ""); if (!type) return send(response, 400, { error: "event_type_required" }); events.unshift({ at: new Date().toISOString(), type, detail: body }); events.splice(50); return send(response, 202, { accepted: true }); }
-    if (request.method === "GET" && url.pathname === "/api/timeline") return send(response, 200, { events });
+    if (request.method === "GET" && snapshot) {
+      const room = await roomRecord(snapshot[1]!);
+      return send(response, 200, await fetchJson(`${room.endpoint}/ops/snapshot`));
+    }
+    if (request.method === "POST" && url.pathname === "/api/ops/events") {
+      const body = await readJson(request);
+      const type = String(body.type ?? "");
+      if (!type) return send(response, 400, { error: "event_type_required" });
+      timeline.unshift({ at: new Date().toISOString(), type, detail: body });
+      timeline.splice(80);
+      return send(response, 202, { accepted: true });
+    }
+    if (request.method === "GET" && url.pathname === "/api/timeline") return send(response, 200, { events: timeline });
+
+    if (request.method === "GET" && await serveWeb(url.pathname, response)) return;
     return send(response, 404, { error: "not_found" });
-  } catch (error) { return send(response, 502, { error: error instanceof Error ? error.message : "upstream_error" }); }
+  } catch (error) {
+    if (error instanceof UpstreamError) return send(response, error.status, error.body);
+    return send(response, 502, { error: error instanceof Error ? error.message : "upstream_error" });
+  }
 });
-server.listen(port, () => process.stdout.write(`${JSON.stringify({ level: "info", event: "ops_console_listening", detail: { port } })}\n`));
+
+server.listen(port, () => {
+  process.stdout.write(`${JSON.stringify({ level: "info", event: "ops_console_listening", detail: { port, ui: "react", data: "live" } })}\n`);
+});

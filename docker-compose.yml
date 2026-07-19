@@ -1,3 +1,7 @@
+x-control-environment: &control-environment
+  REQUIRE_CONTROL_TOKEN: "true"
+  OPS_CONTROL_TOKEN: "${OPS_CONTROL_TOKEN:-demo-game-local-control-token}"
+
 services:
   redis:
     image: redis:7-alpine
@@ -10,36 +14,67 @@ services:
 
   game-0:
     build: { context: ., dockerfile: services/game-server/Dockerfile }
-    environment: { ROOM_ID: room-0, POD_NAME: game-0, REDIS_URL: redis://redis:6379, PUBLIC_BASE_URL: http://localhost:8090 }
+    environment:
+      <<: *control-environment
+      ROOM_ID: room-0
+      OPSIA_MAP_NAME: faction
+      POD_NAME: game-0
+      REDIS_URL: redis://redis:6379
+      PUBLIC_BASE_URL: http://localhost:8090
     ports: ["8090:8001"]
     depends_on: { redis: { condition: service_healthy } }
   game-1:
     build: { context: ., dockerfile: services/game-server/Dockerfile }
-    environment: { ROOM_ID: room-1, POD_NAME: game-1, REDIS_URL: redis://redis:6379, PUBLIC_BASE_URL: http://localhost:8091 }
+    environment:
+      <<: *control-environment
+      ROOM_ID: room-1
+      OPSIA_MAP_NAME: desert
+      POD_NAME: game-1
+      REDIS_URL: redis://redis:6379
+      PUBLIC_BASE_URL: http://localhost:8091
     ports: ["8091:8001"]
     depends_on: { redis: { condition: service_healthy } }
   game-2:
     build: { context: ., dockerfile: services/game-server/Dockerfile }
-    environment: { ROOM_ID: room-2, POD_NAME: game-2, REDIS_URL: redis://redis:6379, PUBLIC_BASE_URL: http://localhost:8092 }
+    environment:
+      <<: *control-environment
+      ROOM_ID: room-2
+      OPSIA_MAP_NAME: snow
+      POD_NAME: game-2
+      REDIS_URL: redis://redis:6379
+      PUBLIC_BASE_URL: http://localhost:8092
     ports: ["8092:8001"]
     depends_on: { redis: { condition: service_healthy } }
 
   room-orchestrator:
     build: { context: ., dockerfile: services/room-orchestrator/Dockerfile }
-    environment: { REDIS_URL: redis://redis:6379, INITIAL_ROOMS: "3", GAME_ENDPOINT_TEMPLATE: "http://game-{ordinal}:8001" }
+    environment:
+      <<: *control-environment
+      REDIS_URL: redis://redis:6379
+      INITIAL_ROOMS: "3"
+      GAME_ENDPOINT_TEMPLATE: "http://game-{ordinal}:8001"
     depends_on: { redis: { condition: service_healthy }, game-0: { condition: service_started }, game-1: { condition: service_started }, game-2: { condition: service_started } }
   api-server:
     build: { context: ., dockerfile: services/api-server/Dockerfile }
-    environment: { ORCHESTRATOR_URL: http://room-orchestrator:8082 }
+    environment:
+      <<: *control-environment
+      ORCHESTRATOR_URL: http://room-orchestrator:8082
+      PUBLIC_ROOM_URLS: "room-0=http://localhost:8090/play/room-0/,room-1=http://localhost:8091/play/room-1/,room-2=http://localhost:8092/play/room-2/"
     ports: ["8081:8081"]
     depends_on: { room-orchestrator: { condition: service_started } }
   bot-runner:
     build: { context: ., dockerfile: services/bot-runner/Dockerfile }
-    environment: { OPSIA_ROOM_ENDPOINTS: "room-0=http://game-0:8001,room-1=http://game-1:8001,room-2=http://game-2:8001" }
+    environment:
+      <<: *control-environment
+      OPSIA_ROOM_ENDPOINTS: "room-0=http://game-0:8001,room-1=http://game-1:8001,room-2=http://game-2:8001"
     ports: ["8084:8084"]
     depends_on: { game-0: { condition: service_started }, game-1: { condition: service_started }, game-2: { condition: service_started } }
   ops-console:
     build: { context: ., dockerfile: services/ops-console/Dockerfile }
-    environment: { ORCHESTRATOR_URL: http://room-orchestrator:8082, BOT_RUNNER_URL: http://bot-runner:8084 }
+    environment:
+      <<: *control-environment
+      ORCHESTRATOR_URL: http://room-orchestrator:8082
+      BOT_RUNNER_URL: http://bot-runner:8084
+      PUBLIC_ROOM_URLS: "room-0=http://localhost:8090/play/room-0/,room-1=http://localhost:8091/play/room-1/,room-2=http://localhost:8092/play/room-2/"
     ports: ["8085:8085"]
     depends_on: { room-orchestrator: { condition: service_started }, bot-runner: { condition: service_started } }

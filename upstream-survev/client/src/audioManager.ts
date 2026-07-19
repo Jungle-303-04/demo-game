@@ -28,9 +28,11 @@ interface Options {
 }
 
 export class AudioManager {
+    readonly permanentlyMuted = typeof window !== "undefined"
+        && /^\/watch\/room-\d+\/?$/.test(window.location.pathname);
     mute = false;
     // Mute controlled by external systems (e.g. ads)
-    forcedMute = false;
+    forcedMute = this.permanentlyMuted;
     masterVolume = 1;
     soundVolume = 1;
     musicVolume = 1;
@@ -56,6 +58,7 @@ export class AudioManager {
 
     constructor() {
         CreateJS.Sound.volume = 0.5;
+        CreateJS.Sound.setMute(this.forcedMute);
         CreateJS.Sound.on("fileload", this.loadHandler, this);
     }
 
@@ -362,7 +365,9 @@ export class AudioManager {
     }
 
     setForcedMute(mute: boolean) {
-        this.forcedMute = mute;
+        // Opsia watch pages are broadcast surfaces. They must stay silent in
+        // embedded, pop-out, and document Picture-in-Picture views.
+        this.forcedMute = this.permanentlyMuted || mute;
         if (this.forcedMute) {
             this.stopAll();
         }

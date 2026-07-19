@@ -11,6 +11,7 @@
     "forceConsistentCasingInFileNames": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["services/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"]
+  "include": ["services/**/*.ts", "tests/**/*.ts", "scripts/**/*.ts"],
+  "exclude": ["services/ops-console/web"]
 }
 

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <meta
+      name="description"
+      content="Survev 게임 룸, 플레이어, 봇과 복구 상태를 관리하는 Opsia 운영 콘솔"
+    />
+    <title>Survev Control Room</title>
+    <script>
+      (() => {
+        let theme = "dark";
+        try {
+          const saved = window.localStorage.getItem("survev-control-theme");
+          if (saved === "dark" || saved === "light") {
+            theme = saved;
+          } else if (window.matchMedia("(prefers-color-scheme: light)").matches) {
+            theme = "light";
+          }
+        } catch {
+          // The console remains usable with the dark default when storage is blocked.
+        }
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

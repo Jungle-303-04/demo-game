@@ -6,44 +6,79 @@ metadata:
   labels: { app: management-server, app.kubernetes.io/part-of: demo-game }
 spec:
   replicas: 1
+  strategy: { type: Recreate }
   selector: { matchLabels: { app: management-server } }
   template:
     metadata: { labels: { app: management-server, app.kubernetes.io/part-of: demo-game } }
     spec:
       serviceAccountName: management-server
+      automountServiceAccountToken: false
       containers:
         - name: api-server
           image: ghcr.io/jungle-303-04/demo-game/api-server:stable
-          env: [{ name: ORCHESTRATOR_URL, value: http://127.0.0.1:8082 }]
+          imagePullPolicy: Always
+          env:
+            - { name: ORCHESTRATOR_URL, value: http://127.0.0.1:8082 }
+            - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
+            - name: OPS_CONTROL_TOKEN
+              valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
           ports: [{ name: api, containerPort: 8081 }]
           readinessProbe: { httpGet: { path: /healthz, port: api }, initialDelaySeconds: 2 }
           resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 256Mi } }
         - name: room-orchestrator
           image: ghcr.io/jungle-303-04/demo-game/room-orchestrator:stable
+          imagePullPolicy: Always
           env:
             - { name: REDIS_URL, value: redis://redis:6379 }
             - { name: NAMESPACE, value: sandbox }
             - { name: GAME_STATEFULSET, value: game }
+            - { name: MAX_ROOMS, value: "3" }
             - { name: INITIAL_ROOMS, value: "3" }
             - { name: GAME_ENDPOINT_TEMPLATE, value: "http://game-{ordinal}.game-headless.sandbox.svc.cluster.local:8001" }
+            - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
+            - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
+            - name: OPS_CONTROL_TOKEN
+              valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
           ports: [{ name: registry, containerPort: 8082 }]
+          volumeMounts:
+            - { name: kube-api-access, mountPath: /var/run/secrets/kubernetes.io/serviceaccount, readOnly: true }
           readinessProbe: { httpGet: { path: /healthz, port: registry }, initialDelaySeconds: 2 }
           resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 256Mi } }
         - name: bot-runner
           image: ghcr.io/jungle-303-04/demo-game/bot-runner:stable
+          imagePullPolicy: Always
           env:
             - { name: OPSIA_ROOM_ENDPOINTS, value: "room-0=http://game-0.game-headless.sandbox.svc.cluster.local:8001,room-1=http://game-1.game-headless.sandbox.svc.cluster.local:8001,room-2=http://game-2.game-headless.sandbox.svc.cluster.local:8001" }
+            - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
+            - name: OPS_CONTROL_TOKEN
+              valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
           ports: [{ name: bots, containerPort: 8084 }]
           readinessProbe: { httpGet: { path: /healthz, port: bots }, initialDelaySeconds: 2 }
           resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
         - name: ops-console
           image: ghcr.io/jungle-303-04/demo-game/ops-console:stable
+          imagePullPolicy: Always
           env:
             - { name: ORCHESTRATOR_URL, value: http://127.0.0.1:8082 }
             - { name: BOT_RUNNER_URL, value: http://127.0.0.1:8084 }
+            - { name: REQUIRE_ADMIN_TOKEN, value: "true" }
+            - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
+            - name: OPS_ADMIN_TOKEN
+              valueFrom: { secretKeyRef: { name: demo-game-admin, key: token } }
+            - name: OPS_CONTROL_TOKEN
+              valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
           ports: [{ name: console, containerPort: 8085 }]
           readinessProbe: { httpGet: { path: /healthz, port: console }, initialDelaySeconds: 2 }
           resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: 500m, memory: 512Mi } }
+      volumes:
+        - name: kube-api-access
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken: { path: token, expirationSeconds: 3600 }
+              - configMap:
+                  name: kube-root-ca.crt
+                  items: [{ key: ca.crt, path: ca.crt }]
 ---
 apiVersion: v1
 kind: Service

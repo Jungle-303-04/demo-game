@@ -5,14 +5,18 @@
   "type": "module",
   "description": "Opsia와 연동하는 GPL-3.0 라이브 데모 게임",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "npm run build:server && npm run build:ops-web",
+    "build:server": "tsc -p tsconfig.json",
+    "build:ops-web": "vite build --config services/ops-console/web/vite.config.mjs",
     "build:survev": "pnpm --dir upstream-survev --filter @survev/server build && pnpm --dir upstream-survev --filter @survev/client build",
-    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm --dir upstream-survev --filter @survev/server typecheck",
+    "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck:ops-web && pnpm --dir upstream-survev --filter @survev/server typecheck",
+    "typecheck:ops-web": "tsc -p services/ops-console/web/tsconfig.json --noEmit",
     "lint": "node scripts/lint.mjs",
-    "test": "npm run build && npm run build:survev && node --test $(find dist/tests -name '*.test.js' -print)",
-    "test:unit": "npm run build && node --test $(find dist/tests/unit -name '*.test.js' -print)",
-    "test:e2e": "npm run build && node --test $(find dist/tests/e2e -name '*.test.js' -print)",
-    "test:compose": "docker compose down -v && docker compose up --build -d && COMPOSE_E2E=1 npm run build && COMPOSE_E2E=1 node --test dist/tests/e2e/compose-api.test.js",
+    "test": "npm run build && npm run build:survev && node scripts/run-tests.mjs dist/tests && npm run test:survev",
+    "test:survev": "pnpm --dir upstream-survev/tests test",
+    "test:unit": "npm run build && node scripts/run-tests.mjs dist/tests/unit",
+    "test:e2e": "npm run build && node scripts/run-tests.mjs dist/tests/e2e",
+    "test:compose": "node scripts/compose-e2e.mjs",
     "test:resilience": "bash scripts/compose-resilience-e2e.sh",
     "start:game": "cd upstream-survev/server && OPSIA_ROOM=true OPSIA_INFINITE=true SURVEV_CLIENT_DIR=$PWD/../client/dist node --enable-source-maps dist/gameServer.js",
     "start:api": "node dist/services/api-server/src/main.js",
@@ -23,11 +27,17 @@
   },
   "dependencies": {
     "prom-client": "^15.1.3",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "redis": "^4.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "typescript": "^5.7.2"
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "typescript": "^5.7.2",
+    "vite": "^8.1.5"
   },
   "engines": {
     "node": ">=22"

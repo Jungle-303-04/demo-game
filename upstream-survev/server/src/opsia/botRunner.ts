@@ -1,7 +1,9 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { GameConfig } from "../../../shared/gameConfig.ts";
 import * as net from "../../../shared/net/net.ts";
-import { v2 } from "../../../shared/utils/v2.ts";
+import { type BotBrainSnapshot, createBotBrainState, decideBotIntent } from "./botBrain.ts";
+import { createBotInput } from "./botInput.ts";
+import { controlTokenMatches, readControlToken } from "./controlPlaneAuth.ts";
 
 type BotMode = "normal" | "hack";
 type FindGameResponse = {
@@ -9,10 +11,61 @@ type FindGameResponse = {
     error?: string;
 };
 
-type BotSummary = { id: string; roomId: string; mode: BotMode; connected: boolean };
+type BotSummary = {
+    id: string;
+    sessionId: string;
+    nickname: string;
+    roomId: string;
+    mode: BotMode;
+    connected: boolean;
+};
+type BotJobState = "running" | "completed" | "cancelled" | "failed";
+type BotJob = {
+    jobId: string;
+    roomId: string;
+    total: number;
+    completed: number;
+    intervalMs: number;
+    mode: BotMode;
+    state: BotJobState;
+    error?: string;
+};
+
+const controlToken = readControlToken();
+type RoomAwareness = {
+    snapshot?: BotBrainSnapshot;
+    requestedAt: number;
+    pending?: Promise<void>;
+};
+const roomAwareness = new Map<string, RoomAwareness>();
+
+const requestRoomAwareness = (roomId: string, endpoint: string): void => {
+    const awareness = roomAwareness.get(roomId) ?? { requestedAt: 0 };
+    roomAwareness.set(roomId, awareness);
+    const now = Date.now();
+    if (awareness.pending || now - awareness.requestedAt < 250) return;
+    awareness.requestedAt = now;
+    awareness.pending = (async () => {
+        try {
+            const response = await fetch(`${endpoint}/ops/snapshot`, {
+                headers: controlToken ? { authorization: `Bearer ${controlToken}` } : undefined,
+                signal: AbortSignal.timeout(900),
+            });
+            if (!response.ok) return;
+            awareness.snapshot = await response.json() as BotBrainSnapshot;
+        } catch {
+            // A stale snapshot still produces safe wandering while a room is
+            // being replaced. The next shared refresh retries automatically.
+        } finally {
+            awareness.pending = undefined;
+        }
+    })();
+};
 
 class SurvevProtocolBot {
     readonly id: string;
+    readonly sessionId: string;
+    readonly nickname: string;
     readonly roomId: string;
     readonly mode: BotMode;
     private readonly ws: WebSocket;
@@ -20,19 +73,36 @@ class SurvevProtocolBot {
     private timer: NodeJS.Timeout | undefined;
     private connected = false;
     private stopped = false;
-    private angle = Math.random() * Math.PI * 2;
+    private readySettled = false;
+    private readonly readyPromise: Promise<void>;
+    private resolveReady!: () => void;
+    private rejectReady!: (error: Error) => void;
+    private readonly brain = createBotBrainState();
 
-    constructor(id: string, roomId: string, mode: BotMode, match: NonNullable<FindGameResponse["res"]>[number]) {
+    constructor(
+        id: string,
+        sessionId: string,
+        roomId: string,
+        mode: BotMode,
+        match: NonNullable<FindGameResponse["res"]>[number],
+        private readonly roomEndpoint: string,
+        private readonly onStopped: (id: string) => void,
+    ) {
         this.id = id;
+        this.sessionId = sessionId;
+        this.nickname = `OPSIA_${id.slice(-6)}`;
         this.roomId = roomId;
         this.mode = mode;
+        this.readyPromise = new Promise<void>((resolve, reject) => {
+            this.resolveReady = resolve;
+            this.rejectReady = reject;
+        });
         this.ws = new WebSocket(`ws${match.useHttps ? "s" : ""}://${match.addrs[0]}/play?gameId=${match.gameId}`);
         this.ws.binaryType = "arraybuffer";
         this.ws.addEventListener("open", () => {
-            this.connected = true;
             const join = new net.JoinMsg();
             join.bot = true;
-            join.name = `OPSIA_${id.slice(-6)}`;
+            join.name = this.nickname;
             join.isMobile = false;
             join.protocol = GameConfig.protocolVersion;
             join.matchPriv = match.data;
@@ -41,17 +111,56 @@ class SurvevProtocolBot {
                 melee: "fists",
                 heal: "heal_basic",
                 boost: "boost_basic",
-                emotes: ["emote_happyface", "emote_sadface", "emote_surviv", "emote_thumbsup", "emote_angryface", "emote_happyface"],
+                emotes: [
+                    "emote_happyface",
+                    "emote_sadface",
+                    "emote_surviv",
+                    "emote_thumbsup",
+                    "emote_angryface",
+                    "emote_happyface",
+                ],
             };
             this.send(net.MsgType.Join, join);
-            this.timer = setInterval(() => this.sendInputs(), 30);
         });
-        this.ws.addEventListener("close", () => this.stop());
-        this.ws.addEventListener("error", () => this.stop());
+        this.ws.addEventListener("message", () => {
+            if (this.stopped || this.connected) return;
+            this.connected = true;
+            this.timer = setInterval(() => this.sendInputs(), 30);
+            this.settleReady();
+        });
+        this.ws.addEventListener("close", () => {
+            this.settleReady(new Error("bot_connection_closed"));
+            this.stop();
+        });
+        this.ws.addEventListener("error", () => {
+            this.settleReady(new Error("bot_connection_failed"));
+            this.stop();
+        });
     }
 
     summary(): BotSummary {
-        return { id: this.id, roomId: this.roomId, mode: this.mode, connected: this.connected };
+        return {
+            id: this.id,
+            sessionId: this.sessionId,
+            nickname: this.nickname,
+            roomId: this.roomId,
+            mode: this.mode,
+            connected: this.connected,
+        };
+    }
+
+    async waitUntilConnected(timeoutMs = 5_000): Promise<void> {
+        let timeout: NodeJS.Timeout | undefined;
+        try {
+            await Promise.race([
+                this.readyPromise,
+                new Promise<never>((_, reject) => {
+                    timeout = setTimeout(() => reject(new Error("bot_connection_timeout")), timeoutMs);
+                }),
+            ]);
+        } finally {
+            if (timeout) clearTimeout(timeout);
+        }
     }
 
     stop(): void {
@@ -61,9 +170,18 @@ class SurvevProtocolBot {
         if (this.stopped) return;
         this.stopped = true;
         this.connected = false;
+        this.settleReady(new Error("bot_stopped"));
         if (this.timer) clearInterval(this.timer);
         this.timer = undefined;
         if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) this.ws.close();
+        this.onStopped(this.id);
+    }
+
+    private settleReady(error?: Error): void {
+        if (this.readySettled) return;
+        this.readySettled = true;
+        if (error) this.rejectReady(error);
+        else this.resolveReady();
     }
 
     private send(type: net.MsgType, message: net.Msg): void {
@@ -75,15 +193,14 @@ class SurvevProtocolBot {
 
     private sendInputs(): void {
         if (!this.connected) return;
-        this.angle += 0.08;
+        requestRoomAwareness(this.roomId, this.roomEndpoint);
+        const intent = decideBotIntent(
+            roomAwareness.get(this.roomId)?.snapshot,
+            this.sessionId,
+            this.brain,
+        );
         const sendOne = () => {
-            const input = new net.InputMsg();
-            input.moveUp = Math.sin(this.angle) > 0;
-            input.moveRight = Math.cos(this.angle) > 0;
-            input.shootStart = Math.random() < 0.12;
-            input.toMouseDir = v2.create(Math.cos(this.angle), Math.sin(this.angle));
-            input.toMouseLen = 40;
-            this.send(net.MsgType.Input, input);
+            this.send(net.MsgType.Input, createBotInput(intent));
         };
         // Hack mode is intentionally a protocol-valid input flood. The real
         // ClientBarn validation hook—not this runner—decides enforcement.
@@ -93,14 +210,18 @@ class SurvevProtocolBot {
 }
 
 const rooms = (): Map<string, string> => {
-    const configured = process.env.OPSIA_ROOM_ENDPOINTS ?? "room-0=http://game-0:8001,room-1=http://game-1:8001,room-2=http://game-2:8001";
-    return new Map(configured.split(",").map((entry) => {
-        const [roomId, endpoint] = entry.split("=");
-        return [roomId!, endpoint!];
-    }));
+    const configured = process.env.OPSIA_ROOM_ENDPOINTS
+        ?? "room-0=http://game-0:8001,room-1=http://game-1:8001,room-2=http://game-2:8001";
+    return new Map(
+        configured.split(",").map((entry) => {
+            const [roomId, endpoint] = entry.split("=");
+            return [roomId!, endpoint!];
+        }),
+    );
 };
 
 const bots = new Map<string, SurvevProtocolBot>();
+const jobs = new Map<string, BotJob>();
 let roundRobin = 0;
 
 const readJson = async (request: IncomingMessage): Promise<Record<string, unknown>> => {
@@ -113,7 +234,12 @@ const reply = (response: ServerResponse, status: number, body: unknown) => {
     response.end(JSON.stringify(body));
 };
 
-const spawn = async (count: number, requestedRoom: string | undefined, mode: BotMode, requestedSessionId?: string): Promise<BotSummary[]> => {
+const spawn = async (
+    count: number,
+    requestedRoom: string | undefined,
+    mode: BotMode,
+    requestedSessionId?: string,
+): Promise<BotSummary[]> => {
     if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error("invalid_bot_count");
     const roomMap = rooms();
     const roomIds = [...roomMap.keys()];
@@ -123,37 +249,159 @@ const spawn = async (count: number, requestedRoom: string | undefined, mode: Bot
         const roomId = requestedRoom ?? roomIds[roundRobin++ % roomIds.length]!;
         const endpoint = roomMap.get(roomId);
         if (!endpoint) throw new Error("unknown_room");
-        const sessionId = requestedSessionId ?? `opsia-bot-${Date.now()}-${index}`;
+        const uniqueSuffix = `${Date.now()}-${index}-${Math.random().toString(16).slice(2, 10)}`;
+        const sessionId = requestedSessionId
+            ? count === 1 ? requestedSessionId : `${requestedSessionId}-${index}`
+            : `opsia-bot-${uniqueSuffix}`;
         const response = await fetch(`${endpoint}/api/find_game`, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ region: "local", zones: ["local"], version: GameConfig.protocolVersion, playerCount: 1, autoFill: true, gameModeIdx: 2, opsiaSessionId: sessionId }),
+            signal: AbortSignal.timeout(2_000),
+            body: JSON.stringify({
+                region: "local",
+                zones: ["local"],
+                version: GameConfig.protocolVersion,
+                playerCount: 1,
+                autoFill: true,
+                gameModeIdx: 2,
+                opsiaSessionId: sessionId,
+            }),
         });
         const match = await response.json() as FindGameResponse;
         if (!response.ok || !match.res?.[0]) throw new Error(`find_game_failed:${match.error ?? response.status}`);
         const id = `bot-${Date.now()}-${index}-${Math.random().toString(16).slice(2, 8)}`;
-        const bot = new SurvevProtocolBot(id, roomId, mode, match.res[0]);
+        const bot = new SurvevProtocolBot(
+            id,
+            sessionId,
+            roomId,
+            mode,
+            match.res[0],
+            endpoint,
+            (stoppedId) => bots.delete(stoppedId),
+        );
         bots.set(id, bot);
+        try {
+            await bot.waitUntilConnected();
+        } catch (error) {
+            bot.stop();
+            throw error;
+        }
         created.push(bot);
     }
     return created.map((bot) => bot.summary());
 };
 
+const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs: number): Promise<BotJob> => {
+    if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error("invalid_bot_count");
+    if (!Number.isInteger(intervalMs) || intervalMs < 50 || intervalMs > 5_000) throw new Error("invalid_bot_interval");
+    const endpoint = rooms().get(roomId);
+    if (!endpoint) throw new Error("unknown_room");
+    if ([...jobs.values()].some((job) => job.roomId === roomId && job.state === "running")) {
+        throw new Error("bot_job_already_running");
+    }
+    const summaryResponse = await fetch(`${endpoint}/summary`, { signal: AbortSignal.timeout(1_500) });
+    if (!summaryResponse.ok) throw new Error(`room_summary_failed:${summaryResponse.status}`);
+    if ([...jobs.values()].some((job) => job.roomId === roomId && job.state === "running")) {
+        throw new Error("bot_job_already_running");
+    }
+    const summary = await summaryResponse.json() as { players?: number; maxPlayers?: number };
+    const connecting = [...bots.values()].filter((bot) => bot.roomId === roomId && !bot.summary().connected).length;
+    const capacity = Number(summary.maxPlayers ?? 100);
+    const available = Math.max(0, capacity - Number(summary.players ?? 0) - connecting);
+    if (count > available) throw new Error("bot_capacity_exceeded");
+    const job: BotJob = {
+        jobId: `load-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+        roomId,
+        total: count,
+        completed: 0,
+        intervalMs,
+        mode,
+        state: "running",
+    };
+    jobs.set(job.jobId, job);
+    while (jobs.size > 100) jobs.delete(jobs.keys().next().value!);
+    void (async () => {
+        try {
+            for (let index = 0; index < count; index++) {
+                if (job.state !== "running") return;
+                const created = await spawn(1, roomId, mode);
+                if (job.state !== "running") {
+                    for (const bot of created) bots.get(bot.id)?.stop();
+                    return;
+                }
+                job.completed += 1;
+                if (index < count - 1) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+            }
+            if (job.state === "running") job.state = "completed";
+        } catch (error) {
+            if (job.state !== "running") return;
+            job.state = "failed";
+            job.error = error instanceof Error ? error.message : "bot_job_failed";
+        }
+    })();
+    return job;
+};
+
 const server = createServer(async (request, response) => {
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
     try {
-        if (request.method === "GET" && pathname === "/healthz") return reply(response, 200, { status: "ok", protocol: "survev" });
-        if (request.method === "GET" && pathname === "/bots") return reply(response, 200, { bots: [...bots.values()].map((bot) => bot.summary()) });
+        if (request.method === "GET" && pathname === "/healthz") {
+            return reply(response, 200, { status: "ok", protocol: "survev" });
+        }
+        if (!controlTokenMatches(request.headers.authorization, controlToken)) {
+            response.setHeader("www-authenticate", "Bearer realm=\"demo-game-control\"");
+            return reply(response, 401, { error: "unauthorized" });
+        }
+        if (request.method === "GET" && pathname === "/bots") {
+            return reply(response, 200, { bots: [...bots.values()].map((bot) => bot.summary()) });
+        }
+        const jobMatch = pathname.match(/^\/bots\/jobs\/([^/]+)$/);
+        const cancelMatch = pathname.match(/^\/bots\/jobs\/([^/]+)\/cancel$/);
+        if (request.method === "GET" && jobMatch) {
+            const job = jobs.get(jobMatch[1]!);
+            return job ? reply(response, 200, job) : reply(response, 404, { error: "bot_job_not_found" });
+        }
+        if (request.method === "POST" && cancelMatch) {
+            const job = jobs.get(cancelMatch[1]!);
+            if (!job) return reply(response, 404, { error: "bot_job_not_found" });
+            if (job.state === "running") job.state = "cancelled";
+            return reply(response, 200, job);
+        }
+        if (request.method === "POST" && pathname === "/bots/jobs") {
+            const body = await readJson(request);
+            const mode: BotMode = body.mode === "hack" ? "hack" : "normal";
+            const roomId = String(body.room ?? "");
+            const job = await startJob(Number(body.count), roomId, mode, Number(body.intervalMs ?? 300));
+            return reply(response, 202, job);
+        }
         if (request.method === "POST" && pathname === "/bots/spawn") {
             const body = await readJson(request);
             const mode: BotMode = body.mode === "hack" ? "hack" : "normal";
-            return reply(response, 201, { bots: await spawn(Number(body.count), body.room ? String(body.room) : undefined, mode, body.sessionId ? String(body.sessionId) : undefined) });
+            return reply(response, 201, {
+                bots: await spawn(
+                    Number(body.count),
+                    body.room ? String(body.room) : undefined,
+                    mode,
+                    body.sessionId ? String(body.sessionId) : undefined,
+                ),
+            });
         }
         if (request.method === "POST" && pathname === "/bots/kill") {
             const body = await readJson(request);
             const id = body.id ? String(body.id) : undefined;
-            const selected = id ? [bots.get(id)].filter((bot): bot is SurvevProtocolBot => Boolean(bot)) : [...bots.values()];
-            selected.forEach((bot) => { bot.stop(); bots.delete(bot.id); });
+            const roomId = body.room ? String(body.room) : undefined;
+            if (!id) {
+                for (const job of jobs.values()) {
+                    if (job.state === "running" && (!roomId || job.roomId === roomId)) job.state = "cancelled";
+                }
+            }
+            const selected = id
+                ? [bots.get(id)].filter((bot): bot is SurvevProtocolBot => Boolean(bot))
+                : [...bots.values()].filter((bot) => !roomId || bot.roomId === roomId);
+            selected.forEach((bot) => {
+                bot.stop();
+                bots.delete(bot.id);
+            });
             return reply(response, 200, { killed: selected.length });
         }
         return reply(response, 404, { error: "not_found" });
@@ -163,5 +411,11 @@ const server = createServer(async (request, response) => {
 });
 
 server.listen(Number(process.env.PORT ?? 8084), () => {
-    console.log(JSON.stringify({ level: "info", event: "bot_runner_listening", detail: { protocol: "survev", port: Number(process.env.PORT ?? 8084) } }));
+    console.log(
+        JSON.stringify({
+            level: "info",
+            event: "bot_runner_listening",
+            detail: { protocol: "survev", port: Number(process.env.PORT ?? 8084) },
+        }),
+    );
 });
