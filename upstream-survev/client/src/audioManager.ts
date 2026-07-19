@@ -63,6 +63,10 @@ export class AudioManager {
     }
 
     preloadSounds() {
+        if (this.permanentlyMuted) {
+            this.preloadedSounds = true;
+            return;
+        }
         if (!this.preloadedSounds) {
             // Ideally sounds should only be defined once
             this.preloadedSounds = true;

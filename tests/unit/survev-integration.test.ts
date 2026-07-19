@@ -41,6 +41,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.ok(clientHtml.indexOf("opsia-watch-${opsiaWatchView}") < clientHtml.indexOf("css/app.css"));
   assert.match(audioManager, /forcedMute = this\.permanentlyMuted/);
   assert.match(audioManager, /this\.forcedMute = this\.permanentlyMuted \|\| mute/);
+  assert.match(audioManager, /if \(this\.permanentlyMuted\) \{\s*this\.preloadedSounds = true;\s*return;/s);
+  assert.match(client, /const rendererRes = this\.opsiaWatch\s*\? 0\.7/s);
   assert.match(clientCss, /html\.opsia-watch-player #game-area-wrapper > \*/);
   assert.match(clientCss, /html\.opsia-watch-map #ui-game > :not\(#big-map\)/);
   assert.match(clientCss, /html\.opsia-watch:not\(\.opsia-in-game\) #cvs/);

@@ -337,7 +337,12 @@ export class Application {
             this.setAppActive(true);
             const domCanvas = document.querySelector<HTMLCanvasElement>("#cvs")!;
 
-            const rendererRes = window.devicePixelRatio > 1 ? 2 : 1;
+            // Broadcast views are scaled by their containing console surface.
+            // Keep logical game dimensions while cutting fill-rate enough for a
+            // full-HD player view to hold a 60fps frame budget under load.
+            const rendererRes = this.opsiaWatch
+                ? 0.7
+                : window.devicePixelRatio > 1 ? 2 : 1;
 
             if (device.os == "ios") {
                 PIXI.settings.PRECISION_FRAGMENT = PIXI.PRECISION.HIGH;
