@@ -362,6 +362,12 @@ export class Application {
             }
             this.pixi = pixi;
             this.pixi.renderer.events.destroy();
+            // Map embeds render immutable terrain and hand live player motion to
+            // the 60fps parent overlay. Throttle only their background ticker so
+            // three room cards cannot consume three full game render budgets.
+            if (this.opsiaWatch && this.opsiaWatchView === "map") {
+                this.pixi.ticker.maxFPS = 5;
+            }
             this.pixi.ticker.add(this.update, this);
             this.pixi.renderer.background.color = 7378501;
             this.resourceManager = new ResourceManager(
