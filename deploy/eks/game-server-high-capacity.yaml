@@ -4,11 +4,10 @@ metadata:
   name: game-server
   region: ap-northeast-2
 managedNodeGroups:
-  - name: game-server-spot-xl
+  - name: game-server-spot-xl-v2
     instanceTypes:
       - m6i.xlarge
       - m5.xlarge
-      - m5a.xlarge
       - c6i.xlarge
       - c5.xlarge
     spot: true
