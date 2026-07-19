@@ -4,6 +4,8 @@ import { v2, type Vec2 } from "../../../../shared/utils/v2.ts";
 import type { Game } from "../game.ts";
 import { BaseGameObject } from "./gameObject.ts";
 
+export const DEAD_BODY_TTL_SECONDS = 18;
+
 export class DeadBodyBarn {
     deadBodies: DeadBody[] = [];
 
@@ -13,6 +15,10 @@ export class DeadBodyBarn {
         for (let i = 0; i < this.deadBodies.length; i++) {
             const deadBody = this.deadBodies[i];
             deadBody.update(dt);
+            if (deadBody.destroyed) {
+                this.deadBodies.splice(i, 1);
+                i--;
+            }
         }
     }
 
@@ -33,6 +39,7 @@ export class DeadBody extends BaseGameObject {
 
     vel: Vec2;
     oldPos: Vec2;
+    ageSeconds = 0;
 
     constructor(game: Game, pos: Vec2, playerId: number, layer: number, dir: Vec2) {
         super(game, pos);
@@ -43,6 +50,11 @@ export class DeadBody extends BaseGameObject {
     }
 
     update(dt: number): void {
+        this.ageSeconds += dt;
+        if (this.ageSeconds >= DEAD_BODY_TTL_SECONDS) {
+            this.destroy();
+            return;
+        }
         const moving = Math.abs(this.vel.x) > 0.001
             || Math.abs(this.vel.y) > 0.001
             || !v2.eq(this.oldPos, this.pos);

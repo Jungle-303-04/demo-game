@@ -206,6 +206,7 @@ button {
 }
 
 .room-card {
+  cursor: pointer;
   min-width: 0;
   padding: 16px;
   overflow: hidden;
@@ -251,7 +252,8 @@ button {
 .room-live-map,
 .tactical-map,
 .map-viewport,
-.live-map-canvas,
+.actual-game-map,
+.actual-game-map iframe,
 .map-player-layer {
   position: absolute;
   inset: 0;
@@ -259,8 +261,12 @@ button {
   height: 100%;
 }
 
-.live-map-canvas {
+.actual-game-map iframe {
   display: block;
+  z-index: 1;
+  border: 0;
+  background: #020403;
+  pointer-events: none;
 }
 
 .room-live-map {
@@ -636,6 +642,7 @@ button {
 
 .player-spectator iframe {
   display: block;
+  pointer-events: none;
 }
 
 .spectator-label {

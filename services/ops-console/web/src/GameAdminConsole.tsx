@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  memo,
   type CSSProperties,
   useCallback,
   useEffect,
@@ -11,7 +10,6 @@ import {
 } from "react";
 import {
   type GameRoom,
-  type MapLayoutTelemetry,
   type PlayerTelemetry,
 } from "./control-plane.js";
 import {
@@ -25,15 +23,6 @@ type ConnectionState = "connecting" | "connected" | "degraded";
 
 const POLL_INTERVAL_MS = 1_000;
 const BOT_BATCH_SIZE = 10;
-
-const OBJECT_COLORS: Record<MapLayoutTelemetry["objects"][number]["kind"], string> = {
-  building: "#73563f",
-  structure: "#95785c",
-  tree: "#315d39",
-  rock: "#737b7d",
-  wall: "#574a41",
-  obstacle: "#9a7844",
-};
 
 function errorMessage(error: unknown) {
   if (error instanceof ControlPlaneError && error.status === 401) {
@@ -56,134 +45,6 @@ function isSnapshotReady(room: GameRoom) {
     room.mapLayout.height > 0
   );
 }
-
-function mapLayoutKey(map: MapLayoutTelemetry, seed: number) {
-  const firstObject = map.objects[0];
-  const lastObject = map.objects[map.objects.length - 1];
-  return [
-    seed,
-    map.width,
-    map.height,
-    map.shoreInset,
-    map.grassInset,
-    map.rivers.length,
-    map.objects.length,
-    firstObject?.id ?? "none",
-    lastObject?.id ?? "none",
-  ].join(":");
-}
-
-function drawLiveMap(
-  canvas: HTMLCanvasElement,
-  map: MapLayoutTelemetry,
-) {
-  const bounds = canvas.getBoundingClientRect();
-  if (bounds.width <= 0 || bounds.height <= 0) return;
-
-  const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
-  const width = Math.max(1, Math.round(bounds.width * pixelRatio));
-  const height = Math.max(1, Math.round(bounds.height * pixelRatio));
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
-  }
-
-  const context = canvas.getContext("2d", { alpha: false });
-  if (!context) return;
-
-  const scaleX = width / map.width;
-  const scaleY = height / map.height;
-  context.setTransform(scaleX, 0, 0, scaleY, 0, 0);
-  context.imageSmoothingEnabled = false;
-
-  context.fillStyle = "#2f7698";
-  context.fillRect(0, 0, map.width, map.height);
-
-  const shoreInset = Math.max(0, map.shoreInset);
-  context.fillStyle = "#c79a5f";
-  context.fillRect(
-    shoreInset,
-    shoreInset,
-    Math.max(0, map.width - shoreInset * 2),
-    Math.max(0, map.height - shoreInset * 2),
-  );
-
-  const grassInset = shoreInset + Math.max(0, map.grassInset);
-  context.fillStyle = "#6f9d43";
-  context.fillRect(
-    grassInset,
-    grassInset,
-    Math.max(0, map.width - grassInset * 2),
-    Math.max(0, map.height - grassInset * 2),
-  );
-
-  context.lineCap = "round";
-  context.lineJoin = "round";
-  for (const river of map.rivers) {
-    if (river.points.length < 2) continue;
-    context.beginPath();
-    context.moveTo(river.points[0]!.x, river.points[0]!.y);
-    for (const point of river.points.slice(1)) context.lineTo(point.x, point.y);
-    if (river.looped) context.closePath();
-    context.strokeStyle = "#bd8d55";
-    context.lineWidth = Math.max(4, river.width * 2 + 9);
-    context.stroke();
-    context.strokeStyle = "#377e9e";
-    context.lineWidth = Math.max(2, river.width * 2);
-    context.stroke();
-  }
-
-  for (const object of map.objects) {
-    const objectWidth = Math.max(1, object.width);
-    const objectHeight = Math.max(1, object.height);
-    context.fillStyle = OBJECT_COLORS[object.kind];
-    if (object.kind === "tree" || object.kind === "rock") {
-      context.beginPath();
-      context.ellipse(
-        object.x,
-        object.y,
-        Math.max(1.5, objectWidth / 2),
-        Math.max(1.5, objectHeight / 2),
-        0,
-        0,
-        Math.PI * 2,
-      );
-      context.fill();
-      continue;
-    }
-    context.fillRect(
-      object.x - objectWidth / 2,
-      object.y - objectHeight / 2,
-      objectWidth,
-      objectHeight,
-    );
-  }
-}
-
-const LiveMapCanvas = memo(function LiveMapCanvas({
-  map,
-  seed,
-}: {
-  map: MapLayoutTelemetry;
-  seed: number;
-}) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const layoutKey = mapLayoutKey(map, seed);
-  const latestMapRef = useRef(map);
-  latestMapRef.current = map;
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const redraw = () => drawLiveMap(canvas, latestMapRef.current);
-    redraw();
-    const observer = new ResizeObserver(redraw);
-    observer.observe(canvas);
-    return () => observer.disconnect();
-  }, [layoutKey]);
-
-  return <canvas aria-hidden="true" className="live-map-canvas" ref={canvasRef} />;
-});
 
 function PlayerMarkers({
   players,
@@ -244,6 +105,49 @@ function PlayerMarkers({
   );
 }
 
+function roomServiceUrl(room: GameRoom) {
+  const configuredOrigin = import.meta.env.VITE_GAME_ORIGIN?.trim();
+  return new URL(room.serviceUrl, configuredOrigin || window.location.origin);
+}
+
+function roomMapUrl(room: GameRoom) {
+  const url = roomServiceUrl(room);
+  url.pathname = url.pathname.replace(/\/play\/(room-\d+)\/?$/, "/watch/$1/");
+  url.search = "";
+  url.searchParams.set("view", "map");
+  return url.toString();
+}
+
+function ActualGameMap({
+  room,
+  interactive = false,
+  selectedPlayerId,
+  onSelectPlayer,
+}: {
+  room: GameRoom;
+  interactive?: boolean;
+  selectedPlayerId?: string;
+  onSelectPlayer?: (playerId: string) => void;
+}) {
+  return (
+    <div className="actual-game-map">
+      <iframe
+        aria-hidden="true"
+        key={room.id}
+        src={roomMapUrl(room)}
+        tabIndex={-1}
+        title={`${room.name} 실제 게임 맵`}
+      />
+      <PlayerMarkers
+        interactive={interactive}
+        onSelectPlayer={onSelectPlayer}
+        players={room.players}
+        selectedPlayerId={selectedPlayerId}
+      />
+    </div>
+  );
+}
+
 function LiveRoomMiniMap({ room }: { room: GameRoom }) {
   if (!isSnapshotReady(room)) {
     return (
@@ -256,8 +160,7 @@ function LiveRoomMiniMap({ room }: { room: GameRoom }) {
 
   return (
     <div className="room-live-map" aria-label={`${room.name} 실시간 미니맵`}>
-      <LiveMapCanvas map={room.mapLayout} seed={room.seed} />
-      <PlayerMarkers players={room.players} />
+      <ActualGameMap room={room} />
     </div>
   );
 }
@@ -273,7 +176,17 @@ function RoomCard({
 }) {
   const { bots, humans } = playerCounts(room);
   return (
-    <button className="room-card" onClick={onOpen} type="button">
+    <article
+      className="room-card"
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        onOpen();
+      }}
+      role="button"
+      tabIndex={0}
+    >
       <span className="room-number">{String(ordinal).padStart(2, "0")}</span>
       <div className="room-preview">
         <LiveRoomMiniMap room={room} />
@@ -292,7 +205,7 @@ function RoomCard({
         <span>사용자 <strong>{humans}</strong></span>
         <span>봇 <strong>{bots}</strong></span>
       </div>
-    </button>
+    </article>
   );
 }
 
@@ -335,7 +248,7 @@ function RoomDirectory({
 }
 
 function roomWatchUrl(room: GameRoom, player: PlayerTelemetry) {
-  const url = new URL(room.serviceUrl, window.location.origin);
+  const url = roomServiceUrl(room);
   url.pathname = url.pathname.replace(/\/play\/(room-\d+)\/?$/, "/watch/$1/");
   url.search = "";
   url.searchParams.set("view", "player");
@@ -356,6 +269,7 @@ function PlayerSpectatorView({
         allow="fullscreen"
         key={`${room.id}:${player.id}`}
         src={roomWatchUrl(room, player)}
+        tabIndex={-1}
         title={`${player.name} 실시간 관전`}
       />
       <div className="spectator-label">
@@ -391,31 +305,10 @@ function TacticalMap({
         className="map-viewport"
         style={{ aspectRatio: `${room.mapLayout.width} / ${room.mapLayout.height}` }}
       >
-        <LiveMapCanvas map={room.mapLayout} seed={room.seed} />
-        <div
-          className="zone-ring is-next"
-          style={
-            {
-              "--zone-x": `${room.zone.nextX}%`,
-              "--zone-y": `${room.zone.nextY}%`,
-              "--zone-size": `${room.zone.nextRadius * 2}%`,
-            } as StyleWithVariables
-          }
-        />
-        <div
-          className="zone-ring"
-          style={
-            {
-              "--zone-x": `${room.zone.x}%`,
-              "--zone-y": `${room.zone.y}%`,
-              "--zone-size": `${room.zone.radius * 2}%`,
-            } as StyleWithVariables
-          }
-        />
-        <PlayerMarkers
+        <ActualGameMap
           interactive
           onSelectPlayer={onSelectPlayer}
-          players={room.players}
+          room={room}
           selectedPlayerId={selectedPlayerId}
         />
       </div>
@@ -454,19 +347,24 @@ function RoomViewer({
     [room.players],
   );
 
+  const selectAdjacentPlayer = useCallback((reverse = false) => {
+    if (alivePlayers.length === 0) return;
+    const currentIndex = alivePlayers.findIndex(
+      (player) => player.id === selectedPlayer?.id,
+    );
+    const direction = reverse ? -1 : 1;
+    const startIndex = currentIndex < 0 && reverse ? 0 : currentIndex;
+    const nextIndex =
+      (startIndex + direction + alivePlayers.length) % alivePlayers.length;
+    const nextPlayer = alivePlayers[nextIndex];
+    if (nextPlayer) onSelectPlayer(nextPlayer.id);
+  }, [alivePlayers, onSelectPlayer, selectedPlayer?.id]);
+
   useEffect(() => {
     const handleKeys = (event: KeyboardEvent) => {
       if (event.key === "Tab") {
         event.preventDefault();
-        if (alivePlayers.length === 0) return;
-        const currentIndex = alivePlayers.findIndex(
-          (player) => player.id === selectedPlayer?.id,
-        );
-        const direction = event.shiftKey ? -1 : 1;
-        const nextIndex =
-          (currentIndex + direction + alivePlayers.length) % alivePlayers.length;
-        const nextPlayer = alivePlayers[nextIndex];
-        if (nextPlayer) onSelectPlayer(nextPlayer.id);
+        selectAdjacentPlayer(event.shiftKey);
         return;
       }
       if (event.key.toLowerCase() === "m") {
@@ -476,7 +374,27 @@ function RoomViewer({
     };
     window.addEventListener("keydown", handleKeys);
     return () => window.removeEventListener("keydown", handleKeys);
-  }, [alivePlayers, onClearPlayer, onSelectPlayer, selectedPlayer?.id]);
+  }, [onClearPlayer, selectAdjacentPlayer]);
+
+  useEffect(() => {
+    const expectedOrigin = roomServiceUrl(room).origin;
+    const handleSpectatorMessage = (event: MessageEvent) => {
+      if (event.origin !== expectedOrigin) return;
+      const data = event.data as {
+        type?: unknown;
+        key?: unknown;
+        shiftKey?: unknown;
+      } | null;
+      if (!data || data.type !== "opsia-spectator-key") return;
+      if (data.key === "Tab") {
+        selectAdjacentPlayer(data.shiftKey === true);
+      } else if (data.key === "m") {
+        onClearPlayer();
+      }
+    };
+    window.addEventListener("message", handleSpectatorMessage);
+    return () => window.removeEventListener("message", handleSpectatorMessage);
+  }, [onClearPlayer, room, selectAdjacentPlayer]);
 
   useEffect(() => {
     const syncFullscreen = () =>

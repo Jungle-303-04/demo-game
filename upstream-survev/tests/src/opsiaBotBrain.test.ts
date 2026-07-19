@@ -29,6 +29,7 @@ const snapshot = (overrides: Partial<BotBrainSnapshot> = {}): BotBrainSnapshot =
     capturedAt: 1,
     map: { width: 1_000, height: 1_000 },
     zone: { x: 500, y: 500, radius: 460, nextX: 500, nextY: 500, nextRadius: 460 },
+    loot: [],
     players: [
         player(),
         player({ sessionId: "enemy", team: "blue", x: 600, y: 500 }),
@@ -45,6 +46,86 @@ describe("Opsia protocol bot brain", () => {
         expect(intent.aimAngle).toBeCloseTo(0);
         expect(intent.aimDistance).toBeLessThanOrEqual(64);
         expect(intent.shoot).toBe(true);
+    });
+
+    test("farms a useful real loot item before pursuing a distant enemy", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                loot: [{ id: 7, type: "m9", kind: "gun", x: 560, y: 500, count: 1 }],
+                players: [
+                    player({ weapon: "fists", ammo: 0 }),
+                    player({ sessionId: "enemy", team: "blue", x: 900 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("loot");
+        expect(intent.moving).toBe(true);
+        expect(intent.moveAngle).toBeCloseTo(0);
+        expect(intent.interact).toBe(false);
+        expect(state.targetLootId).toBe(7);
+    });
+
+    test("stops and interacts when it reaches its loot target", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                loot: [{ id: 8, type: "bandage", kind: "heal", x: 501.5, y: 500, count: 5 }],
+                players: [player({ health: 60 })],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("loot");
+        expect(intent.moving).toBe(false);
+        expect(intent.interact).toBe(true);
+    });
+
+    test("interrupts farming to fight an immediate threat", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                loot: [{ id: 9, type: "m9", kind: "gun", x: 510, y: 500, count: 1 }],
+                players: [
+                    player({ weapon: "fists", ammo: 0 }),
+                    player({ sessionId: "enemy", team: "blue", x: 560 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("combat");
+        expect(intent.shoot).toBe(false);
+    });
+
+    test("leads a moving enemy instead of aiming at a stale position", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                players: [
+                    player(),
+                    player({ sessionId: "enemy", team: "blue", x: 600, y: 500, vy: 80 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("combat");
+        expect(intent.aimAngle).toBeGreaterThan(0);
     });
 
     test("alternates travel and rest without dropping combat aim", () => {

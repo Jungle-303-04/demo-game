@@ -39,6 +39,14 @@ export interface OpsiaSnapshotData {
         }>;
     };
     zone: { x: number; y: number; radius: number; nextX: number; nextY: number; nextRadius: number };
+    loot: Array<{
+        id: number;
+        type: string;
+        kind: string;
+        x: number;
+        y: number;
+        count: number;
+    }>;
     players: Array<{
         sessionId: string;
         nickname: string;

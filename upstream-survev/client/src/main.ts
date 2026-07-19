@@ -119,6 +119,17 @@ export class Application {
                 "opsia-watch",
                 `opsia-watch-${this.opsiaWatchView}`,
             );
+            window.addEventListener("keydown", (event) => {
+                const key = event.key.toLowerCase();
+                if (event.key !== "Tab" && key !== "m") return;
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                window.parent.postMessage({
+                    type: "opsia-spectator-key",
+                    key: event.key === "Tab" ? "Tab" : "m",
+                    shiftKey: event.shiftKey,
+                }, "*");
+            }, { capture: true });
             document.title = this.opsiaWatchView === "map"
                 ? "Survev live map"
                 : "Survev player spectator";
@@ -367,7 +378,7 @@ export class Application {
                 this.localization,
             );
             const onJoin = () => {
-                if (this.opsiaPlay) {
+                if (this.opsiaPlay || this.opsiaWatch) {
                     document.documentElement.classList.add("opsia-in-game");
                 }
                 this.loadoutDisplay!.free();
@@ -386,6 +397,9 @@ export class Application {
                 this.ambience.onGameComplete(this.audioManager);
                 this.setAppActive(true);
                 this.setPlayLockout(false);
+                if (this.opsiaPlay || this.opsiaWatch) {
+                    document.documentElement.classList.remove("opsia-in-game");
+                }
                 if (errMsg == "index-invalid-protocol") {
                     this.showInvalidProtocolModal();
                 }
@@ -393,7 +407,6 @@ export class Application {
                     this.onJoinGameError(errMsg);
                 }
                 if (this.opsiaPlay) {
-                    document.documentElement.classList.remove("opsia-in-game");
                     this.errorMessage = "";
                     this.setAppActive(false);
                     setTimeout(() => this.tryQuickStartGame(0), 1_000);

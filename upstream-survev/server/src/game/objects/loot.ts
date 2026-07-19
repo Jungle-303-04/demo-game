@@ -71,6 +71,13 @@ export class LootBarn {
         }
     }
 
+    markForCleanupSince(startIndex: number, ttlSeconds: number): void {
+        for (let index = Math.max(0, startIndex); index < this.loots.length; index++) {
+            const loot = this.loots[index];
+            if (!loot.destroyed) loot.cleanupAfterSeconds = ttlSeconds;
+        }
+    }
+
     flush() {
         for (let i = 0; i < this.newLoots.length; i++) {
             this.newLoots[i].isOld = true;
@@ -264,6 +271,8 @@ export class Loot extends BaseGameObject {
     mapIndicator?: MapIndicator;
 
     lootRad: number;
+    cleanupAgeSeconds = 0;
+    cleanupAfterSeconds = Number.POSITIVE_INFINITY;
 
     constructor(
         game: Game,
@@ -322,6 +331,13 @@ export class Loot extends BaseGameObject {
     }
 
     update(dt: number): void {
+        if (Number.isFinite(this.cleanupAfterSeconds)) {
+            this.cleanupAgeSeconds += dt;
+            if (this.cleanupAgeSeconds >= this.cleanupAfterSeconds) {
+                this.destroy();
+                return;
+            }
+        }
         if (this.hasOwner) {
             const owner = this.game.objectRegister.getById(this.ownerId);
             this.removeOwnerTicker += dt;

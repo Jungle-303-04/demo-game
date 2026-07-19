@@ -2929,6 +2929,8 @@ export class Player extends BaseGameObject {
         // drop loot
         //
 
+        const deathLootStartIndex = this.game.lootBarn.loots.length;
+
         for (let i = 0; i < GameConfig.WeaponSlot.Count; i++) {
             const weap = this.weapons[i];
             if (!weap.type) continue;
@@ -3006,6 +3008,7 @@ export class Player extends BaseGameObject {
         }
         this._perks.length = 0;
         this._perkTypes.length = 0;
+        this.game.lootBarn.markForCleanupSince(deathLootStartIndex, 30);
 
         // Wipe inventory
         this.invManager.wipeInventory();

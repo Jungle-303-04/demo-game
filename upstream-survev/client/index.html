@@ -2,8 +2,17 @@
 <html lang="en">
   <head>
     <script>
-      if (/^\/play\/room-\d+\/?$/.test(window.location.pathname)) {
+      const opsiaPath = window.location.pathname;
+      if (/^\/play\/room-\d+\/?$/.test(opsiaPath)) {
         document.documentElement.classList.add("opsia-play");
+      } else if (/^\/watch\/room-\d+\/?$/.test(opsiaPath)) {
+        const opsiaWatchView = new URLSearchParams(window.location.search).get("view") === "map"
+          ? "map"
+          : "player";
+        document.documentElement.classList.add(
+          "opsia-watch",
+          `opsia-watch-${opsiaWatchView}`,
+        );
       }
     </script>
     %VITE_TURNSTILE_SCRIPT%
@@ -942,7 +951,7 @@
             <div id="team-mobile-link" class="menu-column menu-block">
               <div id="team-mobile-link-desc" class="team-mobile-link-text" data-l10n="index-join-team-help">Got a team link or code? Paste it here:</div>
               <div id="team-mobile-link-warning" class="team-mobile-link-text">Invalid link!</div>
-              <input type="text" class="menu-option" contenteditable="false" tabindex="0" autofocus placeholder="Paste team link or enter code here" id="team-link-input" />
+              <input type="text" class="menu-option" contenteditable="false" tabindex="0" placeholder="Paste team link or enter code here" id="team-link-input" />
               <a class="btn-darken menu-option btn-team-option" id="btn-team-mobile-link-join" data-l10n="index-join-team">Join Team</a>
               <a class="btn-darken menu-option" id="btn-team-mobile-link-leave" data-l10n="index-back-to-main">Back to Main Menu</a>
             </div>
@@ -1176,7 +1185,7 @@
               <span class="keybind-share-paste-text" data-l10n="index-keybind-paste">Load keybinds using a code here</span><span>:</span>
               <div id="keybind-warning" class="link-warning">Invalid code!</div>
               <div class="ui-modal-keybind-share-row">
-                <input type="text" class="menu-option" contenteditable="false" tabindex="0" autofocus placeholder="Paste a keybind code here" id="keybind-code-input" />
+                <input type="text" class="menu-option" contenteditable="false" tabindex="0" placeholder="Paste a keybind code here" id="keybind-code-input" />
                 <a class="btn-game-menu btn-darken" id="btn-keybind-code-load" data-l10n="index-keybind-apply">Load</a>
               </div>
             </div>

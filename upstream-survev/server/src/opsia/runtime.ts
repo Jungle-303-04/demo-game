@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createClient, type RedisClientType } from "redis";
+import { GameObjectDefs } from "../../../shared/defs/register.ts";
 import type { InventoryItem } from "../../../shared/gameConfig.ts";
 import type { Game, JoinTokenData } from "../game/game.ts";
 import type { Player } from "../game/objects/player.ts";
@@ -90,6 +91,14 @@ export interface OpsiaSnapshot {
     map: OpsiaMapSnapshot;
     zone: { x: number; y: number; radius: number; nextX: number; nextY: number; nextRadius: number };
     players: OpsiaPlayerSnapshot[];
+    loot: Array<{
+        id: number;
+        type: string;
+        kind: string;
+        x: number;
+        y: number;
+        count: number;
+    }>;
     tickP95Ms: number;
     tickRate: number;
     cpuPercent: number;
@@ -323,6 +332,16 @@ export const makeOpsSnapshot = (game: Game, tickP95Ms: number, tickRate: number)
         strictMode: opsiaStrict(),
         inputAccepted: counters.accepted,
         inputRejected: counters.rejected,
+        loot: game.lootBarn.loots
+            .filter((loot) => !loot.destroyed && loot.layer === 0)
+            .map((loot) => ({
+                id: loot.__id,
+                type: loot.type,
+                kind: GameObjectDefs.typeToDefSafe(loot.type)?.type ?? "other",
+                x: loot.pos.x,
+                y: loot.pos.y,
+                count: loot.count,
+            })),
         players: game.playerBarn.players.map((player) => ({
             sessionId: playerSessionId(player),
             nickname: player.name,
