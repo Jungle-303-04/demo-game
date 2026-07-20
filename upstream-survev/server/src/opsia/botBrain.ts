@@ -111,6 +111,8 @@ export interface BotBrainState {
     nextWeaponEvaluationAt: number;
     nextBurstAt: number;
     burstUntil: number;
+    nextCombatFeintAt: number;
+    combatFeintAngle: number;
     grenadePhase: BotGrenadePhase;
     grenadeCookUntil: number;
     grenadeCooldownUntil: number;
@@ -149,7 +151,6 @@ const targetLockMinMs = 1_000;
 const targetLockJitterMs = 800;
 const meleeAttackDistance = 5.5;
 const combatAwarenessDistance = 900;
-const lootAwarenessDistance = 340;
 
 const distance = (ax: number, ay: number, bx: number, by: number): number => Math.hypot(bx - ax, by - ay);
 
@@ -378,6 +379,8 @@ export const createBotBrainState = (random: () => number = Math.random): BotBrai
     nextWeaponEvaluationAt: 0,
     nextBurstAt: 0,
     burstUntil: 0,
+    nextCombatFeintAt: 0,
+    combatFeintAngle: 0,
     grenadePhase: "idle",
     grenadeCookUntil: 0,
     grenadeCooldownUntil: 0,
@@ -687,22 +690,41 @@ const selectTarget = (
 };
 
 const lootUtility = (self: BotBrainPlayer, loot: BotBrainLoot): number => {
-    const currentWeapon = GameObjectDefs.typeToDefSafe(self.weapon);
-    const matchingAmmo = currentWeapon?.type === "gun" && currentWeapon.ammo === loot.type;
+    const gunSlots = [
+        { weapon: self.primaryWeapon ?? "", ammo: self.primaryAmmo ?? 0, reserve: self.primaryReserve ?? 0 },
+        { weapon: self.secondaryWeapon ?? "", ammo: self.secondaryAmmo ?? 0, reserve: self.secondaryReserve ?? 0 },
+    ].filter((slot) => weaponKind(slot.weapon) === "gun");
+    if (gunSlots.length === 0 && weaponKind(self.weapon) === "gun") {
+        gunSlots.push({ weapon: self.weapon, ammo: self.ammo, reserve: 0 });
+    }
+    const matchingAmmoSlots = gunSlots.filter((slot) => {
+        const definition = GameObjectDefs.typeToDefSafe(slot.weapon);
+        return definition?.type === "gun" && definition.ammo === loot.type;
+    });
     switch (loot.kind) {
         case "gun": {
-            const currentProfile = weaponProfile(self.weapon);
             const candidateProfile = weaponProfile(loot.type);
-            if (currentProfile.kind !== "gun" || self.ammo <= 0) return 120;
-            const upgradeRatio = candidateProfile.powerScore / Math.max(1, currentProfile.powerScore);
-            if (upgradeRatio >= 1.35) return 102;
-            if (upgradeRatio >= 1.12) return 76;
+            if (candidateProfile.kind !== "gun") return 8;
+            if (gunSlots.length === 0) return 138;
+            if (gunSlots.length < 2) return 118;
+            const weakestProfile = gunSlots
+                .map((slot) => weaponProfile(slot.weapon))
+                .sort((left, right) => left.powerScore - right.powerScore)[0]!;
+            const upgradeRatio = candidateProfile.powerScore / Math.max(1, weakestProfile.powerScore);
+            if (upgradeRatio >= 1.35) return 112;
+            if (upgradeRatio >= 1.12) return 82;
             return 24;
         }
-        case "ammo":
-            return matchingAmmo ? (self.ammo < 12 ? 115 : self.ammo < 45 ? 82 : 24) : 18;
+        case "ammo": {
+            if (matchingAmmoSlots.length === 0) return 14;
+            const supply = matchingAmmoSlots.reduce(
+                (total, slot) => total + slot.ammo + slot.reserve,
+                0,
+            );
+            return supply < 20 ? 128 : supply < 60 ? 96 : supply < 120 ? 58 : 22;
+        }
         case "heal":
-            return self.health < 45 ? 110 : (self.bandages ?? 0) + (self.healthkits ?? 0) < 2 ? 72 : 28;
+            return self.health < 45 ? 122 : (self.bandages ?? 0) + (self.healthkits ?? 0) < 2 ? 82 : 30;
         case "chest":
         case "helmet":
             return self.armor < 35 ? 92 : self.armor < 70 ? 56 : 18;
@@ -731,9 +753,41 @@ const stableHash = (value: string): number => {
 
 type CombatStyle = "breacher" | "flanker" | "marksman";
 
-const combatStyle = (sessionId: string): CombatStyle => {
+interface BotPersonality {
+    style: CombatStyle;
+    aggression: number;
+    caution: number;
+    lootDrive: number;
+    lootRadius: number;
+    preferredRangeScale: number;
+    orbitAngle: number;
+    cadenceScale: number;
+    roamBias: number;
+}
+
+const personalityCache = new Map<string, BotPersonality>();
+
+const hashUnit = (sessionId: string, trait: string): number =>
+    stableHash(`${sessionId}:${trait}`) / 0xffff_ffff;
+
+const botPersonality = (sessionId: string): BotPersonality => {
+    const cached = personalityCache.get(sessionId);
+    if (cached) return cached;
     const styles: CombatStyle[] = ["breacher", "flanker", "marksman"];
-    return styles[stableHash(sessionId) % styles.length]!;
+    const style = styles[stableHash(sessionId) % styles.length]!;
+    const personality = {
+        style,
+        aggression: 0.78 + hashUnit(sessionId, "aggression") * 0.58,
+        caution: 0.72 + hashUnit(sessionId, "caution") * 0.58,
+        lootDrive: 0.82 + hashUnit(sessionId, "loot-drive") * 0.62,
+        lootRadius: 280 + hashUnit(sessionId, "loot-radius") * 240,
+        preferredRangeScale: 0.78 + hashUnit(sessionId, "range") * 0.5,
+        orbitAngle: Math.PI * (0.34 + hashUnit(sessionId, "orbit") * 0.4),
+        cadenceScale: 0.68 + hashUnit(sessionId, "cadence") * 0.82,
+        roamBias: (hashUnit(sessionId, "roam") - 0.5) * Math.PI * 0.62,
+    };
+    personalityCache.set(sessionId, personality);
+    return personality;
 };
 
 const isExplosiveThrowable = (weapon: string): boolean => {
@@ -772,6 +826,37 @@ const grenadeOpportunity = (
 const lootAffinity = (sessionId: string, lootId: number): number =>
     stableHash(`${sessionId}:${lootId}`) % 13;
 
+const lootGridCache = new WeakMap<BotBrainSnapshot, Map<string, BotBrainLoot[]>>();
+
+const lootGrid = (snapshot: BotBrainSnapshot): Map<string, BotBrainLoot[]> => {
+    const cached = lootGridCache.get(snapshot);
+    if (cached) return cached;
+    const grid = new Map<string, BotBrainLoot[]>();
+    for (const loot of snapshot.loot ?? []) {
+        const key = `${Math.floor(loot.x / 32)}:${Math.floor(loot.y / 32)}`;
+        const bucket = grid.get(key);
+        if (bucket) bucket.push(loot);
+        else grid.set(key, [loot]);
+    }
+    lootGridCache.set(snapshot, grid);
+    return grid;
+};
+
+const nearbyLoot = (
+    grid: Map<string, BotBrainLoot[]>,
+    loot: BotBrainLoot,
+): BotBrainLoot[] => {
+    const cellX = Math.floor(loot.x / 32);
+    const cellY = Math.floor(loot.y / 32);
+    const nearby: BotBrainLoot[] = [];
+    for (let xOffset = -1; xOffset <= 1; xOffset++) {
+        for (let yOffset = -1; yOffset <= 1; yOffset++) {
+            nearby.push(...(grid.get(`${cellX + xOffset}:${cellY + yOffset}`) ?? []));
+        }
+    }
+    return nearby;
+};
+
 const selectLootTarget = (
     snapshot: BotBrainSnapshot,
     self: BotBrainPlayer,
@@ -779,17 +864,46 @@ const selectLootTarget = (
     now: number,
     sessionId: string,
 ): LootTarget | undefined => {
-    const candidates = (snapshot.loot ?? [])
-        .map((loot) => ({
-            loot,
-            distance: distance(self.x, self.y, loot.x, loot.y),
-            utility: lootUtility(self, loot),
-        }))
-        .filter((candidate) => candidate.distance <= lootAwarenessDistance && candidate.utility >= 20)
-        .sort((left, right) =>
-            (right.utility - right.distance * 0.12 + lootAffinity(sessionId, right.loot.id))
-            - (left.utility - left.distance * 0.12 + lootAffinity(sessionId, left.loot.id))
-        );
+    const personality = botPersonality(sessionId);
+    const realLoot = snapshot.loot ?? [];
+    const spatialLoot = lootGrid(snapshot);
+    const enemies = snapshot.players.filter((player) =>
+        player.connected
+        && player.alive
+        && player.downed !== true
+        && player.teamId !== self.teamId
+    );
+    const candidates = realLoot
+        .map((loot) => {
+            const lootDistance = distance(self.x, self.y, loot.x, loot.y);
+            const utility = lootUtility(self, loot);
+            return { loot, distance: lootDistance, utility };
+        })
+        .filter((candidate) => candidate.distance <= personality.lootRadius && candidate.utility >= 20)
+        .map(({ loot, distance: lootDistance, utility }) => {
+            const clusterUtility = nearbyLoot(spatialLoot, loot).reduce((total, nearby) => {
+                if (nearby.id === loot.id || distance(loot.x, loot.y, nearby.x, nearby.y) > 24) return total;
+                return total + Math.max(0, lootUtility(self, nearby) - 16) * 0.12;
+            }, 0);
+            const nearestEnemyDistance = enemies.reduce(
+                (nearest, enemy) => Math.min(nearest, distance(loot.x, loot.y, enemy.x, enemy.y)),
+                Number.POSITIVE_INFINITY,
+            );
+            const exposedPenalty = nearestEnemyDistance < 75
+                ? (75 - nearestEnemyDistance) * 0.42 * personality.caution
+                : 0;
+            const pathPenalty = segmentIsClear(snapshot, self.x, self.y, loot.x, loot.y)
+                ? 0
+                : 26 + lootDistance * 0.045;
+            const score = utility * personality.lootDrive
+                + Math.min(42, clusterUtility)
+                + lootAffinity(sessionId, loot.id)
+                - lootDistance * (0.075 + personality.caution * 0.035)
+                - exposedPenalty
+                - pathPenalty;
+            return { loot, distance: lootDistance, utility, score };
+        })
+        .sort((left, right) => right.score - left.score);
     const locked = now < state.lootLockedUntil
         ? candidates.find((candidate) => candidate.loot.id === state.targetLootId)
         : undefined;
@@ -801,7 +915,7 @@ const selectLootTarget = (
     }
     if (target.loot.id !== state.targetLootId) {
         state.targetLootId = target.loot.id;
-        state.lootLockedUntil = now + 1_200;
+        state.lootLockedUntil = now + 850 + personality.caution * 450;
     }
     return target;
 };
@@ -920,6 +1034,7 @@ export const decideBotIntent = (
             distance: distance(self.x, self.y, player.x, player.y),
         }))
         .sort((left, right) => left.distance - right.distance);
+    const personality = botPersonality(sessionId);
     const target = selectTarget(enemies, state, now, random);
     const selfWeapon = weaponProfile(self.weapon);
     const projectileTravelSeconds = target && Number.isFinite(selfWeapon.projectileSpeed)
@@ -1282,8 +1397,15 @@ export const decideBotIntent = (
 
     const lootTarget = selectLootTarget(snapshot, self, state, now, sessionId);
     const needsWeaponOrAmmo = weaponKind(self.weapon) !== "gun" || self.ammo <= 0;
+    const valuableLootBreakDistance = 65 + personality.lootDrive * 28;
     const canBreakForLoot = !target
-        || target.distance > (needsWeaponOrAmmo || (lootTarget?.utility ?? 0) >= 90 ? 70 : 520);
+        || target.distance > (
+            needsWeaponOrAmmo
+                ? 70
+                : (lootTarget?.utility ?? 0) >= 82
+                ? valuableLootBreakDistance
+                : 560 + personality.caution * 70
+        );
     if (lootTarget && canBreakForLoot) {
         const lootAngle = angleTo(self.x, self.y, lootTarget.loot.x, lootTarget.loot.y);
         // The authoritative player pickup check uses player radius + loot radius
@@ -1333,20 +1455,26 @@ export const decideBotIntent = (
     }
 
     if (target && target.distance <= combatAwarenessDistance) {
+        if (now >= state.nextCombatFeintAt) {
+            state.combatFeintAngle = (random() - 0.5) * personality.orbitAngle * 0.8;
+            state.nextCombatFeintAt = now + (480 + random() * 1_750) * personality.cadenceScale;
+        }
         if (state.nextStrafeFlipAt <= 0) {
-            state.nextStrafeFlipAt = now + 550 + random() * 900;
+            state.nextStrafeFlipAt = now + (420 + random() * 1_100) * personality.cadenceScale;
         } else if (now >= state.nextStrafeFlipAt) {
-            if (random() < 0.7) state.strafeSign = state.strafeSign === 1 ? -1 : 1;
-            state.nextStrafeFlipAt = now + 550 + random() * 900;
+            if (random() < 0.48 + personality.aggression * 0.2) {
+                state.strafeSign = state.strafeSign === 1 ? -1 : 1;
+            }
+            state.nextStrafeFlipAt = now + (420 + random() * 1_100) * personality.cadenceScale;
         }
         let moveAngle = targetAngle;
         let mode: BotIntentMode = "combat";
         let movementPolicy: MovementPolicy = now < state.underFireUntil ? "force" : "rhythm";
         if (selfWeapon.kind === "gun") {
-            const style = combatStyle(sessionId);
+            const style = personality.style;
             const preferredRange = selfWeapon.preferredRange * (
                 style === "breacher" ? 0.72 : style === "marksman" ? 1.22 : 0.95
-            );
+            ) * personality.preferredRangeScale;
             const criticalHealthRetreat = self.health <= 28
                 && target.distance <= Math.max(100, selfWeapon.effectiveRange * 1.45);
             if (criticalHealthRetreat) {
@@ -1356,9 +1484,11 @@ export const decideBotIntent = (
             } else if (target.distance < preferredRange * (style === "marksman" ? 0.88 : 0.62)) {
                 moveAngle += Math.PI;
             } else if (target.distance <= preferredRange * 1.3) {
-                moveAngle += state.strafeSign * (style === "flanker" ? Math.PI * 0.68 : Math.PI / 2);
+                moveAngle += state.strafeSign * personality.orbitAngle + state.combatFeintAngle;
             } else {
-                moveAngle += state.strafeSign * (style === "flanker" ? 0.26 : 0.14);
+                moveAngle += state.strafeSign * (
+                    (style === "flanker" ? 0.2 : 0.08) + personality.aggression * 0.08
+                ) + state.combatFeintAngle * 0.35;
                 if (style === "breacher") movementPolicy = "force";
             }
             if (now < state.underFireUntil && mode === "combat") {
@@ -1387,7 +1517,9 @@ export const decideBotIntent = (
             : undefined;
         const huntAngle = waypoint
             ? angleTo(self.x, self.y, waypoint.x, waypoint.y)
-            : targetAngle + (combatStyle(sessionId) === "flanker" ? state.strafeSign * 0.18 : 0);
+            : targetAngle + state.strafeSign * personality.orbitAngle * (
+                personality.style === "flanker" ? 0.12 : 0.04
+            );
         return finishIntent(
             state,
             {
@@ -1405,14 +1537,16 @@ export const decideBotIntent = (
     }
 
     if (now >= state.decisionUntil) {
-        state.wanderAngle += (random() - 0.5) * Math.PI * 1.35;
-        state.decisionUntil = now + 1_800 + random() * 2_800;
+        state.wanderAngle += (random() - 0.5) * Math.PI * 1.35 + personality.roamBias * 0.35;
+        state.decisionUntil = now + (1_350 + random() * 3_400) * personality.cadenceScale;
         if (random() < 0.28) state.strafeSign = state.strafeSign === 1 ? -1 : 1;
     }
     const nearestAlly = allies[0];
     const wanderAngle = nearestAlly && nearestAlly.distance > 220
-        ? angleTo(self.x, self.y, nearestAlly.player.x, nearestAlly.player.y) + formationOffset(sessionId)
-        : state.wanderAngle;
+        ? angleTo(self.x, self.y, nearestAlly.player.x, nearestAlly.player.y)
+            + formationOffset(sessionId)
+            + personality.roamBias * 0.25
+        : state.wanderAngle + personality.roamBias * 0.18;
     return finishIntent(
         state,
         {

@@ -41,6 +41,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(client, /this\.pixi\?\.ticker\.stop\(\)/);
   assert.match(client, /this\.pixi\?\.ticker\.update\(frameAt\)/);
   assert.match(client, /this\.game\.updateOpsiaWall\(dt\)/);
+  assert.match(gameClient, /updateOpsiaWall\(dt: number\)[\s\S]*this\.m_render\(dt, debug, false\)/);
   assert.ok(clientHtml.includes("else if (/^\\/watch\\/room-\\d+\\/?$/.test(opsiaPath))"));
   assert.match(clientHtml, /`opsia-watch-\$\{opsiaWatchView\}`/);
   assert.ok(clientHtml.indexOf("opsia-watch-${opsiaWatchView}") < clientHtml.indexOf("css/app.css"));

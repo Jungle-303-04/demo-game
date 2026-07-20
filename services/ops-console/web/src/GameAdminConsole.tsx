@@ -34,7 +34,10 @@ interface PictureInPictureSession {
 }
 
 type SpectatorViewCount = 1 | 4 | 16;
-type SpectatorFrameWindow = Window & { __opsiaDriveSpectatorFrame?: () => void };
+type SpectatorFrameWindow = Window & {
+  __opsiaDriveSpectatorFrame?: () => void;
+  __opsiaSetSpectatorVisible?: (visible: boolean) => void;
+};
 
 const POLL_INTERVAL_MS = 400;
 const BOT_BATCH_SIZE = 10;
@@ -385,6 +388,7 @@ function PlayerSpectatorView({
   managed = false,
   selfDriven = false,
   loadDelayMs = 0,
+  visible = true,
   wallFps,
   registerFrame,
 }: {
@@ -393,6 +397,7 @@ function PlayerSpectatorView({
   managed?: boolean;
   selfDriven?: boolean;
   loadDelayMs?: number;
+  visible?: boolean;
   wallFps?: number;
   registerFrame?: (playerId: string, frame: HTMLIFrameElement | null) => void;
 }) {
@@ -400,6 +405,7 @@ function PlayerSpectatorView({
   const initialUrlRef = useRef(roomWatchUrl(room, player, wallFps));
   const [shouldLoad, setShouldLoad] = useState(loadDelayMs <= 0);
   const [loadAttempt, setLoadAttempt] = useState(0);
+  const [frameReady, setFrameReady] = useState(false);
 
   useEffect(() => {
     if (loadDelayMs <= 0) {
@@ -426,6 +432,37 @@ function PlayerSpectatorView({
   }, [loadAttempt, shouldLoad]);
 
   useEffect(() => {
+    if (!shouldLoad) return undefined;
+    setFrameReady(false);
+    const timer = window.setInterval(() => {
+      try {
+        const root = iframeRef.current?.contentDocument?.documentElement;
+        if (!root?.classList.contains("opsia-in-game")) return;
+        setFrameReady(true);
+        window.clearInterval(timer);
+      } catch {
+        // Cross-origin development clients retain their own visibility policy.
+        setFrameReady(true);
+        window.clearInterval(timer);
+      }
+    }, 100);
+    return () => window.clearInterval(timer);
+  }, [loadAttempt, shouldLoad]);
+
+  useEffect(() => {
+    if (!frameReady) return;
+    try {
+      const frameWindow = iframeRef.current?.contentWindow as SpectatorFrameWindow | null;
+      frameWindow?.__opsiaSetSpectatorVisible?.(visible);
+      if (visible) {
+        frameWindow?.dispatchEvent(new Event("resize"));
+      }
+    } catch {
+      // Cross-origin development clients cannot be resized by the console.
+    }
+  }, [frameReady, visible]);
+
+  useEffect(() => {
     if (managed || selfDriven) return undefined;
     let animationFrame = 0;
     const driveSpectatorFrame = () => {
@@ -450,10 +487,11 @@ function PlayerSpectatorView({
   }, [managed, player.id, registerFrame]);
 
   return (
-    <div className="player-spectator">
+    <div className={`player-spectator${visible ? "" : " is-hidden"}`} aria-hidden={!visible}>
       {shouldLoad && (
         <iframe
           allow="fullscreen"
+          className={frameReady ? "is-ready" : ""}
           key={loadAttempt}
           ref={iframeRef}
           src={`${initialUrlRef.current}&frameAttempt=${loadAttempt}`}
@@ -473,75 +511,37 @@ function PlayerSpectatorView({
 function SpectatorWall({
   room,
   players,
+  visiblePlayers,
+  layout,
 }: {
   room: GameRoom;
   players: PlayerTelemetry[];
+  visiblePlayers: PlayerTelemetry[];
+  layout: 4 | 16;
 }) {
-  const framesRef = useRef(new Map<string, HTMLIFrameElement>());
-  const cursorRef = useRef(0);
-  const budgetRef = useRef(players.length);
-  const slowFramesRef = useRef(0);
-  const fastFramesRef = useRef(0);
-  const lastFrameAtRef = useRef(0);
-
-  const registerFrame = useCallback((playerId: string, frame: HTMLIFrameElement | null) => {
-    if (frame) framesRef.current.set(playerId, frame);
-    else framesRef.current.delete(playerId);
-  }, []);
-
-  useEffect(() => {
-    const minimumBudget = players.length <= 4 ? players.length : 1;
-    budgetRef.current = minimumBudget;
-    slowFramesRef.current = 0;
-    fastFramesRef.current = 0;
-    let animationFrame = 0;
-    const driveSpectatorWall = (frameAt: number) => {
-      const frames = Array.from(framesRef.current.values());
-      const elapsed = lastFrameAtRef.current > 0 ? frameAt - lastFrameAtRef.current : 16.7;
-      lastFrameAtRef.current = frameAt;
-      if (elapsed > 22) {
-        slowFramesRef.current += 1;
-        fastFramesRef.current = 0;
-      } else {
-        slowFramesRef.current = Math.max(0, slowFramesRef.current - 1);
-        if (elapsed < 18) fastFramesRef.current += 1;
-      }
-      if (slowFramesRef.current >= 6) {
-        budgetRef.current = Math.max(minimumBudget, Math.ceil(budgetRef.current / 2));
-        slowFramesRef.current = 0;
-      } else if (fastFramesRef.current >= 300 && budgetRef.current < frames.length) {
-        budgetRef.current = Math.min(frames.length, budgetRef.current + 1);
-        fastFramesRef.current = 0;
-      }
-      const budget = Math.min(frames.length, Math.max(1, budgetRef.current));
-      for (let offset = 0; offset < budget; offset++) {
-        const index = (cursorRef.current + offset) % frames.length;
-        try {
-          (frames[index]?.contentWindow as SpectatorFrameWindow | null)
-            ?.__opsiaDriveSpectatorFrame?.();
-        } catch {
-          // Cross-origin development clients retain their own ticker.
-        }
-      }
-      cursorRef.current = frames.length > 0 ? (cursorRef.current + budget) % frames.length : 0;
-      animationFrame = window.requestAnimationFrame(driveSpectatorWall);
-    };
-    animationFrame = window.requestAnimationFrame(driveSpectatorWall);
-    return () => window.cancelAnimationFrame(animationFrame);
-  }, [players.length]);
+  const visibleIds = useMemo(
+    () => new Set(visiblePlayers.map((player) => player.id)),
+    [visiblePlayers],
+  );
+  const orderedPlayers = useMemo(
+    () => [
+      ...visiblePlayers,
+      ...players.filter((player) => !visibleIds.has(player.id)),
+    ],
+    [players, visibleIds, visiblePlayers],
+  );
 
   return (
-    <div className="spectator-wall" data-layout={players.length > 4 ? 16 : 4}>
-      {players.map((player, index) => (
+    <div className="spectator-wall" data-layout={layout}>
+      {orderedPlayers.map((player, index) => (
         <PlayerSpectatorView
-          key={`${player.id}:${players.length > 4 ? "wall16" : "wall4"}`}
-          loadDelayMs={players.length > 4 ? index * 400 : 0}
-          managed={players.length <= 4}
+          key={player.id}
+          loadDelayMs={index * 300}
           player={player}
-          registerFrame={registerFrame}
           room={room}
-          selfDriven={players.length > 4}
-          wallFps={players.length > 4 ? 30 : 60}
+          selfDriven
+          visible={visibleIds.has(player.id)}
+          wallFps={layout === 4 ? 60 : 30}
         />
       ))}
     </div>
@@ -782,7 +782,12 @@ function RoomViewer({
         spectatorViewCount === 1 ? (
           <PlayerSpectatorView player={selectedPlayer} room={room} />
         ) : (
-          <SpectatorWall players={visibleSpectators} room={room} />
+          <SpectatorWall
+            layout={spectatorViewCount}
+            players={alivePlayers}
+            room={room}
+            visiblePlayers={visibleSpectators}
+          />
         )
       ) : (
         <TacticalMap

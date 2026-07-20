@@ -258,6 +258,59 @@ describe("Opsia protocol bot brain", () => {
         expect(choose("bot-b")).toBe(2);
     });
 
+    test("farms ammunition required by a real holstered weapon", () => {
+        const state = createBotBrainState(() => 0.5);
+        decideBotIntent(
+            snapshot({
+                loot: [
+                    { id: 31, type: "9mm", kind: "ammo", x: 510, y: 500, count: 60 },
+                    { id: 32, type: "762mm", kind: "ammo", x: 490, y: 500, count: 60 },
+                ],
+                players: [
+                    player({
+                        activeSlot: 0,
+                        primaryWeapon: "m9",
+                        primaryAmmo: 15,
+                        primaryReserve: 180,
+                        secondaryWeapon: "mosin",
+                        secondaryAmmo: 0,
+                        secondaryReserve: 0,
+                    }),
+                    player({ sessionId: "enemy", team: "blue", x: 900 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(state.targetLootId).toBe(32);
+    });
+
+    test("gives different bot identities distinct combat movement signatures", () => {
+        const chooseAngle = (sessionId: string): number => {
+            const state = createBotBrainState(() => 0.5);
+            const intent = decideBotIntent(
+                snapshot({
+                    players: [
+                        player({ sessionId }),
+                        player({ sessionId: "enemy", team: "blue", x: 600 }),
+                    ],
+                }),
+                sessionId,
+                state,
+                1_000,
+                () => 0.5,
+            );
+            return intent.moveAngle;
+        };
+
+        const angles = ["bot-a", "bot-b", "bot-c", "bot-d", "bot-e", "bot-f"]
+            .map(chooseAngle);
+        expect(Math.max(...angles) - Math.min(...angles)).toBeGreaterThan(0.2);
+    });
+
     test("alternates travel and rest without dropping combat aim", () => {
         const state = createBotBrainState(() => 0.5);
         state.movementPhase = "travel";

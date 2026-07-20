@@ -37,6 +37,7 @@ declare global {
         __opsiaDriveSpectatorFrame?: () => void;
         __opsiaDrivenSpectatorFrames?: number;
         __opsiaWallLightFrames?: number;
+        __opsiaSetSpectatorVisible?: (visible: boolean) => void;
     }
 }
 
@@ -409,6 +410,10 @@ export class Application {
                 let externallyDriven = false;
                 let lastWallFrameAt = performance.now();
                 window.__opsiaDrivenSpectatorFrames = 0;
+                window.__opsiaSetSpectatorVisible = (visible) => {
+                    if (visible) this.pixi?.ticker.start();
+                    else if (this.game?.initialized && this.game.m_playing) this.pixi?.ticker.stop();
+                };
                 window.__opsiaDriveSpectatorFrame = () => {
                     if (!externallyDriven) {
                         this.pixi?.ticker.stop();

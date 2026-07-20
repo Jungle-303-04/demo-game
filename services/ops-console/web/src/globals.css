@@ -717,6 +717,20 @@ body.opsia-pip-body .map-viewport {
 
 .player-spectator iframe {
   display: block;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease-out;
+}
+
+.player-spectator iframe.is-ready {
+  opacity: 1;
+}
+
+.player-spectator.is-hidden {
+  position: absolute;
+  width: 2px;
+  height: 2px;
+  opacity: 0;
   pointer-events: none;
 }
 
