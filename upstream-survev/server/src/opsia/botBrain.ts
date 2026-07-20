@@ -16,6 +16,19 @@ export interface BotBrainPlayer {
     ammo: number;
     bandages?: number;
     healthkits?: number;
+    sodas?: number;
+    painkillers?: number;
+    boost?: number;
+    downed?: boolean;
+    activeSlot?: number;
+    primaryWeapon?: string;
+    primaryAmmo?: number;
+    primaryReserve?: number;
+    secondaryWeapon?: string;
+    secondaryAmmo?: number;
+    secondaryReserve?: number;
+    throwableWeapon?: string;
+    throwableCount?: number;
     isBot?: boolean;
 }
 
@@ -57,10 +70,11 @@ export interface BotBrainLoot {
     count: number;
 }
 
-export type BotIntentMode = "wander" | "loot" | "combat" | "flank" | "retreat" | "zone" | "edge" | "unstuck" | "heal";
-export type BotEquipIntent = "otherGun";
-export type BotUseItemIntent = "bandage" | "healthkit";
+export type BotIntentMode = "wander" | "loot" | "hunt" | "combat" | "flank" | "retreat" | "rescue" | "downed" | "grenade" | "zone" | "edge" | "unstuck" | "heal";
+export type BotEquipIntent = "otherGun" | "primary" | "secondary" | "throwable" | "lastWeapon";
+export type BotUseItemIntent = "bandage" | "healthkit" | "soda" | "painkiller";
 export type BotMovementPhase = "travel" | "rest";
+export type BotGrenadePhase = "idle" | "equip" | "cook" | "release" | "recover";
 
 export interface BotBrainState {
     wanderAngle: number;
@@ -94,6 +108,13 @@ export interface BotBrainState {
     flankX?: number;
     flankY?: number;
     flankUntil: number;
+    nextWeaponEvaluationAt: number;
+    nextBurstAt: number;
+    burstUntil: number;
+    grenadePhase: BotGrenadePhase;
+    grenadeCookUntil: number;
+    grenadeCooldownUntil: number;
+    grenadeTargetSessionId?: string;
 }
 
 export interface BotIntent {
@@ -107,6 +128,7 @@ export interface BotIntent {
     reload: boolean;
     equip?: BotEquipIntent;
     useItem?: BotUseItemIntent;
+    forceShootStart?: boolean;
 }
 
 type BotIntentWithoutMovement = Omit<BotIntent, "moving">;
@@ -353,6 +375,12 @@ export const createBotBrainState = (random: () => number = Math.random): BotBrai
     avoidanceUntil: 0,
     underFireUntil: 0,
     flankUntil: 0,
+    nextWeaponEvaluationAt: 0,
+    nextBurstAt: 0,
+    burstUntil: 0,
+    grenadePhase: "idle",
+    grenadeCookUntil: 0,
+    grenadeCooldownUntil: 0,
 });
 
 const periodicActions = (
@@ -375,6 +403,9 @@ const movementPhaseDuration = (
     }
     if (mode === "zone" || mode === "edge") {
         return phase === "travel" ? 1_300 + random() * 800 : 250 + random() * 300;
+    }
+    if (mode === "hunt") {
+        return phase === "travel" ? 2_100 + random() * 1_200 : 180 + random() * 260;
     }
     return phase === "travel" ? 1_000 + random() * 900 : 650 + random() * 700;
 };
@@ -463,6 +494,69 @@ const reloadGraceMs = (weapon: string): number => {
     return Math.max(2_800, longestReloadSeconds * 1_000 + 750);
 };
 
+type TacticalGunSlot = {
+    slot: 0 | 1;
+    equip: "primary" | "secondary";
+    weapon: string;
+    ammo: number;
+    reserve: number;
+};
+
+const tacticalGunSlots = (self: BotBrainPlayer): TacticalGunSlot[] => ([
+    {
+        slot: 0,
+        equip: "primary",
+        weapon: self.primaryWeapon ?? "",
+        ammo: self.primaryAmmo ?? 0,
+        reserve: self.primaryReserve ?? 0,
+    },
+    {
+        slot: 1,
+        equip: "secondary",
+        weapon: self.secondaryWeapon ?? "",
+        ammo: self.secondaryAmmo ?? 0,
+        reserve: self.secondaryReserve ?? 0,
+    },
+] satisfies TacticalGunSlot[]).filter(
+    (slot) => weaponKind(slot.weapon) === "gun" && slot.ammo + slot.reserve > 0,
+);
+
+const weaponRangeScore = (weapon: string, targetDistance: number): number => {
+    const profile = weaponProfile(weapon);
+    if (profile.kind !== "gun") return Number.NEGATIVE_INFINITY;
+    const beyondRangePenalty = targetDistance > profile.effectiveRange
+        ? (targetDistance - profile.effectiveRange) * 7
+        : 0;
+    const rangeFit = 180 - Math.abs(targetDistance - profile.preferredRange) * 0.55;
+    return rangeFit + Math.log2(Math.max(2, profile.powerScore)) * 18 - beyondRangePenalty;
+};
+
+const preferredGunEquip = (
+    state: BotBrainState,
+    self: BotBrainPlayer,
+    targetDistance: number | undefined,
+    now: number,
+): BotEquipIntent | undefined => {
+    if (
+        targetDistance === undefined
+        || now < state.nextWeaponEvaluationAt
+        || now < state.nextWeaponSwapAt
+    ) return undefined;
+    state.nextWeaponEvaluationAt = now + 450;
+    const candidates = tacticalGunSlots(self)
+        .map((slot) => ({ ...slot, score: weaponRangeScore(slot.weapon, targetDistance) }))
+        .sort((left, right) => right.score - left.score);
+    const best = candidates[0];
+    if (!best || best.slot === self.activeSlot) return undefined;
+    const currentScore = weaponRangeScore(self.weapon, targetDistance);
+    const activeEmpty = self.ammo <= 0 && (self.activeSlot === 0 || self.activeSlot === 1);
+    if (weaponKind(self.weapon) !== "gun" || activeEmpty || best.score > currentScore + 18) {
+        state.nextWeaponSwapAt = now + 800;
+        return best.equip;
+    }
+    return undefined;
+};
+
 const weaponActions = (
     state: BotBrainState,
     self: BotBrainPlayer,
@@ -470,6 +564,8 @@ const weaponActions = (
     now: number,
 ): Pick<BotIntent, "reload" | "equip"> => {
     const kind = weaponKind(self.weapon);
+    const tacticalEquip = preferredGunEquip(state, self, targetDistance, now);
+    if (tacticalEquip) return { reload: false, equip: tacticalEquip };
     if (kind === "gun" && self.ammo <= 0) {
         if (state.emptyAmmoWeapon !== self.weapon) {
             state.emptyAmmoWeapon = self.weapon;
@@ -517,6 +613,34 @@ const canShootTarget = (self: BotBrainPlayer, target: Target | undefined): boole
     if (profile.kind === "gun") return self.ammo > 0 && target.distance <= profile.effectiveRange;
     if (profile.kind === "melee") return target.distance <= meleeAttackDistance;
     return false;
+};
+
+const controlledFire = (
+    state: BotBrainState,
+    self: BotBrainPlayer,
+    target: Target | undefined,
+    clearShot: boolean,
+    now: number,
+    random: () => number,
+): boolean => {
+    if (!clearShot || !canShootTarget(self, target)) return false;
+    const definition = GameObjectDefs.typeToDefSafe(self.weapon);
+    if (!target || definition?.type !== "gun") return true;
+    const profile = weaponProfile(self.weapon);
+    const needsBurstDiscipline = target.distance > profile.preferredRange * 0.82;
+    if (!needsBurstDiscipline || definition.fireMode === "single") {
+        state.burstUntil = 0;
+        state.nextBurstAt = 0;
+        return true;
+    }
+    if (now < state.burstUntil) return true;
+    if (now < state.nextBurstAt) return false;
+    const burstDuration = definition.fireMode === "burst"
+        ? 380 + random() * 220
+        : 260 + random() * 320;
+    state.burstUntil = now + burstDuration;
+    state.nextBurstAt = state.burstUntil + 160 + random() * 300;
+    return true;
 };
 
 const selectTarget = (
@@ -586,10 +710,11 @@ const lootUtility = (self: BotBrainPlayer, loot: BotBrainLoot): number => {
         case "scope":
             return 48;
         case "boost":
-            return self.health < 80 ? 52 : 34;
+            return self.health < 80 || (self.boost ?? 0) < 35 ? 58 : 28;
         case "melee":
-        case "throwable":
             return weaponKind(self.weapon) === "gun" ? 20 : 38;
+        case "throwable":
+            return (self.throwableCount ?? 0) <= 1 ? 58 : 30;
         default:
             return 8;
     }
@@ -602,6 +727,46 @@ const stableHash = (value: string): number => {
         hash = Math.imul(hash, 16_777_619);
     }
     return hash >>> 0;
+};
+
+type CombatStyle = "breacher" | "flanker" | "marksman";
+
+const combatStyle = (sessionId: string): CombatStyle => {
+    const styles: CombatStyle[] = ["breacher", "flanker", "marksman"];
+    return styles[stableHash(sessionId) % styles.length]!;
+};
+
+const isExplosiveThrowable = (weapon: string): boolean => {
+    const definition = GameObjectDefs.typeToDefSafe(weapon);
+    return definition?.type === "throwable" && !/smoke|sensor|snowball/i.test(weapon);
+};
+
+const grenadeOpportunity = (
+    snapshot: BotBrainSnapshot,
+    self: BotBrainPlayer,
+    target: Target | undefined,
+    enemies: Target[],
+    allies: Target[],
+    state: BotBrainState,
+    now: number,
+): boolean => {
+    if (
+        !target
+        || now < state.grenadeCooldownUntil
+        || (self.throwableCount ?? 0) <= 0
+        || !isExplosiveThrowable(self.throwableWeapon ?? "")
+        || target.distance < 24
+        || target.distance > 68
+        || target.player.downed === true
+    ) return false;
+    const nearbyEnemies = enemies.filter(({ player }) =>
+        distance(target.player.x, target.player.y, player.x, player.y) <= 24
+    ).length;
+    const allyInBlastRadius = allies.some(({ player }) =>
+        distance(target.player.x, target.player.y, player.x, player.y) <= 28
+    );
+    if (allyInBlastRadius) return false;
+    return nearbyEnemies >= 2 || !hasClearShot(snapshot, self, target.player);
 };
 
 const lootAffinity = (sessionId: string, lootId: number): number =>
@@ -697,6 +862,9 @@ export const decideBotIntent = (
         state.flankX = undefined;
         state.flankY = undefined;
         state.flankUntil = 0;
+        state.grenadePhase = "idle";
+        state.grenadeCookUntil = 0;
+        state.grenadeTargetSessionId = undefined;
         if (now >= state.decisionUntil) {
             state.wanderAngle = random() * Math.PI * 2;
             state.decisionUntil = now + 1_500 + random() * 2_000;
@@ -731,6 +899,7 @@ export const decideBotIntent = (
         .filter((player) =>
             player.connected
             && player.alive
+            && player.downed !== true
             && player.sessionId !== sessionId
             && player.teamId !== self.teamId
         )
@@ -765,8 +934,141 @@ export const decideBotIntent = (
         )
         : state.wanderAngle;
     const combatActions = { ...actions, ...weaponActions(state, self, target?.distance, now) };
-    const shoot = canShootTarget(self, target)
-        && Boolean(target && hasClearShot(snapshot, self, target.player));
+    const clearShot = Boolean(target && hasClearShot(snapshot, self, target.player));
+    const shoot = controlledFire(state, self, target, clearShot, now, random);
+
+    if (self.downed) {
+        state.healingUntil = 0;
+        state.grenadePhase = "idle";
+        const rescueAlly = allies.find(({ player }) => player.downed !== true);
+        const crawlAngle = rescueAlly
+            ? angleTo(self.x, self.y, rescueAlly.player.x, rescueAlly.player.y)
+            : target
+            ? targetAngle + Math.PI
+            : angleTo(self.x, self.y, snapshot.zone.x, snapshot.zone.y);
+        return finishIntent(
+            state,
+            {
+                mode: "downed",
+                moveAngle: steerAroundWalls(snapshot, self, state, crawlAngle, now),
+                aimAngle: targetAngle,
+                aimDistance: aimDistance(target),
+                shoot: false,
+                interact: false,
+                reload: false,
+            },
+            "force",
+            now,
+            random,
+        );
+    }
+
+    if (state.grenadePhase !== "idle") {
+        const grenadeTarget = enemies.find(({ player }) => player.sessionId === state.grenadeTargetSessionId)
+            ?? target;
+        const grenadeAngle = grenadeTarget
+            ? angleTo(self.x, self.y, grenadeTarget.player.x, grenadeTarget.player.y)
+            : targetAngle;
+        if (state.grenadePhase === "equip") {
+            if (self.activeSlot === 3 && isExplosiveThrowable(self.weapon)) {
+                state.grenadePhase = "cook";
+                state.grenadeCookUntil = now + 720 + random() * 420;
+                return finishIntent(
+                    state,
+                    {
+                        mode: "grenade",
+                        moveAngle: grenadeAngle + state.strafeSign * Math.PI / 2,
+                        aimAngle: grenadeAngle,
+                        aimDistance: aimDistance(grenadeTarget),
+                        shoot: true,
+                        interact: false,
+                        reload: false,
+                        forceShootStart: true,
+                    },
+                    "rhythm",
+                    now,
+                    random,
+                );
+            }
+            if (!grenadeTarget || now >= state.grenadeCookUntil) {
+                state.grenadePhase = "recover";
+            } else {
+                return finishIntent(
+                    state,
+                    {
+                        mode: "grenade",
+                        moveAngle: grenadeAngle + state.strafeSign * Math.PI / 2,
+                        aimAngle: grenadeAngle,
+                        aimDistance: aimDistance(grenadeTarget),
+                        shoot: false,
+                        interact: false,
+                        reload: false,
+                        equip: "throwable",
+                    },
+                    "rhythm",
+                    now,
+                    random,
+                );
+            }
+        }
+        if (state.grenadePhase === "cook") {
+            if (grenadeTarget && now < state.grenadeCookUntil) {
+                return finishIntent(
+                    state,
+                    {
+                        mode: "grenade",
+                        moveAngle: grenadeAngle + state.strafeSign * Math.PI / 2,
+                        aimAngle: grenadeAngle,
+                        aimDistance: aimDistance(grenadeTarget),
+                        shoot: true,
+                        interact: false,
+                        reload: false,
+                    },
+                    "rhythm",
+                    now,
+                    random,
+                );
+            }
+            state.grenadePhase = "release";
+            return finishIntent(
+                state,
+                {
+                    mode: "grenade",
+                    moveAngle: grenadeAngle + Math.PI,
+                    aimAngle: grenadeAngle,
+                    aimDistance: aimDistance(grenadeTarget),
+                    shoot: false,
+                    interact: false,
+                    reload: false,
+                },
+                "force",
+                now,
+                random,
+            );
+        }
+        if (state.grenadePhase === "release") state.grenadePhase = "recover";
+        if (state.grenadePhase === "recover") {
+            state.grenadePhase = "idle";
+            state.grenadeCooldownUntil = now + 7_000 + random() * 5_000;
+            state.grenadeTargetSessionId = undefined;
+            return finishIntent(
+                state,
+                {
+                    mode: "grenade",
+                    moveAngle: grenadeAngle + Math.PI,
+                    aimAngle: grenadeAngle,
+                    aimDistance: aimDistance(grenadeTarget),
+                    shoot: false,
+                    interact: false,
+                    reload: false,
+                    equip: "lastWeapon",
+                },
+                "force",
+                now,
+                random,
+            );
+        }
+    }
 
     if (now < state.unstuckUntil) {
         state.healingUntil = 0;
@@ -853,7 +1155,28 @@ export const decideBotIntent = (
         ? Math.max(70, Math.min(220, selfWeapon.effectiveRange * 1.15))
         : 70;
     const closeThreat = Boolean(nearestEnemy && nearestEnemy.distance <= closeThreatDistance);
-    if (state.healingUntil > now && !closeThreat && self.health < 90) {
+    if (grenadeOpportunity(snapshot, self, target, enemies, allies, state, now)) {
+        state.grenadePhase = "equip";
+        state.grenadeCookUntil = now + 1_600;
+        state.grenadeTargetSessionId = target?.player.sessionId;
+        return finishIntent(
+            state,
+            {
+                mode: "grenade",
+                moveAngle: targetAngle + state.strafeSign * Math.PI / 2,
+                aimAngle: targetAngle,
+                aimDistance: aimDistance(target),
+                shoot: false,
+                interact: false,
+                reload: false,
+                equip: "throwable",
+            },
+            "rhythm",
+            now,
+            random,
+        );
+    }
+    if (state.healingUntil > now && !closeThreat) {
         return finishIntent(
             state,
             {
@@ -903,6 +1226,58 @@ export const decideBotIntent = (
                 random,
             );
         }
+    }
+
+    if ((self.boost ?? 0) < 35 && !closeThreat && now >= state.nextHealAt) {
+        const useItem: BotUseItemIntent | undefined = (self.painkillers ?? 0) > 0
+            ? "painkiller"
+            : (self.sodas ?? 0) > 0
+            ? "soda"
+            : undefined;
+        if (useItem) {
+            state.healingUntil = now + (useItem === "painkiller" ? 5_200 : 3_200);
+            state.nextHealAt = now + 8_000;
+            return finishIntent(
+                state,
+                {
+                    mode: "heal",
+                    moveAngle: state.wanderAngle,
+                    aimAngle: targetAngle,
+                    aimDistance: aimDistance(target),
+                    shoot: false,
+                    interact: false,
+                    reload: false,
+                    useItem,
+                },
+                "stop",
+                now,
+                random,
+            );
+        }
+    }
+
+    const downedAlly = allies.find(({ player }) => player.downed === true);
+    const exposedRescueThreat = target
+        && target.distance <= 150
+        && hasClearShot(snapshot, target.player, self);
+    if (downedAlly && !exposedRescueThreat) {
+        const rescueAngle = angleTo(self.x, self.y, downedAlly.player.x, downedAlly.player.y);
+        const canRevive = downedAlly.distance <= 5.5;
+        return finishIntent(
+            state,
+            {
+                mode: "rescue",
+                moveAngle: steerAroundWalls(snapshot, self, state, rescueAngle, now),
+                aimAngle: targetAngle,
+                aimDistance: aimDistance(target),
+                shoot: false,
+                interact: canRevive,
+                reload: false,
+            },
+            canRevive ? "stop" : "force",
+            now,
+            random,
+        );
     }
 
     const lootTarget = selectLootTarget(snapshot, self, state, now, sessionId);
@@ -968,18 +1343,23 @@ export const decideBotIntent = (
         let mode: BotIntentMode = "combat";
         let movementPolicy: MovementPolicy = now < state.underFireUntil ? "force" : "rhythm";
         if (selfWeapon.kind === "gun") {
+            const style = combatStyle(sessionId);
+            const preferredRange = selfWeapon.preferredRange * (
+                style === "breacher" ? 0.72 : style === "marksman" ? 1.22 : 0.95
+            );
             const criticalHealthRetreat = self.health <= 28
                 && target.distance <= Math.max(100, selfWeapon.effectiveRange * 1.45);
             if (criticalHealthRetreat) {
                 mode = "retreat";
                 movementPolicy = "force";
                 moveAngle += Math.PI + state.strafeSign * 0.18;
-            } else if (target.distance < selfWeapon.preferredRange * 0.62) {
+            } else if (target.distance < preferredRange * (style === "marksman" ? 0.88 : 0.62)) {
                 moveAngle += Math.PI;
-            } else if (target.distance <= selfWeapon.preferredRange * 1.3) {
-                moveAngle += state.strafeSign * Math.PI / 2;
+            } else if (target.distance <= preferredRange * 1.3) {
+                moveAngle += state.strafeSign * (style === "flanker" ? Math.PI * 0.68 : Math.PI / 2);
             } else {
-                moveAngle += state.strafeSign * 0.14;
+                moveAngle += state.strafeSign * (style === "flanker" ? 0.26 : 0.14);
+                if (style === "breacher") movementPolicy = "force";
             }
             if (now < state.underFireUntil && mode === "combat") {
                 moveAngle += state.strafeSign * 0.24;
@@ -996,6 +1376,29 @@ export const decideBotIntent = (
                 ...combatActions,
             },
             movementPolicy,
+            now,
+            random,
+        );
+    }
+
+    if (target) {
+        const waypoint = !clearShot
+            ? selectFlankWaypoint(snapshot, self, target.player, state, now)
+            : undefined;
+        const huntAngle = waypoint
+            ? angleTo(self.x, self.y, waypoint.x, waypoint.y)
+            : targetAngle + (combatStyle(sessionId) === "flanker" ? state.strafeSign * 0.18 : 0);
+        return finishIntent(
+            state,
+            {
+                mode: "hunt",
+                moveAngle: steerAroundWalls(snapshot, self, state, huntAngle, now),
+                aimAngle: targetAngle,
+                aimDistance: aimDistance(target, 64),
+                shoot: false,
+                ...combatActions,
+            },
+            weaponKind(self.weapon) === "gun" ? "force" : "rhythm",
             now,
             random,
         );

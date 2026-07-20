@@ -744,4 +744,180 @@ describe("Opsia protocol bot brain", () => {
         expect(intent.mode).toBe("combat");
         expect(intent.shoot).toBe(true);
     });
+
+    test("hunts a distant live enemy instead of wandering away from the fight", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                map: { width: 3_000, height: 3_000 },
+                zone: { x: 1_500, y: 1_500, radius: 1_450, nextX: 1_500, nextY: 1_500, nextRadius: 1_450 },
+                players: [
+                    player({ x: 1_000, y: 1_500 }),
+                    player({ sessionId: "enemy", team: "blue", x: 2_200, y: 1_500 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("hunt");
+        expect(intent.moving).toBe(true);
+        expect(Math.abs(intent.moveAngle)).toBeLessThan(0.3);
+    });
+
+    test("chooses the real secondary gun when it better fits long range", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                players: [
+                    player({
+                        activeSlot: 0,
+                        primaryWeapon: "m9",
+                        primaryAmmo: 15,
+                        primaryReserve: 30,
+                        secondaryWeapon: "mosin",
+                        secondaryAmmo: 5,
+                        secondaryReserve: 20,
+                    }),
+                    player({ sessionId: "enemy", team: "blue", x: 760 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.equip).toBe("secondary");
+    });
+
+    test("paces long-range automatic fire in observable bursts", () => {
+        const state = createBotBrainState(() => 0.5);
+        const combat = snapshot({
+            capturedAt: 900,
+            players: [
+                player({ weapon: "ak47", ammo: 30 }),
+                player({ sessionId: "enemy", team: "blue", x: 700 }),
+            ],
+        });
+        const first = decideBotIntent(combat, "self", state, 1_000, () => 0.5);
+        const pause = decideBotIntent({ ...combat, capturedAt: 1_499 }, "self", state, 1_500, () => 0.5);
+
+        expect(first.shoot).toBe(true);
+        expect(pause.shoot).toBe(false);
+        expect(state.nextBurstAt).toBeGreaterThan(1_500);
+    });
+
+    test("equips, cooks, releases, and recovers from a real frag grenade", () => {
+        const state = createBotBrainState(() => 0.5);
+        const grenadeFight = (capturedAt: number, activeSlot = 0, weapon = "m9") => snapshot({
+            capturedAt,
+            players: [
+                player({
+                    activeSlot,
+                    weapon,
+                    throwableWeapon: "frag",
+                    throwableCount: 2,
+                    primaryWeapon: "m9",
+                    primaryAmmo: 15,
+                    primaryReserve: 30,
+                }),
+                player({ sessionId: "enemy", team: "blue", teamId: 2, x: 550 }),
+                player({ sessionId: "enemy-2", team: "blue", teamId: 2, x: 555, y: 505 }),
+            ],
+        });
+
+        const equip = decideBotIntent(grenadeFight(900), "self", state, 1_000, () => 0.5);
+        const cookStart = decideBotIntent(grenadeFight(1_099, 3, "frag"), "self", state, 1_100, () => 0.5);
+        const cooking = decideBotIntent(grenadeFight(1_499, 3, "frag"), "self", state, 1_500, () => 0.5);
+        const release = decideBotIntent(grenadeFight(2_099, 3, "frag"), "self", state, 2_100, () => 0.5);
+        const recover = decideBotIntent(grenadeFight(2_199, 3, "frag"), "self", state, 2_200, () => 0.5);
+
+        expect(equip.equip).toBe("throwable");
+        expect(cookStart.shoot).toBe(true);
+        expect(cookStart.forceShootStart).toBe(true);
+        expect(cooking.shoot).toBe(true);
+        expect(release.shoot).toBe(false);
+        expect(recover.equip).toBe("lastWeapon");
+        expect(state.grenadeCooldownUntil).toBeGreaterThan(2_200);
+    });
+
+    test("never throws an explosive into an allied blast radius", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                players: [
+                    player({ throwableWeapon: "frag", throwableCount: 2 }),
+                    player({ sessionId: "enemy", team: "blue", teamId: 2, x: 550 }),
+                    player({ sessionId: "enemy-2", team: "blue", teamId: 2, x: 555 }),
+                    player({ sessionId: "ally", teamId: 1, x: 552 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).not.toBe("grenade");
+        expect(intent.equip).not.toBe("throwable");
+    });
+
+    test("crawls toward support while downed and revives a safe teammate", () => {
+        const downedState = createBotBrainState(() => 0.5);
+        const downed = decideBotIntent(
+            snapshot({
+                players: [
+                    player({ downed: true }),
+                    player({ sessionId: "ally", teamId: 1, x: 530 }),
+                ],
+            }),
+            "self",
+            downedState,
+            1_000,
+            () => 0.5,
+        );
+        const rescueState = createBotBrainState(() => 0.5);
+        const rescue = decideBotIntent(
+            snapshot({
+                players: [
+                    player(),
+                    player({ sessionId: "ally", teamId: 1, x: 504, downed: true }),
+                ],
+            }),
+            "self",
+            rescueState,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(downed.mode).toBe("downed");
+        expect(downed.moving).toBe(true);
+        expect(downed.moveAngle).toBeCloseTo(0);
+        expect(rescue.mode).toBe("rescue");
+        expect(rescue.moving).toBe(false);
+        expect(rescue.interact).toBe(true);
+    });
+
+    test("uses a real boost item during a safe tactical pause", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                players: [
+                    player({ boost: 0, sodas: 1 }),
+                    player({ sessionId: "enemy", team: "blue", x: 800 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("heal");
+        expect(intent.useItem).toBe("soda");
+        expect(intent.moving).toBe(false);
+    });
 });

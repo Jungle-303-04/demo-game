@@ -12,12 +12,16 @@ export const createBotInput = (intent: BotIntent, random: () => number = Math.ra
     input.moveRight = intent.moving && moveX > 0.25;
     input.moveLeft = intent.moving && moveX < -0.25;
     input.shootHold = intent.shoot;
-    input.shootStart = intent.shoot && random() < 0.22;
+    input.shootStart = intent.shoot && (intent.forceShootStart === true || random() < 0.22);
     input.toMouseDir = v2.create(Math.cos(intent.aimAngle), Math.sin(intent.aimAngle));
     input.toMouseLen = Math.min(64, Math.max(0, intent.aimDistance));
     if (intent.interact) input.addInput(GameConfig.Input.Interact);
     if (intent.reload) input.addInput(GameConfig.Input.Reload);
     if (intent.equip === "otherGun") input.addInput(GameConfig.Input.EquipOtherGun);
+    if (intent.equip === "primary") input.addInput(GameConfig.Input.EquipPrimary);
+    if (intent.equip === "secondary") input.addInput(GameConfig.Input.EquipSecondary);
+    if (intent.equip === "throwable") input.addInput(GameConfig.Input.EquipThrowable);
+    if (intent.equip === "lastWeapon") input.addInput(GameConfig.Input.EquipLastWeap);
     if (intent.useItem) input.useItem = intent.useItem;
     return input;
 };

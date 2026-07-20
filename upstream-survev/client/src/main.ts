@@ -90,6 +90,10 @@ export class Application {
     readonly opsiaWatchView = new URLSearchParams(window.location.search).get("view") === "map"
         ? "map"
         : "player";
+    readonly opsiaWallFps = Math.min(
+        60,
+        Math.max(0, Number(new URLSearchParams(window.location.search).get("wallFps")) || 0),
+    );
     // A stable browser token is sent only to the real survev game-server's
     // reconnect adapter. It is not an account and is never used by Opsia.
     // Broadcast tabs deliberately use an ephemeral identity so changing a
@@ -395,6 +399,9 @@ export class Application {
             // three room cards cannot consume three full game render budgets.
             if (this.opsiaWatch && this.opsiaWatchView === "map") {
                 this.pixi.ticker.maxFPS = 5;
+            }
+            if (this.opsiaWatch && this.opsiaWatchView === "player" && this.opsiaWallFps > 0) {
+                this.pixi.ticker.maxFPS = this.opsiaWallFps;
             }
             this.pixi.ticker.add(this.update, this);
             if (this.opsiaWatch && this.opsiaWatchView === "player") {

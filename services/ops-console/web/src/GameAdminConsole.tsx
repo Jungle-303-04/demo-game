@@ -33,6 +33,9 @@ interface PictureInPictureSession {
   pipWindow: Window;
 }
 
+type SpectatorViewCount = 1 | 4 | 16;
+type SpectatorFrameWindow = Window & { __opsiaDriveSpectatorFrame?: () => void };
+
 const POLL_INTERVAL_MS = 400;
 const BOT_BATCH_SIZE = 10;
 
@@ -366,26 +369,34 @@ function RoomDirectory({
   );
 }
 
-function roomWatchUrl(room: GameRoom, player: PlayerTelemetry) {
+function roomWatchUrl(room: GameRoom, player: PlayerTelemetry, wallFps?: number) {
   const url = roomServiceUrl(room);
   url.pathname = url.pathname.replace(/\/play\/(room-\d+)\/?$/, "/watch/$1/");
   url.search = "";
   url.searchParams.set("view", "player");
   url.searchParams.set("target", player.id);
+  if (wallFps) url.searchParams.set("wallFps", String(wallFps));
   return url.toString();
 }
 
 function PlayerSpectatorView({
   room,
   player,
+  managed = false,
+  wallFps,
+  registerFrame,
 }: {
   room: GameRoom;
   player: PlayerTelemetry;
+  managed?: boolean;
+  wallFps?: number;
+  registerFrame?: (playerId: string, frame: HTMLIFrameElement | null) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
-  const initialUrlRef = useRef(roomWatchUrl(room, player));
+  const initialUrlRef = useRef(roomWatchUrl(room, player, wallFps));
 
   useEffect(() => {
+    if (managed) return undefined;
     let animationFrame = 0;
     const driveSpectatorFrame = () => {
       try {
@@ -400,7 +411,13 @@ function PlayerSpectatorView({
     };
     animationFrame = window.requestAnimationFrame(driveSpectatorFrame);
     return () => window.cancelAnimationFrame(animationFrame);
-  }, []);
+  }, [managed]);
+
+  useEffect(() => {
+    if (!managed || !registerFrame) return undefined;
+    registerFrame(player.id, iframeRef.current);
+    return () => registerFrame(player.id, null);
+  }, [managed, player.id, registerFrame]);
 
   return (
     <div className="player-spectator">
@@ -416,6 +433,81 @@ function PlayerSpectatorView({
         <strong>{player.name}</strong>
         <span>{player.isBot ? "BOT" : "PLAYER"}</span>
       </div>
+    </div>
+  );
+}
+
+function SpectatorWall({
+  room,
+  players,
+}: {
+  room: GameRoom;
+  players: PlayerTelemetry[];
+}) {
+  const framesRef = useRef(new Map<string, HTMLIFrameElement>());
+  const cursorRef = useRef(0);
+  const budgetRef = useRef(players.length);
+  const slowFramesRef = useRef(0);
+  const fastFramesRef = useRef(0);
+  const lastFrameAtRef = useRef(0);
+
+  const registerFrame = useCallback((playerId: string, frame: HTMLIFrameElement | null) => {
+    if (frame) framesRef.current.set(playerId, frame);
+    else framesRef.current.delete(playerId);
+  }, []);
+
+  useEffect(() => {
+    budgetRef.current = players.length <= 4 ? players.length : Math.min(8, players.length);
+    slowFramesRef.current = 0;
+    fastFramesRef.current = 0;
+    let animationFrame = 0;
+    const driveSpectatorWall = (frameAt: number) => {
+      const frames = Array.from(framesRef.current.values());
+      const elapsed = lastFrameAtRef.current > 0 ? frameAt - lastFrameAtRef.current : 16.7;
+      lastFrameAtRef.current = frameAt;
+      if (elapsed > 22) {
+        slowFramesRef.current += 1;
+        fastFramesRef.current = 0;
+      } else {
+        slowFramesRef.current = Math.max(0, slowFramesRef.current - 1);
+        if (elapsed < 18) fastFramesRef.current += 1;
+      }
+      if (slowFramesRef.current >= 6) {
+        budgetRef.current = Math.max(4, Math.ceil(budgetRef.current / 2));
+        slowFramesRef.current = 0;
+      } else if (fastFramesRef.current >= 120 && budgetRef.current < frames.length) {
+        budgetRef.current = Math.min(frames.length, budgetRef.current + 2);
+        fastFramesRef.current = 0;
+      }
+      const budget = Math.min(frames.length, Math.max(1, budgetRef.current));
+      for (let offset = 0; offset < budget; offset++) {
+        const index = (cursorRef.current + offset) % frames.length;
+        try {
+          (frames[index]?.contentWindow as SpectatorFrameWindow | null)
+            ?.__opsiaDriveSpectatorFrame?.();
+        } catch {
+          // Cross-origin development clients retain their own ticker.
+        }
+      }
+      cursorRef.current = frames.length > 0 ? (cursorRef.current + budget) % frames.length : 0;
+      animationFrame = window.requestAnimationFrame(driveSpectatorWall);
+    };
+    animationFrame = window.requestAnimationFrame(driveSpectatorWall);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [players.length]);
+
+  return (
+    <div className="spectator-wall" data-layout={players.length > 4 ? 16 : 4}>
+      {players.map((player) => (
+        <PlayerSpectatorView
+          key={player.id}
+          managed
+          player={player}
+          registerFrame={registerFrame}
+          room={room}
+          wallFps={players.length > 4 ? 15 : 60}
+        />
+      ))}
     </div>
   );
 }
@@ -479,6 +571,7 @@ function RoomViewer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [pipSession, setPipSession] = useState<PictureInPictureSession | null>(null);
   const [isInlinePip, setIsInlinePip] = useState(false);
+  const [spectatorViewCount, setSpectatorViewCount] = useState<SpectatorViewCount>(4);
   const { bots, humans } = playerCounts(room);
   const alivePlayers = useMemo(
     () =>
@@ -500,16 +593,16 @@ function RoomViewer({
     const direction = reverse ? -1 : 1;
     const startIndex = currentIndex < 0 ? (reverse ? 0 : -1) : currentIndex;
     const nextIndex =
-      (startIndex + direction + alivePlayers.length) % alivePlayers.length;
+      (startIndex + direction * spectatorViewCount + alivePlayers.length) % alivePlayers.length;
     const nextPlayer = alivePlayers[nextIndex];
     if (nextPlayer) onSelectPlayer(nextPlayer.id);
-    if (selectedPlayer && spectatorFrame?.contentWindow) {
+    if (spectatorViewCount === 1 && selectedPlayer && spectatorFrame?.contentWindow) {
       spectatorFrame.contentWindow.postMessage({
         type: "opsia-spectator-command",
         action: reverse ? "prev" : "next",
       }, roomServiceUrl(room).origin);
     }
-  }, [alivePlayers, onSelectPlayer, room, selectedPlayer]);
+  }, [alivePlayers, onSelectPlayer, room, selectedPlayer, spectatorViewCount]);
 
   useEffect(() => {
     const handleKeys = (event: KeyboardEvent) => {
@@ -544,6 +637,7 @@ function RoomViewer({
       } | null;
       if (!data) return;
       if (data.type === "opsia-spectator-target" && typeof data.name === "string") {
+        if (spectatorViewCount !== 1) return;
         const player = alivePlayers.find((candidate) => candidate.name === data.name);
         if (player) onSelectPlayer(player.id);
         return;
@@ -562,7 +656,7 @@ function RoomViewer({
     return () => {
       targets.forEach((target) => target.removeEventListener("message", handleSpectatorMessage));
     };
-  }, [alivePlayers, onClearPlayer, onSelectPlayer, pipSession, room, selectAdjacentPlayer]);
+  }, [alivePlayers, onClearPlayer, onSelectPlayer, pipSession, room, selectAdjacentPlayer, spectatorViewCount]);
 
   useEffect(() => {
     const documents = [document, pipSession?.pipWindow.document].filter(
@@ -638,10 +732,22 @@ function RoomViewer({
   }
 
   const isPictureInPicture = Boolean(pipSession) || isInlinePip;
+  const selectedPlayerIndex = alivePlayers.findIndex((player) => player.id === selectedPlayer?.id);
+  const spectatorStartIndex = selectedPlayerIndex >= 0 ? selectedPlayerIndex : 0;
+  const visibleSpectators = selectedPlayer
+    ? Array.from(
+        { length: Math.min(spectatorViewCount, alivePlayers.length) },
+        (_, offset) => alivePlayers[(spectatorStartIndex + offset) % alivePlayers.length],
+      ).filter((player): player is PlayerTelemetry => Boolean(player))
+    : [];
   const liveStage = (
     <div className={`world-stage${isInlinePip ? " is-inline-pip" : ""}`} ref={stageRef}>
       {selectedPlayer ? (
-        <PlayerSpectatorView player={selectedPlayer} room={room} />
+        spectatorViewCount === 1 ? (
+          <PlayerSpectatorView player={selectedPlayer} room={room} />
+        ) : (
+          <SpectatorWall players={visibleSpectators} room={room} />
+        )
       ) : (
         <TacticalMap
           onSelectPlayer={onSelectPlayer}
@@ -659,7 +765,7 @@ function RoomViewer({
         </button>
         <div className="room-title">
           <span>{room.map}</span>
-          <strong>{selectedPlayer?.name ?? room.name}</strong>
+          <strong>{selectedPlayer ? `${visibleSpectators.length}명 관전` : room.name}</strong>
         </div>
         <div className="room-actions">
           <span>사용자 <strong>{humans}</strong></span>
@@ -667,6 +773,19 @@ function RoomViewer({
           <button disabled={botPending} onClick={onAddBots} type="button">
             {botPending ? "투입 중" : `봇 +${BOT_BATCH_SIZE}`}
           </button>
+          <div className="spectator-count-switch" aria-label="동시 관전 화면 수">
+            {([1, 4, 16] as const).map((count) => (
+              <button
+                aria-label={`${count}명 동시 관전`}
+                aria-pressed={spectatorViewCount === count}
+                key={count}
+                onClick={() => setSpectatorViewCount(count)}
+                type="button"
+              >
+                {count}
+              </button>
+            ))}
+          </div>
           <button
             aria-pressed={isPictureInPicture}
             className={`pip-button${isPictureInPicture ? " is-active" : ""}`}

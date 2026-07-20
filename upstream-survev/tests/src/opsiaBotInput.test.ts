@@ -47,4 +47,19 @@ describe("Opsia protocol bot input", () => {
         expect(input.inputs).toContain(GameConfig.Input.EquipOtherGun);
         expect(input.useItem).toBe("bandage");
     });
+
+    test("maps exact weapon slots and guarantees grenade cook start", () => {
+        const mappings = [
+            ["primary", GameConfig.Input.EquipPrimary],
+            ["secondary", GameConfig.Input.EquipSecondary],
+            ["throwable", GameConfig.Input.EquipThrowable],
+            ["lastWeapon", GameConfig.Input.EquipLastWeap],
+        ] as const;
+        for (const [equip, expectedInput] of mappings) {
+            expect(createBotInput(intent({ equip }), () => 1).inputs).toContain(expectedInput);
+        }
+        const grenade = createBotInput(intent({ forceShootStart: true }), () => 1);
+        expect(grenade.shootHold).toBe(true);
+        expect(grenade.shootStart).toBe(true);
+    });
 });

@@ -502,9 +502,33 @@ button {
   font-weight: 700;
 }
 
-.room-actions button:first-of-type {
+.room-actions > button:first-of-type {
   border-color: var(--blue);
   background: var(--blue);
+  color: #fff;
+}
+
+.spectator-count-switch {
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.room-actions .spectator-count-switch button {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.room-actions .spectator-count-switch button[aria-pressed="true"] {
+  background: var(--ink);
   color: #fff;
 }
 
@@ -686,6 +710,9 @@ body.opsia-pip-body .map-viewport {
 
 .player-spectator {
   position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .player-spectator iframe {
@@ -724,6 +751,45 @@ body.opsia-pip-body .map-viewport {
   color: rgba(255, 255, 255, 0.58);
   font-size: 9px;
   font-weight: 750;
+}
+
+.spectator-wall {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  gap: 2px;
+  overflow: hidden;
+  background: #05070a;
+}
+
+.spectator-wall[data-layout="4"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.spectator-wall[data-layout="16"] {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+}
+
+.spectator-wall[data-layout="16"] .spectator-label {
+  top: 6px;
+  left: 6px;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.spectator-wall[data-layout="16"] .spectator-label strong {
+  max-width: 92px;
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spectator-wall[data-layout="16"] .spectator-label span {
+  display: none;
 }
 
 .world-stage:fullscreen {
@@ -777,6 +843,10 @@ body.opsia-pip-body .map-viewport {
 
   .room-actions button {
     padding: 0 9px;
+  }
+
+  .spectator-count-switch {
+    display: none;
   }
 
   .world-stage {

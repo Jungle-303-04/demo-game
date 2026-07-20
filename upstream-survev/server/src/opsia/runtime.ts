@@ -49,6 +49,19 @@ export interface OpsiaPlayerSnapshot {
     ammo: number;
     bandages?: number;
     healthkits?: number;
+    sodas?: number;
+    painkillers?: number;
+    boost: number;
+    downed: boolean;
+    activeSlot: number;
+    primaryWeapon: string;
+    primaryAmmo: number;
+    primaryReserve: number;
+    secondaryWeapon: string;
+    secondaryAmmo: number;
+    secondaryReserve: number;
+    throwableWeapon: string;
+    throwableCount: number;
     isBot: boolean;
     connected: boolean;
 }
@@ -148,6 +161,13 @@ const jsonLog = (level: "info" | "warn" | "error", event: string, detail: Record
 };
 
 const playerSessionId = (player: Player): string => player.opsiaSessionId || player.client.findGameIp;
+
+const weaponReserve = (player: Player, weapon: string): number => {
+    const definition = GameObjectDefs.typeToDefSafe(weapon);
+    return definition?.type === "gun"
+        ? player.invManager.get(definition.ammo as InventoryItem)
+        : 0;
+};
 
 const mapObjectSize = (bounds: { min: { x: number; y: number }; max: { x: number; y: number } }) => ({
     width: Math.max(1, bounds.max.x - bounds.min.x),
@@ -397,6 +417,21 @@ export const makeOpsSnapshot = (game: Game, tickP95Ms: number, tickRate: number)
             ammo: player.weapons[player.curWeapIdx]?.ammo ?? 0,
             bandages: player.invManager.get("bandage"),
             healthkits: player.invManager.get("healthkit"),
+            sodas: player.invManager.get("soda"),
+            painkillers: player.invManager.get("painkiller"),
+            boost: player.boost,
+            downed: player.downed,
+            activeSlot: player.curWeapIdx,
+            primaryWeapon: player.weapons[0]?.type ?? "",
+            primaryAmmo: player.weapons[0]?.ammo ?? 0,
+            primaryReserve: weaponReserve(player, player.weapons[0]?.type ?? ""),
+            secondaryWeapon: player.weapons[1]?.type ?? "",
+            secondaryAmmo: player.weapons[1]?.ammo ?? 0,
+            secondaryReserve: weaponReserve(player, player.weapons[1]?.type ?? ""),
+            throwableWeapon: player.weapons[3]?.type ?? "",
+            throwableCount: player.weapons[3]?.type
+                ? player.invManager.get(player.weapons[3].type as InventoryItem)
+                : 0,
             isBot: player.bot,
             connected: !player.disconnected,
         })),

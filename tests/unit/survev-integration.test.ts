@@ -36,6 +36,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(client, /type: "opsia-spectator-key"/);
   assert.match(client, /event\.stopImmediatePropagation\(\)/);
   assert.match(client, /this\.pixi\.ticker\.maxFPS = 5/);
+  assert.match(client, /this\.pixi\.ticker\.maxFPS = this\.opsiaWallFps/);
   assert.match(client, /__opsiaDriveSpectatorFrame/);
   assert.match(client, /this\.pixi\?\.ticker\.stop\(\)/);
   assert.match(client, /this\.pixi\?\.ticker\.update\(performance\.now\(\)\)/);
@@ -56,6 +57,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(opsiaRuntime, /game\.map\.riverDescs/);
   assert.match(opsiaRuntime, /game\.map\.buildings/);
   assert.match(opsiaRuntime, /game\.lootBarn\.loots/);
+  assert.match(opsiaRuntime, /primaryReserve: weaponReserve/);
+  assert.match(opsiaRuntime, /throwableCount: player\.weapons\[3\]/);
   assert.match(adminUi, /function TacticalMap/);
   assert.match(adminUi, /function ActualGameMap/);
   assert.doesNotMatch(adminUi, /function roomMapUrl/);
@@ -69,8 +72,13 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminCss, /transition: transform 360ms linear/);
   assert.match(adminCss, /will-change: transform/);
   assert.match(adminUi, /function roomWatchUrl/);
+  assert.match(adminUi, /wallFps/);
   assert.match(adminUi, /url\.searchParams\.set\("target", player\.id\)/);
   assert.match(adminUi, /function PlayerSpectatorView/);
+  assert.match(adminUi, /function SpectatorWall/);
+  assert.match(adminUi, /\(\[1, 4, 16\] as const\)/);
+  assert.match(adminUi, /direction \* spectatorViewCount/);
+  assert.match(adminCss, /\.spectator-wall\[data-layout="16"\]/);
   assert.match(adminUi, /frameWindow\?\.__opsiaDriveSpectatorFrame\?\.\(\)/);
   assert.match(adminUi, /requestAnimationFrame\(driveSpectatorFrame\)/);
   assert.match(gameClient, /m_opsiaPlayerView/);
