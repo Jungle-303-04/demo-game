@@ -384,6 +384,7 @@ function PlayerSpectatorView({
   player,
   managed = false,
   selfDriven = false,
+  loadDelayMs = 0,
   wallFps,
   registerFrame,
 }: {
@@ -391,11 +392,38 @@ function PlayerSpectatorView({
   player: PlayerTelemetry;
   managed?: boolean;
   selfDriven?: boolean;
+  loadDelayMs?: number;
   wallFps?: number;
   registerFrame?: (playerId: string, frame: HTMLIFrameElement | null) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const initialUrlRef = useRef(roomWatchUrl(room, player, wallFps));
+  const [shouldLoad, setShouldLoad] = useState(loadDelayMs <= 0);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+
+  useEffect(() => {
+    if (loadDelayMs <= 0) {
+      setShouldLoad(true);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setShouldLoad(true), loadDelayMs);
+    return () => window.clearTimeout(timer);
+  }, [loadDelayMs]);
+
+  useEffect(() => {
+    if (!shouldLoad || loadAttempt >= 2) return undefined;
+    const timer = window.setTimeout(() => {
+      try {
+        const root = iframeRef.current?.contentDocument?.documentElement;
+        if (root && !root.classList.contains("opsia-in-game")) {
+          setLoadAttempt((attempt) => attempt + 1);
+        }
+      } catch {
+        // Cross-origin development clients cannot be inspected or retried here.
+      }
+    }, 20_000);
+    return () => window.clearTimeout(timer);
+  }, [loadAttempt, shouldLoad]);
 
   useEffect(() => {
     if (managed || selfDriven) return undefined;
@@ -423,13 +451,16 @@ function PlayerSpectatorView({
 
   return (
     <div className="player-spectator">
-      <iframe
-        allow="fullscreen"
-        ref={iframeRef}
-        src={initialUrlRef.current}
-        tabIndex={-1}
-        title={`${player.name} 실시간 관전`}
-      />
+      {shouldLoad && (
+        <iframe
+          allow="fullscreen"
+          key={loadAttempt}
+          ref={iframeRef}
+          src={`${initialUrlRef.current}&frameAttempt=${loadAttempt}`}
+          tabIndex={-1}
+          title={`${player.name} 실시간 관전`}
+        />
+      )}
       <div className="spectator-label">
         <i style={{ background: player.color }} />
         <strong>{player.name}</strong>
@@ -501,9 +532,10 @@ function SpectatorWall({
 
   return (
     <div className="spectator-wall" data-layout={players.length > 4 ? 16 : 4}>
-      {players.map((player) => (
+      {players.map((player, index) => (
         <PlayerSpectatorView
           key={`${player.id}:${players.length > 4 ? "wall16" : "wall4"}`}
+          loadDelayMs={players.length > 4 ? index * 400 : 0}
           managed={players.length <= 4}
           player={player}
           registerFrame={registerFrame}
