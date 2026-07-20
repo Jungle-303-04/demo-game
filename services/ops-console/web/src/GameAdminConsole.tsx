@@ -457,20 +457,27 @@ function PlayerSpectatorView({
 
   useEffect(() => {
     if (!frameReady) return;
+    let stopTimer = 0;
     try {
       const frameWindow = iframeRef.current?.contentWindow as SpectatorFrameWindow | null;
-      if (visible && targetFps) frameWindow?.__opsiaSetSpectatorFps?.(targetFps);
-      // Prime a hidden Canvas tile once before stopping its ticker. Its last
-      // real game frame then survives in the backing store and Tab can reveal
-      // it without a black first-paint flash.
-      if (!visible) frameWindow?.__opsiaDriveSpectatorFrame?.();
-      frameWindow?.__opsiaSetSpectatorVisible?.(visible);
       if (visible) {
+        if (targetFps) frameWindow?.__opsiaSetSpectatorFps?.(targetFps);
+        frameWindow?.__opsiaSetSpectatorVisible?.(true);
         frameWindow?.dispatchEvent(new Event("resize"));
+      } else {
+        // `opsia-in-game` is set just before the synchronous game init. Give a
+        // newly prewarmed Canvas a short live window to fill its backing store,
+        // then freeze the last real frame until it is revealed by Tab.
+        frameWindow?.__opsiaSetSpectatorVisible?.(true);
+        stopTimer = window.setTimeout(() => {
+          frameWindow?.__opsiaDriveSpectatorFrame?.();
+          frameWindow?.__opsiaSetSpectatorVisible?.(false);
+        }, 800);
       }
     } catch {
       // Cross-origin development clients cannot be resized by the console.
     }
+    return () => window.clearTimeout(stopTimer);
   }, [frameReady, targetFps, visible]);
 
   useEffect(() => {
