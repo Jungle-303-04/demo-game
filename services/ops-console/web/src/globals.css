@@ -728,10 +728,18 @@ body.opsia-pip-body .map-viewport {
 
 .player-spectator.is-hidden {
   position: absolute;
-  width: 2px;
-  height: 2px;
   opacity: 0;
   pointer-events: none;
+}
+
+.spectator-wall[data-layout="4"] .player-spectator.is-hidden {
+  width: 50%;
+  height: 50%;
+}
+
+.spectator-wall[data-layout="16"] .player-spectator.is-hidden {
+  width: 25%;
+  height: 25%;
 }
 
 .spectator-label {
