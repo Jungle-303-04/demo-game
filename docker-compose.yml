@@ -20,6 +20,7 @@ services:
       <<: [*control-environment, *session-gateway-environment]
       REQUIRE_SESSION_GATEWAY: "true"
       ROOM_ID: room-0
+      ROOM_EPOCH: "1"
       OPSIA_MAP_NAME: faction
       POD_NAME: game-0
       REDIS_URL: redis://redis:6379
@@ -32,6 +33,7 @@ services:
       <<: [*control-environment, *session-gateway-environment]
       REQUIRE_SESSION_GATEWAY: "true"
       ROOM_ID: room-1
+      ROOM_EPOCH: "1"
       OPSIA_MAP_NAME: desert
       POD_NAME: game-1
       REDIS_URL: redis://redis:6379
@@ -44,6 +46,7 @@ services:
       <<: [*control-environment, *session-gateway-environment]
       REQUIRE_SESSION_GATEWAY: "true"
       ROOM_ID: room-2
+      ROOM_EPOCH: "1"
       OPSIA_MAP_NAME: snow
       POD_NAME: game-2
       REDIS_URL: redis://redis:6379
@@ -56,6 +59,7 @@ services:
       <<: [*control-environment, *session-gateway-environment]
       REQUIRE_SESSION_GATEWAY: "true"
       ROOM_ID: room-3
+      ROOM_EPOCH: "1"
       OPSIA_MAP_NAME: main
       POD_NAME: game-3
       REDIS_URL: redis://redis:6379
@@ -68,6 +72,7 @@ services:
       <<: [*control-environment, *session-gateway-environment]
       REQUIRE_SESSION_GATEWAY: "true"
       ROOM_ID: room-4
+      ROOM_EPOCH: "1"
       OPSIA_MAP_NAME: woods
       POD_NAME: game-4
       REDIS_URL: redis://redis:6379

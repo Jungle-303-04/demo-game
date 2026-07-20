@@ -592,7 +592,7 @@ class GatewaySession {
                 zones: ["local"],
                 version: GameConfig.protocolVersion,
                 playerCount: this.data.spectator ? 0 : 1,
-                autoFill: true,
+                autoFill: false,
                 gameModeIdx: 2,
                 opsiaSessionId: this.data.sessionId,
                 spectator: this.data.spectator,
@@ -612,12 +612,28 @@ const authorized = (authorization: string): boolean => {
 
 const statusLine = (status: number): string => `${status} ${STATUS_CODES[status] ?? "Unknown"}`;
 
+const isResponseAlreadyClosed = (error: unknown): boolean =>
+    error instanceof Error && error.message.includes("uWS.HttpResponse must not be accessed");
+
+const warnResponseAlreadyClosed = (context: string, error: unknown): void => {
+    if (!isResponseAlreadyClosed(error)) throw error;
+    console.warn(JSON.stringify({
+        level: "warn",
+        event: "session_gateway_http_response_closed",
+        detail: { context },
+    }));
+};
+
 const replyJson = (response: HttpResponse, status: number, body: unknown): void => {
-    response.cork(() => {
-        response.writeStatus(statusLine(status));
-        response.writeHeader("content-type", "application/json; charset=utf-8");
-        response.end(JSON.stringify(body));
-    });
+    try {
+        response.cork(() => {
+            response.writeStatus(statusLine(status));
+            response.writeHeader("content-type", "application/json; charset=utf-8");
+            response.end(JSON.stringify(body));
+        });
+    } catch (error) {
+        warnResponseAlreadyClosed("json_reply", error);
+    }
 };
 
 const readBody = (response: HttpResponse, maxBytes = 1024 * 1024): Promise<Uint8Array> => new Promise((resolve, reject) => {
@@ -1135,54 +1151,64 @@ const proxyHttp = async (
         aborted = true;
         controller.abort();
     });
-    const route = registry.get(details.roomId);
-    if (!route) return replyJson(response, 404, { error: "gateway_room_not_found" });
-    const body = details.method === "GET" || details.method === "HEAD" ? undefined : await readBody(response);
-    let requestedSessionId: string | undefined;
-    if (/\/api\/find_game$/.test(details.pathname) && body?.byteLength) {
-        try {
-            const parsed = JSON.parse(Buffer.from(body).toString("utf8")) as { opsiaSessionId?: unknown };
-            if (typeof parsed.opsiaSessionId === "string") requestedSessionId = parsed.opsiaSessionId;
-        } catch {
-            // The upstream remains responsible for returning the canonical bad-request response.
-        }
-    }
-    const upstream = await fetch(`${route.endpoint}${details.pathname}${details.query ? `?${details.query}` : ""}`, {
-        method: details.method,
-        headers: details.contentType ? { "content-type": details.contentType } : undefined,
-        body: body?.byteLength ? Buffer.from(body) : undefined,
-        signal: controller.signal,
-    });
-    let payload = new Uint8Array(await upstream.arrayBuffer());
-    let contentType = upstream.headers.get("content-type") ?? "application/octet-stream";
-    if (/\/api\/find_game$/.test(details.pathname) && contentType.includes("application/json")) {
-        const parsed = JSON.parse(Buffer.from(payload).toString("utf8")) as {
-            res?: Array<Record<string, unknown>>;
-        };
-        const publicHost = details.forwardedHost || details.host;
-        const useHttps = details.forwardedProto === "https";
-        for (const match of parsed.res ?? []) {
-            if (requestedSessionId && typeof match.gameId === "string" && typeof match.data === "string") {
-                joinAdmissions.issue(
-                    joinAdmissionKey(details.roomId, match.gameId, match.data),
-                    requestedSessionId,
-                );
+    try {
+        const route = registry.get(details.roomId);
+        if (!route) return replyJson(response, 404, { error: "gateway_room_not_found" });
+        const body = details.method === "GET" || details.method === "HEAD" ? undefined : await readBody(response);
+        let requestedSessionId: string | undefined;
+        if (/\/api\/find_game$/.test(details.pathname) && body?.byteLength) {
+            try {
+                const parsed = JSON.parse(Buffer.from(body).toString("utf8")) as { opsiaSessionId?: unknown };
+                if (typeof parsed.opsiaSessionId === "string") requestedSessionId = parsed.opsiaSessionId;
+            } catch {
+                // The upstream remains responsible for returning the canonical bad-request response.
             }
-            match.hosts = [publicHost];
-            match.addrs = [publicHost];
-            match.useHttps = useHttps;
         }
-        payload = Buffer.from(JSON.stringify(parsed));
-        contentType = "application/json; charset=utf-8";
+        const upstream = await fetch(`${route.endpoint}${details.pathname}${details.query ? `?${details.query}` : ""}`, {
+            method: details.method,
+            headers: details.contentType ? { "content-type": details.contentType } : undefined,
+            body: body?.byteLength ? Buffer.from(body) : undefined,
+            signal: controller.signal,
+        });
+        let payload = new Uint8Array(await upstream.arrayBuffer());
+        let contentType = upstream.headers.get("content-type") ?? "application/octet-stream";
+        if (/\/api\/find_game$/.test(details.pathname) && contentType.includes("application/json")) {
+            const parsed = JSON.parse(Buffer.from(payload).toString("utf8")) as {
+                res?: Array<Record<string, unknown>>;
+            };
+            const publicHost = details.forwardedHost || details.host;
+            const useHttps = details.forwardedProto === "https";
+            for (const match of parsed.res ?? []) {
+                if (requestedSessionId && typeof match.gameId === "string" && typeof match.data === "string") {
+                    joinAdmissions.issue(
+                        joinAdmissionKey(details.roomId, match.gameId, match.data),
+                        requestedSessionId,
+                    );
+                }
+                match.hosts = [publicHost];
+                match.addrs = [publicHost];
+                match.useHttps = useHttps;
+            }
+            payload = Buffer.from(JSON.stringify(parsed));
+            contentType = "application/json; charset=utf-8";
+        }
+        if (aborted) return;
+        try {
+            response.cork(() => {
+                response.writeStatus(statusLine(upstream.status));
+                response.writeHeader("content-type", contentType);
+                const cacheControl = upstream.headers.get("cache-control");
+                if (cacheControl) response.writeHeader("cache-control", cacheControl);
+                response.end(payload);
+            });
+        } catch (error) {
+            warnResponseAlreadyClosed("proxy_reply", error);
+        }
+    } catch (error) {
+        if (!aborted) replyJson(response, 502, {
+            error: error instanceof Error ? error.message : "gateway_proxy_failed",
+        });
     }
-    if (aborted) return;
-    response.cork(() => {
-        response.writeStatus(statusLine(upstream.status));
-        response.writeHeader("content-type", contentType);
-        const cacheControl = upstream.headers.get("cache-control");
-        if (cacheControl) response.writeHeader("cache-control", cacheControl);
-        response.end(payload);
-    });
 };
 
 app.ws<GatewaySocketData>("/play/*", {
@@ -1264,9 +1290,7 @@ app.any("/*", (response, request) => {
         forwardedHost: request.getHeader("x-forwarded-host"),
         forwardedProto: request.getHeader("x-forwarded-proto"),
     };
-    void proxyHttp(response, details).catch((error) => {
-        replyJson(response, 502, { error: error instanceof Error ? error.message : "gateway_proxy_failed" });
-    });
+    void proxyHttp(response, details);
 });
 
 const port = Number(process.env.PORT ?? 8083);

@@ -312,6 +312,7 @@ export class ClientBarn {
 
         if (
             process.env.OPSIA_ROOM === "true"
+            && !player.bot
             && player.opsiaSessionId.length >= 16
         ) {
             const configuredTtl = Number.parseInt(process.env.OPSIA_SESSION_REATTACH_TTL_MS ?? "120000", 10);

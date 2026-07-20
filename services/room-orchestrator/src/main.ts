@@ -770,6 +770,7 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "POST" && room && path === `/rooms/${room.roomId}/stop`) {
       const updated = await serializeMutation(async () => {
+        if (!scaler.managed) throw new Error("room_scaling_requires_kubernetes");
         const current = await registry.get(room.roomId);
         if (!current) throw new Error("room_not_found");
         const active = activeRooms(await registry.list());

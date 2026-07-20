@@ -36,6 +36,7 @@ type BotJob = {
 const controlToken = readControlToken();
 const NORMAL_BOT_INPUT_INTERVAL_MS = 100;
 const HACK_BOT_INPUT_INTERVAL_MS = 30;
+const BOT_JOIN_READY_GRACE_MS = 100;
 type RoomAwareness = {
     snapshot?: BotBrainSnapshot;
     requestedAt: number;
@@ -75,8 +76,11 @@ class SurvevProtocolBot {
     private readonly ws: WebSocket;
     private readonly stream = new net.MsgStream(new ArrayBuffer(1024));
     private timer: NodeJS.Timeout | undefined;
+    private readyGraceTimer: NodeJS.Timeout | undefined;
     private connected = false;
     private stopped = false;
+    private inputLoopStarted = false;
+    private inputSeq = 0;
     private readySettled = false;
     private readonly readyPromise: Promise<void>;
     private resolveReady!: () => void;
@@ -126,17 +130,31 @@ class SurvevProtocolBot {
                 ],
             };
             this.send(net.MsgType.Join, join);
+            // OPSIA rooms often do not emit an immediate downstream packet
+            // until the client starts producing input. Treat a still-open
+            // socket shortly after the real Join frame as connected, then
+            // begin the normal protocol input loop. A socket that is rejected
+            // by admission closes before this grace period settles.
+            this.readyGraceTimer = setTimeout(() => this.markConnected(), BOT_JOIN_READY_GRACE_MS);
         });
-        this.ws.addEventListener("message", () => {
-            if (this.stopped || this.connected) return;
-            this.connected = true;
-            const inputInterval = this.mode === "hack"
-                ? HACK_BOT_INPUT_INTERVAL_MS
-                : NORMAL_BOT_INPUT_INTERVAL_MS;
-            this.timer = setInterval(() => this.sendInputs(), inputInterval);
-            this.settleReady();
+        this.ws.addEventListener("message", (event) => {
+            this.logDisconnectNotice(event.data);
+            this.markConnected();
         });
-        this.ws.addEventListener("close", () => {
+        this.ws.addEventListener("close", (event) => {
+            console.warn(JSON.stringify({
+                level: "warn",
+                event: "bot_connection_closed",
+                detail: {
+                    roomId: this.roomId,
+                    botId: this.id,
+                    nickname: this.nickname,
+                    connected: this.connected,
+                    code: event.code,
+                    reason: event.reason || "socket_closed",
+                    wasClean: event.wasClean,
+                },
+            }));
             this.settleReady(new Error("bot_connection_closed"));
             this.stop();
         });
@@ -179,8 +197,12 @@ class SurvevProtocolBot {
         this.stopped = true;
         this.connected = false;
         this.settleReady(new Error("bot_stopped"));
+        if (this.readyGraceTimer) clearTimeout(this.readyGraceTimer);
+        this.readyGraceTimer = undefined;
         if (this.timer) clearInterval(this.timer);
         this.timer = undefined;
+        this.inputLoopStarted = false;
+        this.inputSeq = 0;
         if (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING) this.ws.close();
         this.onStopped(this.id);
     }
@@ -192,6 +214,47 @@ class SurvevProtocolBot {
         else this.resolveReady();
     }
 
+    private markConnected(): void {
+        if (this.stopped || this.connected || this.ws.readyState !== WebSocket.OPEN) return;
+        if (this.readyGraceTimer) clearTimeout(this.readyGraceTimer);
+        this.readyGraceTimer = undefined;
+        this.connected = true;
+        this.startInputLoop();
+        this.settleReady();
+    }
+
+    private logDisconnectNotice(data: unknown): void {
+        if (!(data instanceof ArrayBuffer)) return;
+        try {
+            const stream = new net.MsgStream(data);
+            if (stream.deserializeMsgType() !== net.MsgType.Disconnect) return;
+            const notice = new net.DisconnectMsg();
+            notice.deserialize(stream.getStream());
+            console.warn(JSON.stringify({
+                level: "warn",
+                event: "bot_disconnect_notice",
+                detail: {
+                    roomId: this.roomId,
+                    botId: this.id,
+                    nickname: this.nickname,
+                    reason: notice.reason || "disconnect",
+                },
+            }));
+        } catch {
+            // Non-disconnect game frames can be ignored; they are still enough
+            // proof that the protocol socket is alive.
+        }
+    }
+
+    private startInputLoop(): void {
+        if (this.stopped || this.inputLoopStarted) return;
+        this.inputLoopStarted = true;
+        const inputInterval = this.mode === "hack"
+            ? HACK_BOT_INPUT_INTERVAL_MS
+            : NORMAL_BOT_INPUT_INTERVAL_MS;
+        this.timer = setInterval(() => this.sendInputs(), inputInterval);
+    }
+
     private send(type: net.MsgType, message: net.Msg): void {
         if (this.ws.readyState !== WebSocket.OPEN) return;
         this.stream.stream.index = 0;
@@ -200,7 +263,7 @@ class SurvevProtocolBot {
     }
 
     private sendInputs(): void {
-        if (!this.connected) return;
+        if (this.stopped || this.ws.readyState !== WebSocket.OPEN) return;
         requestRoomAwareness(this.roomId, this.roomEndpoint);
         const intent = decideBotIntent(
             roomAwareness.get(this.roomId)?.snapshot,
@@ -208,7 +271,10 @@ class SurvevProtocolBot {
             this.brain,
         );
         const sendOne = () => {
-            this.send(net.MsgType.Input, createBotInput(intent));
+            const input = createBotInput(intent);
+            this.inputSeq = (this.inputSeq + 1) & 0xff;
+            input.seq = this.inputSeq;
+            this.send(net.MsgType.Input, input);
         };
         // Hack mode is intentionally a protocol-valid input flood. The real
         // ClientBarn validation hook—not this runner—decides enforcement.
@@ -336,7 +402,7 @@ const spawn = async (
                 zones: ["local"],
                 version: GameConfig.protocolVersion,
                 playerCount: 1,
-                autoFill: true,
+                autoFill: false,
                 gameModeIdx: 2,
                 opsiaSessionId: sessionId,
             }),
@@ -398,17 +464,21 @@ const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs
     while (jobs.size > 100) jobs.delete(jobs.keys().next().value!);
     void (async () => {
         try {
+            const spawnTasks: Promise<void>[] = [];
             for (let index = 0; index < count; index++) {
                 if (job.state !== "running") return;
-                const created = await spawn(1, roomId, mode);
-                if (job.state !== "running") {
-                    for (const bot of created) bots.get(bot.id)?.stop();
-                    return;
-                }
-                job.createdBotIds.push(...created.map((bot) => bot.id));
-                job.completed += 1;
+                spawnTasks.push((async () => {
+                    const created = await spawn(1, roomId, mode);
+                    if (job.state !== "running") {
+                        for (const bot of created) bots.get(bot.id)?.stop();
+                        return;
+                    }
+                    job.createdBotIds.push(...created.map((bot) => bot.id));
+                    job.completed += 1;
+                })());
                 if (index < count - 1) await new Promise((resolve) => setTimeout(resolve, intervalMs));
             }
+            await Promise.all(spawnTasks);
             if (job.state === "running") job.state = "completed";
         } catch (error) {
             if (job.state !== "running") return;
@@ -424,6 +494,17 @@ const connectedBotCount = (roomId: string): number =>
         const summary = bot.summary();
         return summary.roomId === roomId && summary.connected;
     }).length;
+
+const warnBotPopulationRetry = (roomId: string | undefined, error: unknown) => {
+    console.warn(JSON.stringify({
+        level: "warn",
+        event: "bot_population_reconcile_retry",
+        detail: {
+            ...(roomId ? { roomId } : {}),
+            error: error instanceof Error ? error.message : "bot_reconcile_failed",
+        },
+    }));
+};
 
 const reconcileMinimumBots = async (): Promise<void> => {
     if (minimumBotsPerRoom <= 0 || reconciliationPending) return;
@@ -447,16 +528,11 @@ const reconcileMinimumBots = async (): Promise<void> => {
                     },
                 }));
             } catch (error) {
-                console.warn(JSON.stringify({
-                    level: "warn",
-                    event: "bot_population_reconcile_retry",
-                    detail: {
-                        roomId,
-                        error: error instanceof Error ? error.message : "bot_reconcile_failed",
-                    },
-                }));
+                warnBotPopulationRetry(roomId, error);
             }
         }));
+    } catch (error) {
+        warnBotPopulationRetry(undefined, error);
     } finally {
         reconciliationPending = false;
     }
