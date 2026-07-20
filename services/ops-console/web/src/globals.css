@@ -431,8 +431,7 @@ button {
   margin-top: 14px;
 }
 
-.room-card-actions button,
-.room-card-actions a {
+.room-card-actions button {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -459,6 +458,7 @@ button {
 }
 
 .room-card-join {
+  cursor: pointer;
   border-color: #111318;
   background: #111318;
   color: #fff;
@@ -469,8 +469,126 @@ button {
   background: var(--blue);
 }
 
-.room-card-actions button:focus-visible,
-.room-card-actions a:focus-visible {
+.room-card-actions button:focus-visible {
+  outline: 3px solid rgba(10, 132, 255, 0.22);
+  outline-offset: 2px;
+}
+
+.join-room-dialog {
+  width: min(400px, calc(100vw - 28px));
+  max-width: none;
+  max-height: calc(100dvh - 28px);
+  margin: auto;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 24px;
+  background: transparent;
+  color: var(--ink);
+  box-shadow: 0 28px 80px rgba(16, 25, 38, 0.28);
+}
+
+.join-room-dialog::backdrop {
+  background: rgba(13, 20, 30, 0.48);
+  backdrop-filter: blur(5px);
+}
+
+.join-dialog-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  max-height: calc(100dvh - 28px);
+  padding: 32px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: inherit;
+  background: #fff;
+  text-align: center;
+}
+
+.join-dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  cursor: pointer;
+  border: 0;
+  border-radius: 50%;
+  background: #f0f3f6;
+  color: var(--muted);
+  font: inherit;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.join-dialog-close:hover {
+  background: #e5ebf0;
+  color: var(--ink);
+}
+
+.join-dialog-eyebrow {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.join-dialog-panel h2 {
+  margin: 7px 42px 0;
+  font-size: 25px;
+  letter-spacing: -0.035em;
+}
+
+.join-dialog-panel p {
+  max-width: 290px;
+  margin: 9px 0 20px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.join-dialog-qr {
+  display: grid;
+  place-items: center;
+  width: min(252px, 100%);
+  aspect-ratio: 1;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #fff;
+}
+
+.join-dialog-qr svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.join-dialog-new-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 16px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.join-dialog-new-tab:hover {
+  background: #f2f5f7;
+  color: var(--blue);
+}
+
+.join-dialog-close:focus-visible,
+.join-dialog-new-tab:focus-visible {
   outline: 3px solid rgba(10, 132, 255, 0.22);
   outline-offset: 2px;
 }
@@ -1493,6 +1611,14 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .join-dialog-panel {
+    padding: 28px 22px 24px;
+  }
+
+  .join-dialog-qr {
+    width: min(232px, 100%);
+  }
+
   .room-toolbar {
     padding: 8px 10px;
   }
@@ -1576,6 +1702,31 @@ button {
   .world-stage {
     height: calc(100vh - 116px);
     min-height: 430px;
+  }
+}
+
+@media (max-height: 560px) {
+  .join-dialog-panel {
+    padding: 20px 22px 18px;
+  }
+
+  .join-dialog-panel h2 {
+    margin-top: 3px;
+    font-size: 21px;
+  }
+
+  .join-dialog-panel p {
+    margin: 5px 0 10px;
+  }
+
+  .join-dialog-qr {
+    width: min(180px, 46dvh);
+    padding: 10px;
+    border-radius: 14px;
+  }
+
+  .join-dialog-new-tab {
+    margin-top: 8px;
   }
 }
 

@@ -30,13 +30,18 @@ npm run test
 ## 로컬 실행
 
 ```bash
+# 휴대폰 QR 참여를 사용할 때 PC의 같은 네트워크 IPv4를 지정한다.
+# 예: PUBLIC_GAME_HOST=192.168.0.10
 docker compose up --build -d
 docker compose ps
 ```
 
+`PUBLIC_GAME_HOST`는 셸 환경 변수나 저장소 루트의 `.env`에 지정할 수 있다. 생략하면 `localhost`를 사용하므로 같은 PC에서만 참여 링크가 열린다.
+
 - React 관리자 화면: `http://localhost:8085/`
 - 중앙 방 선택 API: `http://localhost:8081/api/find-game`
-- 실제 게임: `http://localhost:8090/play/room-0/`, `http://localhost:8091/play/room-1/`, `http://localhost:8092/play/room-2/`
+- QR/참여용 실제 게임: `http://<PUBLIC_GAME_HOST>:8190/play/room-0/`, `http://<PUBLIC_GAME_HOST>:8191/play/room-1/`, `http://<PUBLIC_GAME_HOST>:8192/play/room-2/`
+- 개발·테스트용 기존 포트: `8090`, `8091`, `8092`
 
 실제 프로토콜 봇과 복구 흐름은 다음 명령으로 확인한다.
 

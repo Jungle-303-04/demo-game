@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   type GameRoom,
   type MapLayoutTelemetry,
@@ -238,7 +239,16 @@ function PlayerMarkers({
 
 function roomServiceUrl(room: GameRoom) {
   const configuredOrigin = import.meta.env.VITE_GAME_ORIGIN?.trim();
-  return new URL(room.serviceUrl, configuredOrigin || window.location.origin);
+  const url = new URL(room.serviceUrl, configuredOrigin || window.location.origin);
+  const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
+  if (
+    !configuredOrigin &&
+    loopbackHosts.has(url.hostname) &&
+    !loopbackHosts.has(window.location.hostname)
+  ) {
+    url.hostname = window.location.hostname;
+  }
+  return url;
 }
 
 function ActualGameMap({
@@ -285,10 +295,12 @@ function LiveRoomMiniMap({ room }: { room: GameRoom }) {
 function RoomCard({
   room,
   ordinal,
+  onJoin,
   onOpen,
 }: {
   room: GameRoom;
   ordinal: number;
+  onJoin: () => void;
   onOpen: () => void;
 }) {
   const { bots, humans } = playerCounts(room);
@@ -326,28 +338,103 @@ function RoomCard({
         >
           관전하기
         </button>
-        <a
-          aria-label={`${room.name} 참여하기 (새 창)`}
+        <button
+          aria-haspopup="dialog"
+          aria-label={`${room.name} 참여하기`}
           className="room-card-join"
-          href={roomServiceUrl(room).toString()}
-          onClick={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onJoin();
+          }}
+          type="button"
+        >
+          참여하기
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function JoinRoomDialog({
+  room,
+  onDismiss,
+}: {
+  room: GameRoom;
+  onDismiss: () => void;
+}) {
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const joinUrl = roomServiceUrl(room).toString();
+  const titleId = `join-room-title-${room.id}`;
+  const descriptionId = `join-room-description-${room.id}`;
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (!dialog.open) dialog.showModal();
+  }, []);
+
+  return (
+    <dialog
+      aria-describedby={descriptionId}
+      aria-labelledby={titleId}
+      className="join-room-dialog"
+      onCancel={(event) => {
+        event.preventDefault();
+        event.currentTarget.close();
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) event.currentTarget.close();
+      }}
+      onClose={onDismiss}
+      ref={dialogRef}
+    >
+      <div className="join-dialog-panel">
+        <button
+          aria-label="참여 창 닫기"
+          autoFocus
+          className="join-dialog-close"
+          onClick={() => dialogRef.current?.close()}
+          type="button"
+        >
+          <span aria-hidden="true">×</span>
+        </button>
+        <span className="join-dialog-eyebrow">게임 참여</span>
+        <h2 id={titleId}>{room.name}</h2>
+        <p id={descriptionId}>QR 코드를 스캔하면 이 방의 게임 화면으로 이동합니다.</p>
+        <div className="join-dialog-qr">
+          <QRCodeSVG
+            bgColor="#ffffff"
+            fgColor="#111318"
+            level="M"
+            marginSize={4}
+            size={220}
+            title={`${room.name} 참여 QR 코드`}
+            value={joinUrl}
+          />
+        </div>
+        <a
+          className="join-dialog-new-tab"
+          href={joinUrl}
+          onClick={() => dialogRef.current?.close()}
           rel="noopener noreferrer"
           target="_blank"
         >
-          참여하기 <span aria-hidden="true">↗</span>
+          새 탭에서 접속 <span aria-hidden="true">↗</span>
         </a>
       </div>
-    </article>
+    </dialog>
   );
 }
 
 function RoomDirectory({
   rooms,
   connection,
+  onJoinRoom,
   onOpenRoom,
 }: {
   rooms: GameRoom[];
   connection: ConnectionState;
+  onJoinRoom: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
 }) {
   if (rooms.length === 0) {
@@ -369,6 +456,7 @@ function RoomDirectory({
         {rooms.map((room, index) => (
           <RoomCard
             key={room.id}
+            onJoin={() => onJoinRoom(room.id)}
             onOpen={() => onOpenRoom(room.id)}
             ordinal={index + 1}
             room={room}
@@ -626,6 +714,7 @@ export function GameAdminConsole() {
   const [rooms, setRooms] = useState<GameRoom[]>([]);
   const [activePage, setActivePage] = useState<ConsolePage>(consolePageFromLocation);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
+  const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState("");
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [error, setError] = useState("");
@@ -634,6 +723,7 @@ export function GameAdminConsole() {
   const hasMapLayoutsRef = useRef(false);
 
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId);
+  const joiningRoom = rooms.find((room) => room.id === joiningRoomId);
   const selectedPlayer = selectedRoom?.players.find(
     (player) => player.id === selectedPlayerId,
   );
@@ -676,6 +766,7 @@ export function GameAdminConsole() {
     const handlePopState = () => {
       setActivePage(consolePageFromLocation());
       setSelectedRoomId(null);
+      setJoiningRoomId(null);
       setSelectedPlayerId("");
     };
     window.addEventListener("popstate", handlePopState);
@@ -712,6 +803,7 @@ export function GameAdminConsole() {
     }
     setActivePage(page);
     setSelectedRoomId(null);
+    setJoiningRoomId(null);
     setSelectedPlayerId("");
   }
 
@@ -789,11 +881,19 @@ export function GameAdminConsole() {
       ) : (
         <RoomDirectory
           connection={connection}
+          onJoinRoom={setJoiningRoomId}
           onOpenRoom={(roomId) => {
             setSelectedRoomId(roomId);
             setSelectedPlayerId("");
           }}
           rooms={rooms}
+        />
+      )}
+
+      {joiningRoom && (
+        <JoinRoomDialog
+          onDismiss={() => setJoiningRoomId(null)}
+          room={joiningRoom}
         />
       )}
     </main>

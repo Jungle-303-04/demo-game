@@ -20,8 +20,8 @@ services:
       OPSIA_MAP_NAME: faction
       POD_NAME: game-0
       REDIS_URL: redis://redis:6379
-      PUBLIC_BASE_URL: http://localhost:8090
-    ports: ["8090:8001"]
+      PUBLIC_BASE_URL: "http://${PUBLIC_GAME_HOST:-localhost}:8190"
+    ports: ["8090:8001", "8190:8001"]
     depends_on: { redis: { condition: service_healthy } }
   game-1:
     build: { context: ., dockerfile: services/game-server/Dockerfile }
@@ -31,8 +31,8 @@ services:
       OPSIA_MAP_NAME: desert
       POD_NAME: game-1
       REDIS_URL: redis://redis:6379
-      PUBLIC_BASE_URL: http://localhost:8091
-    ports: ["8091:8001"]
+      PUBLIC_BASE_URL: "http://${PUBLIC_GAME_HOST:-localhost}:8191"
+    ports: ["8091:8001", "8191:8001"]
     depends_on: { redis: { condition: service_healthy } }
   game-2:
     build: { context: ., dockerfile: services/game-server/Dockerfile }
@@ -42,8 +42,8 @@ services:
       OPSIA_MAP_NAME: snow
       POD_NAME: game-2
       REDIS_URL: redis://redis:6379
-      PUBLIC_BASE_URL: http://localhost:8092
-    ports: ["8092:8001"]
+      PUBLIC_BASE_URL: "http://${PUBLIC_GAME_HOST:-localhost}:8192"
+    ports: ["8092:8001", "8192:8001"]
     depends_on: { redis: { condition: service_healthy } }
 
   room-orchestrator:
@@ -59,7 +59,7 @@ services:
     environment:
       <<: *control-environment
       ORCHESTRATOR_URL: http://room-orchestrator:8082
-      PUBLIC_ROOM_URLS: "room-0=http://localhost:8090/play/room-0/,room-1=http://localhost:8091/play/room-1/,room-2=http://localhost:8092/play/room-2/"
+      PUBLIC_ROOM_URLS: "room-0=http://${PUBLIC_GAME_HOST:-localhost}:8190/play/room-0/,room-1=http://${PUBLIC_GAME_HOST:-localhost}:8191/play/room-1/,room-2=http://${PUBLIC_GAME_HOST:-localhost}:8192/play/room-2/"
     ports: ["8081:8081"]
     depends_on: { room-orchestrator: { condition: service_started } }
   bot-runner:
@@ -76,6 +76,6 @@ services:
       <<: *control-environment
       ORCHESTRATOR_URL: http://room-orchestrator:8082
       BOT_RUNNER_URL: http://bot-runner:8084
-      PUBLIC_ROOM_URLS: "room-0=http://localhost:8090/play/room-0/,room-1=http://localhost:8091/play/room-1/,room-2=http://localhost:8092/play/room-2/"
+      PUBLIC_ROOM_URLS: "room-0=http://${PUBLIC_GAME_HOST:-localhost}:8190/play/room-0/,room-1=http://${PUBLIC_GAME_HOST:-localhost}:8191/play/room-1/,room-2=http://${PUBLIC_GAME_HOST:-localhost}:8192/play/room-2/"
     ports: ["8085:8085"]
     depends_on: { room-orchestrator: { condition: service_started }, bot-runner: { condition: service_started } }
