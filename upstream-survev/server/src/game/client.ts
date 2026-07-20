@@ -423,7 +423,7 @@ export class Client {
 
                 // when spectating teammates we can have a lower cooldown
                 // since it cant be abused to know players positions
-                this._specCooldown = this.shouldSpectateTeam() ? 0.1 : 1;
+                this._specCooldown = this.spectatorOnly || this.shouldSpectateTeam() ? 0.1 : 1;
                 this._specAction = SpectateAction.None;
             }
 

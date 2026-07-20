@@ -9,15 +9,15 @@ labels:
       opsia.dev/cluster-role: game-server
 images:
   - name: ghcr.io/jungle-303-04/demo-game/game-server
-    newTag: v20260720-minimap-pathing-2
+    newTag: v20260720-minimap-pathing-3
   - name: ghcr.io/jungle-303-04/demo-game/api-server
-    newTag: v20260720-minimap-pathing-2
+    newTag: v20260720-minimap-pathing-3
   - name: ghcr.io/jungle-303-04/demo-game/bot-runner
-    newTag: v20260720-minimap-pathing-2
+    newTag: v20260720-minimap-pathing-3
   - name: ghcr.io/jungle-303-04/demo-game/ops-console
-    newTag: v20260720-minimap-pathing-2
+    newTag: v20260720-minimap-pathing-3
   - name: ghcr.io/jungle-303-04/demo-game/room-orchestrator
-    newTag: v20260720-minimap-pathing-2
+    newTag: v20260720-minimap-pathing-3
 patches:
   - target:
       group: apps

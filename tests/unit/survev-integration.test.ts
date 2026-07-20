@@ -51,6 +51,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(clientCss, /html\.opsia-watch:not\(\.opsia-in-game\) #cvs/);
   assert.match(gameClient, /m_opsiaMapView/);
   assert.match(serverClient, /client\.spectatorOnly = true/);
+  assert.match(serverClient, /this\.spectatorOnly \|\| this\.shouldSpectateTeam\(\) \? 0\.1 : 1/);
   assert.match(opsiaRuntime, /makeOpsMapSnapshot/);
   assert.match(opsiaRuntime, /game\.map\.riverDescs/);
   assert.match(opsiaRuntime, /game\.map\.buildings/);
