@@ -368,7 +368,7 @@ export class Application {
             // Keep logical game dimensions while cutting fill-rate enough for a
             // full-HD player view to hold a 60fps frame budget under load.
             const rendererRes = this.opsiaWatch
-                ? 0.7
+                ? this.opsiaWallFps > 0 && this.opsiaWallFps <= 15 ? 0.28 : 0.7
                 : window.devicePixelRatio > 1 ? 2 : 1;
 
             if (device.os == "ios") {

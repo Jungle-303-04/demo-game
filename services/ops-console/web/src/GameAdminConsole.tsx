@@ -457,7 +457,8 @@ function SpectatorWall({
   }, []);
 
   useEffect(() => {
-    budgetRef.current = players.length <= 4 ? players.length : Math.min(8, players.length);
+    const minimumBudget = players.length <= 4 ? players.length : 1;
+    budgetRef.current = minimumBudget;
     slowFramesRef.current = 0;
     fastFramesRef.current = 0;
     let animationFrame = 0;
@@ -473,10 +474,10 @@ function SpectatorWall({
         if (elapsed < 18) fastFramesRef.current += 1;
       }
       if (slowFramesRef.current >= 6) {
-        budgetRef.current = Math.max(4, Math.ceil(budgetRef.current / 2));
+        budgetRef.current = Math.max(minimumBudget, Math.ceil(budgetRef.current / 2));
         slowFramesRef.current = 0;
-      } else if (fastFramesRef.current >= 120 && budgetRef.current < frames.length) {
-        budgetRef.current = Math.min(frames.length, budgetRef.current + 2);
+      } else if (fastFramesRef.current >= 300 && budgetRef.current < frames.length) {
+        budgetRef.current = Math.min(frames.length, budgetRef.current + 1);
         fastFramesRef.current = 0;
       }
       const budget = Math.min(frames.length, Math.max(1, budgetRef.current));
