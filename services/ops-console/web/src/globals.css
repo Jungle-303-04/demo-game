@@ -241,7 +241,7 @@ button {
 
 .room-preview {
   position: relative;
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 1;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 11px;
@@ -513,6 +513,12 @@ button {
   opacity: 0.55;
 }
 
+.room-actions .pip-button.is-active {
+  border-color: var(--blue);
+  background: #eaf3ff;
+  color: var(--blue);
+}
+
 .room-actions kbd {
   padding: 5px 7px;
   border: 1px solid var(--line);
@@ -535,6 +541,51 @@ button {
 
 .console-shell.is-room-open .world-stage {
   height: calc(100vh - 62px);
+}
+
+.world-stage.is-inline-pip {
+  position: fixed;
+  z-index: 100;
+  right: 20px;
+  bottom: 20px;
+  width: min(560px, calc(100vw - 40px));
+  height: auto !important;
+  min-height: 0;
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 14px;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.45);
+}
+
+.world-stage.is-inline-pip .map-viewport {
+  width: min(100%, 100vh);
+}
+
+.pip-detached-placeholder {
+  display: grid;
+  height: calc(100vh - 62px);
+  place-items: center;
+  background: #11161c;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+body.opsia-pip-body {
+  margin: 0;
+  overflow: hidden;
+  background: #11161c;
+}
+
+body.opsia-pip-body .pip-root,
+body.opsia-pip-body .world-stage {
+  width: 100vw;
+  height: 100vh !important;
+  min-height: 0;
+}
+
+body.opsia-pip-body .map-viewport {
+  width: min(100vw, 100vh);
 }
 
 .tactical-map {
@@ -731,6 +782,13 @@ button {
   .world-stage {
     height: calc(100vh - 116px);
     min-height: 430px;
+  }
+
+  .world-stage.is-inline-pip {
+    right: 10px;
+    bottom: 10px;
+    width: calc(100vw - 20px);
+    min-height: 0;
   }
 }
 

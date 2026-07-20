@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   type GameRoom,
   type MapLayoutTelemetry,
@@ -22,6 +23,15 @@ import {
 
 type StyleWithVariables = CSSProperties & Record<`--${string}`, string | number>;
 type ConnectionState = "connecting" | "connected" | "degraded";
+
+interface DocumentPictureInPictureController {
+  requestWindow(options?: { width?: number; height?: number }): Promise<Window>;
+}
+
+interface PictureInPictureSession {
+  container: HTMLDivElement;
+  pipWindow: Window;
+}
 
 const POLL_INTERVAL_MS = 400;
 const BOT_BATCH_SIZE = 10;
@@ -465,7 +475,10 @@ function RoomViewer({
   onError: (message: string) => void;
 }) {
   const stageRef = useRef<HTMLDivElement | null>(null);
+  const pipWindowRef = useRef<Window | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [pipSession, setPipSession] = useState<PictureInPictureSession | null>(null);
+  const [isInlinePip, setIsInlinePip] = useState(false);
   const { bots, humans } = playerCounts(room);
   const alivePlayers = useMemo(
     () =>
@@ -481,13 +494,6 @@ function RoomViewer({
     const spectatorFrame = stageRef.current?.querySelector<HTMLIFrameElement>(
       ".player-spectator iframe",
     );
-    if (selectedPlayer && spectatorFrame?.contentWindow) {
-      spectatorFrame.contentWindow.postMessage({
-        type: "opsia-spectator-command",
-        action: reverse ? "prev" : "next",
-      }, roomServiceUrl(room).origin);
-      return;
-    }
     const currentIndex = alivePlayers.findIndex(
       (player) => player.id === selectedPlayer?.id,
     );
@@ -497,6 +503,12 @@ function RoomViewer({
       (startIndex + direction + alivePlayers.length) % alivePlayers.length;
     const nextPlayer = alivePlayers[nextIndex];
     if (nextPlayer) onSelectPlayer(nextPlayer.id);
+    if (selectedPlayer && spectatorFrame?.contentWindow) {
+      spectatorFrame.contentWindow.postMessage({
+        type: "opsia-spectator-command",
+        action: reverse ? "prev" : "next",
+      }, roomServiceUrl(room).origin);
+    }
   }, [alivePlayers, onSelectPlayer, room, selectedPlayer]);
 
   useEffect(() => {
@@ -511,9 +523,14 @@ function RoomViewer({
         onClearPlayer();
       }
     };
-    window.addEventListener("keydown", handleKeys);
-    return () => window.removeEventListener("keydown", handleKeys);
-  }, [onClearPlayer, selectAdjacentPlayer]);
+    const targets = [window, pipSession?.pipWindow].filter(
+      (target): target is Window => Boolean(target),
+    );
+    targets.forEach((target) => target.addEventListener("keydown", handleKeys));
+    return () => {
+      targets.forEach((target) => target.removeEventListener("keydown", handleKeys));
+    };
+  }, [onClearPlayer, pipSession, selectAdjacentPlayer]);
 
   useEffect(() => {
     const expectedOrigin = roomServiceUrl(room).origin;
@@ -538,21 +555,38 @@ function RoomViewer({
         onClearPlayer();
       }
     };
-    window.addEventListener("message", handleSpectatorMessage);
-    return () => window.removeEventListener("message", handleSpectatorMessage);
-  }, [alivePlayers, onClearPlayer, onSelectPlayer, room, selectAdjacentPlayer]);
+    const targets = [window, pipSession?.pipWindow].filter(
+      (target): target is Window => Boolean(target),
+    );
+    targets.forEach((target) => target.addEventListener("message", handleSpectatorMessage));
+    return () => {
+      targets.forEach((target) => target.removeEventListener("message", handleSpectatorMessage));
+    };
+  }, [alivePlayers, onClearPlayer, onSelectPlayer, pipSession, room, selectAdjacentPlayer]);
 
   useEffect(() => {
-    const syncFullscreen = () =>
-      setIsFullscreen(document.fullscreenElement === stageRef.current);
-    document.addEventListener("fullscreenchange", syncFullscreen);
-    return () => document.removeEventListener("fullscreenchange", syncFullscreen);
+    const documents = [document, pipSession?.pipWindow.document].filter(
+      (target): target is Document => Boolean(target),
+    );
+    const syncFullscreen = () => {
+      const ownerDocument = stageRef.current?.ownerDocument ?? document;
+      setIsFullscreen(ownerDocument.fullscreenElement === stageRef.current);
+    };
+    documents.forEach((target) => target.addEventListener("fullscreenchange", syncFullscreen));
+    return () => {
+      documents.forEach((target) => target.removeEventListener("fullscreenchange", syncFullscreen));
+    };
+  }, [pipSession]);
+
+  useEffect(() => () => {
+    pipWindowRef.current?.close();
   }, []);
 
   async function toggleFullscreen() {
     try {
-      if (document.fullscreenElement === stageRef.current) {
-        await document.exitFullscreen();
+      const ownerDocument = stageRef.current?.ownerDocument ?? document;
+      if (ownerDocument.fullscreenElement === stageRef.current) {
+        await ownerDocument.exitFullscreen();
       } else {
         await stageRef.current?.requestFullscreen();
       }
@@ -560,6 +594,62 @@ function RoomViewer({
       onError(errorMessage(error));
     }
   }
+
+  async function togglePictureInPicture() {
+    if (pipSession) {
+      pipSession.pipWindow.close();
+      pipWindowRef.current = null;
+      setPipSession(null);
+      return;
+    }
+    if (isInlinePip) {
+      setIsInlinePip(false);
+      return;
+    }
+
+    const controller = (
+      window as Window & { documentPictureInPicture?: DocumentPictureInPictureController }
+    ).documentPictureInPicture;
+    if (!controller) {
+      setIsInlinePip(true);
+      return;
+    }
+
+    try {
+      const pipWindow = await controller.requestWindow({ width: 560, height: 420 });
+      pipWindow.document.title = `${room.name} PIP`;
+      document.head
+        .querySelectorAll<HTMLLinkElement | HTMLStyleElement>('link[rel="stylesheet"], style')
+        .forEach((node) => pipWindow.document.head.append(node.cloneNode(true)));
+      pipWindow.document.body.className = "opsia-pip-body";
+      const container = pipWindow.document.createElement("div");
+      container.className = "pip-root";
+      pipWindow.document.body.append(container);
+      pipWindowRef.current = pipWindow;
+      const handleClose = () => {
+        pipWindowRef.current = null;
+        setPipSession(null);
+      };
+      pipWindow.addEventListener("pagehide", handleClose, { once: true });
+      setPipSession({ container, pipWindow });
+    } catch {
+      setIsInlinePip(true);
+    }
+  }
+
+  const isPictureInPicture = Boolean(pipSession) || isInlinePip;
+  const liveStage = (
+    <div className={`world-stage${isInlinePip ? " is-inline-pip" : ""}`} ref={stageRef}>
+      {selectedPlayer ? (
+        <PlayerSpectatorView player={selectedPlayer} room={room} />
+      ) : (
+        <TacticalMap
+          onSelectPlayer={onSelectPlayer}
+          room={room}
+        />
+      )}
+    </div>
+  );
 
   return (
     <section className="room-viewer">
@@ -577,6 +667,14 @@ function RoomViewer({
           <button disabled={botPending} onClick={onAddBots} type="button">
             {botPending ? "투입 중" : `봇 +${BOT_BATCH_SIZE}`}
           </button>
+          <button
+            aria-pressed={isPictureInPicture}
+            className={`pip-button${isPictureInPicture ? " is-active" : ""}`}
+            onClick={() => void togglePictureInPicture()}
+            type="button"
+          >
+            {isPictureInPicture ? "PIP 닫기" : "PIP"}
+          </button>
           <button onClick={() => void toggleFullscreen()} type="button">
             {isFullscreen ? "축소" : "전체화면"}
           </button>
@@ -584,16 +682,12 @@ function RoomViewer({
           <kbd>M 맵</kbd>
         </div>
       </div>
-      <div className="world-stage" ref={stageRef}>
-        {selectedPlayer ? (
-          <PlayerSpectatorView player={selectedPlayer} room={room} />
-        ) : (
-          <TacticalMap
-            onSelectPlayer={onSelectPlayer}
-            room={room}
-          />
-        )}
-      </div>
+      {pipSession ? (
+        <>
+          <div className="pip-detached-placeholder" role="status">PIP에서 실시간 관전 중</div>
+          {createPortal(liveStage, pipSession.container)}
+        </>
+      ) : liveStage}
     </section>
   );
 }

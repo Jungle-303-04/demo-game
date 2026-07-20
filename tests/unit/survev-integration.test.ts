@@ -84,6 +84,12 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /localeCompare\(right\.name, "ko"\)/);
   assert.match(adminUi, /event\.key\.toLowerCase\(\) === "m"/);
   assert.match(adminUi, /requestFullscreen\(\)/);
+  assert.match(adminUi, /documentPictureInPicture/);
+  assert.match(adminUi, /controller\.requestWindow/);
+  assert.match(adminUi, /createPortal\(liveStage, pipSession\.container\)/);
+  assert.match(adminUi, /world-stage\$\{isInlinePip \? " is-inline-pip" : ""\}/);
+  assert.match(adminCss, /\.room-preview \{[^}]*aspect-ratio: 1;/s);
+  assert.match(adminCss, /\.world-stage\.is-inline-pip \{[^}]*aspect-ratio: 1;/s);
   assert.match(adminUi, /controlPlaneClient\.addBots/);
   assert.match(adminUi, /snapshotCapturedAt > 0/);
   assert.doesNotMatch(adminUi, /ROOM_FORM_DEFAULTS|ManagementTab|Deployment|Pod|Redis/);

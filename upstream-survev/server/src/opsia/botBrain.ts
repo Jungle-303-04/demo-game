@@ -16,6 +16,7 @@ export interface BotBrainPlayer {
     ammo: number;
     bandages?: number;
     healthkits?: number;
+    isBot?: boolean;
 }
 
 export interface BotBrainSnapshot {
@@ -56,7 +57,7 @@ export interface BotBrainLoot {
     count: number;
 }
 
-export type BotIntentMode = "wander" | "loot" | "combat" | "retreat" | "zone" | "edge" | "unstuck" | "heal";
+export type BotIntentMode = "wander" | "loot" | "combat" | "flank" | "retreat" | "zone" | "edge" | "unstuck" | "heal";
 export type BotEquipIntent = "otherGun";
 export type BotUseItemIntent = "bandage" | "healthkit";
 export type BotMovementPhase = "travel" | "rest";
@@ -87,6 +88,12 @@ export interface BotBrainState {
     nextHealAt: number;
     avoidanceSign: -1 | 1;
     avoidanceUntil: number;
+    lastHealth?: number;
+    underFireUntil: number;
+    flankTargetSessionId?: string;
+    flankX?: number;
+    flankY?: number;
+    flankUntil: number;
 }
 
 export interface BotIntent {
@@ -126,12 +133,13 @@ const distance = (ax: number, ay: number, bx: number, by: number): number => Mat
 
 const angleTo = (ax: number, ay: number, bx: number, by: number): number => Math.atan2(by - ay, bx - ax);
 
-const navigationObstacles = (snapshot: BotBrainSnapshot): BotBrainMapObstacle[] => [
-    ...(snapshot.map.navigation ?? []),
-    ...(snapshot.map.objects ?? []).filter(
+const navigationObstacles = (snapshot: BotBrainSnapshot): BotBrainMapObstacle[] => {
+    const authoritativeWalls = snapshot.map.navigation ?? [];
+    if (authoritativeWalls.length > 0) return authoritativeWalls;
+    return (snapshot.map.objects ?? []).filter(
         (object) => object.kind === "building" || object.kind === "structure",
-    ),
-];
+    );
+};
 
 const insideObstacle = (
     x: number,
@@ -232,6 +240,93 @@ const hasClearShot = (
     (obstacle) => segmentHitsObstacle(self.x, self.y, target.x, target.y, obstacle),
 );
 
+const segmentIsClear = (
+    snapshot: BotBrainSnapshot,
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+): boolean => !navigationObstacles(snapshot).some(
+    (obstacle) => segmentHitsObstacle(ax, ay, bx, by, obstacle),
+);
+
+const firstBlockingObstacle = (
+    snapshot: BotBrainSnapshot,
+    self: BotBrainPlayer,
+    target: BotBrainPlayer,
+): BotBrainMapObstacle | undefined => navigationObstacles(snapshot)
+    .filter((obstacle) => segmentHitsObstacle(self.x, self.y, target.x, target.y, obstacle))
+    .sort((left, right) =>
+        distance(self.x, self.y, left.x, left.y) - distance(self.x, self.y, right.x, right.y)
+    )[0];
+
+const selectFlankWaypoint = (
+    snapshot: BotBrainSnapshot,
+    self: BotBrainPlayer,
+    target: BotBrainPlayer,
+    state: BotBrainState,
+    now: number,
+): { x: number; y: number } | undefined => {
+    if (
+        state.flankTargetSessionId === target.sessionId
+        && now < state.flankUntil
+        && state.flankX !== undefined
+        && state.flankY !== undefined
+        && distance(self.x, self.y, state.flankX, state.flankY) > 7
+        && segmentIsClear(snapshot, self.x, self.y, state.flankX, state.flankY)
+    ) {
+        return { x: state.flankX, y: state.flankY };
+    }
+
+    const blocker = firstBlockingObstacle(snapshot, self, target);
+    if (!blocker) {
+        state.flankTargetSessionId = undefined;
+        state.flankX = undefined;
+        state.flankY = undefined;
+        state.flankUntil = 0;
+        return undefined;
+    }
+
+    const padding = 8;
+    const minX = blocker.x - blocker.width / 2 - padding;
+    const maxX = blocker.x + blocker.width / 2 + padding;
+    const minY = blocker.y - blocker.height / 2 - padding;
+    const maxY = blocker.y + blocker.height / 2 + padding;
+    const directX = target.x - self.x;
+    const directY = target.y - self.y;
+    const candidates = [
+        { x: minX, y: minY },
+        { x: minX, y: maxY },
+        { x: maxX, y: minY },
+        { x: maxX, y: maxY },
+    ]
+        .filter((candidate) =>
+            candidate.x > 8
+            && candidate.y > 8
+            && candidate.x < snapshot.map.width - 8
+            && candidate.y < snapshot.map.height - 8
+            && segmentIsClear(snapshot, self.x, self.y, candidate.x, candidate.y)
+        )
+        .map((candidate) => {
+            const side = Math.sign(directX * (candidate.y - self.y) - directY * (candidate.x - self.x));
+            const sidePenalty = side !== 0 && side !== state.avoidanceSign ? 18 : 0;
+            const exposesTarget = segmentIsClear(snapshot, candidate.x, candidate.y, target.x, target.y);
+            const score = distance(self.x, self.y, candidate.x, candidate.y)
+                + distance(candidate.x, candidate.y, target.x, target.y) * 0.45
+                + sidePenalty
+                - (exposesTarget ? 90 : 0);
+            return { ...candidate, score };
+        })
+        .sort((left, right) => left.score - right.score);
+    const waypoint = candidates[0];
+    if (!waypoint) return undefined;
+    state.flankTargetSessionId = target.sessionId;
+    state.flankX = waypoint.x;
+    state.flankY = waypoint.y;
+    state.flankUntil = now + 1_500;
+    return waypoint;
+};
+
 const aimDistance = (target: Target | undefined, fallback = 48): number =>
     target ? Math.min(64, Math.max(30, target.distance)) : fallback;
 
@@ -256,6 +351,8 @@ export const createBotBrainState = (random: () => number = Math.random): BotBrai
     nextHealAt: 0,
     avoidanceSign: random() < 0.5 ? -1 : 1,
     avoidanceUntil: 0,
+    underFireUntil: 0,
+    flankUntil: 0,
 });
 
 const periodicActions = (
@@ -432,11 +529,13 @@ const selectTarget = (
     const priority = enemies.reduce<Target | undefined>((best, candidate) => {
         const score = candidate.distance
             - (100 - Math.max(0, candidate.player.health)) * 0.42
-            - (weaponKind(candidate.player.weapon) === "gun" && candidate.player.ammo > 0 ? 14 : 0);
+            - (weaponKind(candidate.player.weapon) === "gun" && candidate.player.ammo > 0 ? 14 : 0)
+            - (candidate.player.isBot === false ? 52 : 0);
         if (!best) return candidate;
         const bestScore = best.distance
             - (100 - Math.max(0, best.player.health)) * 0.42
-            - (weaponKind(best.player.weapon) === "gun" && best.player.ammo > 0 ? 14 : 0);
+            - (weaponKind(best.player.weapon) === "gun" && best.player.ammo > 0 ? 14 : 0)
+            - (best.player.isBot === false ? 52 : 0);
         return score < bestScore ? candidate : best;
     }, undefined);
     const locked = now < state.targetLockedUntil
@@ -445,7 +544,11 @@ const selectTarget = (
     const immediateThreat = nearest
         && locked
         && (nearest.distance < 70 || nearest.distance < locked.distance * 0.55);
-    const target = immediateThreat ? nearest : locked ?? priority;
+    const humanOpportunity = enemies.find(({ player, distance: targetDistance }) =>
+        player.isBot === false
+        && (!locked || targetDistance <= Math.max(220, locked.distance * 1.3))
+    );
+    const target = immediateThreat ? nearest : humanOpportunity ?? locked ?? priority;
 
     if (!target) {
         state.targetSessionId = undefined;
@@ -588,6 +691,12 @@ export const decideBotIntent = (
         state.targetLootId = undefined;
         state.lootLockedUntil = 0;
         state.healingUntil = 0;
+        state.lastHealth = undefined;
+        state.underFireUntil = 0;
+        state.flankTargetSessionId = undefined;
+        state.flankX = undefined;
+        state.flankY = undefined;
+        state.flankUntil = 0;
         if (now >= state.decisionUntil) {
             state.wanderAngle = random() * Math.PI * 2;
             state.decisionUntil = now + 1_500 + random() * 2_000;
@@ -609,6 +718,14 @@ export const decideBotIntent = (
     }
 
     updateStuckState(snapshot, self, state, now, random);
+    if (state.lastHealth !== undefined && self.health < state.lastHealth - 0.5) {
+        state.underFireUntil = now + 1_100;
+        state.strafeSign = state.strafeSign === 1 ? -1 : 1;
+        state.nextStrafeFlipAt = state.underFireUntil;
+        state.movementPhase = "travel";
+        state.movementPhaseUntil = state.underFireUntil;
+    }
+    state.lastHealth = self.health;
 
     const enemies = snapshot.players
         .filter((player) =>
@@ -814,6 +931,32 @@ export const decideBotIntent = (
         );
     }
 
+    if (target && target.distance <= combatAwarenessDistance && !hasClearShot(snapshot, self, target.player)) {
+        const waypoint = selectFlankWaypoint(snapshot, self, target.player, state, now);
+        if (waypoint) {
+            const flankAngle = angleTo(self.x, self.y, waypoint.x, waypoint.y);
+            return finishIntent(
+                state,
+                {
+                    mode: "flank",
+                    moveAngle: steerAroundWalls(snapshot, self, state, flankAngle, now),
+                    aimAngle: targetAngle,
+                    aimDistance: aimDistance(target),
+                    shoot: false,
+                    ...combatActions,
+                },
+                "force",
+                now,
+                random,
+            );
+        }
+    } else if (target) {
+        state.flankTargetSessionId = undefined;
+        state.flankX = undefined;
+        state.flankY = undefined;
+        state.flankUntil = 0;
+    }
+
     if (target && target.distance <= combatAwarenessDistance) {
         if (state.nextStrafeFlipAt <= 0) {
             state.nextStrafeFlipAt = now + 550 + random() * 900;
@@ -823,7 +966,7 @@ export const decideBotIntent = (
         }
         let moveAngle = targetAngle;
         let mode: BotIntentMode = "combat";
-        let movementPolicy: MovementPolicy = "rhythm";
+        let movementPolicy: MovementPolicy = now < state.underFireUntil ? "force" : "rhythm";
         if (selfWeapon.kind === "gun") {
             const criticalHealthRetreat = self.health <= 28
                 && target.distance <= Math.max(100, selfWeapon.effectiveRange * 1.45);
@@ -837,6 +980,9 @@ export const decideBotIntent = (
                 moveAngle += state.strafeSign * Math.PI / 2;
             } else {
                 moveAngle += state.strafeSign * 0.14;
+            }
+            if (now < state.underFireUntil && mode === "combat") {
+                moveAngle += state.strafeSign * 0.24;
             }
         }
         return finishIntent(
