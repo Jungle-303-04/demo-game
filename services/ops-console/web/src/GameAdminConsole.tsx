@@ -460,6 +460,10 @@ function PlayerSpectatorView({
     try {
       const frameWindow = iframeRef.current?.contentWindow as SpectatorFrameWindow | null;
       if (visible && targetFps) frameWindow?.__opsiaSetSpectatorFps?.(targetFps);
+      // Prime a hidden Canvas tile once before stopping its ticker. Its last
+      // real game frame then survives in the backing store and Tab can reveal
+      // it without a black first-paint flash.
+      if (!visible) frameWindow?.__opsiaDriveSpectatorFrame?.();
       frameWindow?.__opsiaSetSpectatorVisible?.(visible);
       if (visible) {
         frameWindow?.dispatchEvent(new Event("resize"));
