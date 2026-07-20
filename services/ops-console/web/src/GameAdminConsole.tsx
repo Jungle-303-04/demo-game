@@ -503,7 +503,7 @@ function SpectatorWall({
     <div className="spectator-wall" data-layout={players.length > 4 ? 16 : 4}>
       {players.map((player) => (
         <PlayerSpectatorView
-          key={player.id}
+          key={`${player.id}:${players.length > 4 ? "wall16" : "wall4"}`}
           managed={players.length <= 4}
           player={player}
           registerFrame={registerFrame}
