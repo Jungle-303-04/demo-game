@@ -457,7 +457,6 @@ function PlayerSpectatorView({
 
   useEffect(() => {
     if (!frameReady) return;
-    let stopTimer = 0;
     try {
       const frameWindow = iframeRef.current?.contentWindow as SpectatorFrameWindow | null;
       if (visible) {
@@ -465,19 +464,15 @@ function PlayerSpectatorView({
         frameWindow?.__opsiaSetSpectatorVisible?.(true);
         frameWindow?.dispatchEvent(new Event("resize"));
       } else {
-        // `opsia-in-game` is set just before the synchronous game init. Give a
-        // newly prewarmed Canvas a short live window to fill its backing store,
-        // then freeze the last real frame until it is revealed by Tab.
+        // Chrome may discard the backing store of a fully stopped transparent
+        // iframe. A 5fps warm ticker is cheap at wall resolution and guarantees
+        // a real frame is ready when Tab reveals the tile.
+        frameWindow?.__opsiaSetSpectatorFps?.(5);
         frameWindow?.__opsiaSetSpectatorVisible?.(true);
-        stopTimer = window.setTimeout(() => {
-          frameWindow?.__opsiaDriveSpectatorFrame?.();
-          frameWindow?.__opsiaSetSpectatorVisible?.(false);
-        }, 800);
       }
     } catch {
       // Cross-origin development clients cannot be resized by the console.
     }
-    return () => window.clearTimeout(stopTimer);
   }, [frameReady, targetFps, visible]);
 
   useEffect(() => {
