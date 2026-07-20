@@ -369,7 +369,7 @@ export class Application {
             // Keep logical game dimensions while cutting fill-rate enough for a
             // full-HD player view to hold a 60fps frame budget under load.
             const rendererRes = this.opsiaWatch
-                ? this.opsiaWallFps > 0 ? 0.28 : 0.7
+                ? this.opsiaWallFps > 0 && this.opsiaWallFps <= 30 ? 0.28 : 0.7
                 : window.devicePixelRatio > 1 ? 2 : 1;
 
             if (device.os == "ios") {
@@ -416,6 +416,7 @@ export class Application {
                     }
                     const frameAt = performance.now();
                     const lightweightWall = this.opsiaWallFps > 0
+                        && this.opsiaWallFps <= 30
                         && this.game?.initialized
                         && this.game.m_playing;
                     if (lightweightWall && this.pixi && this.game) {
@@ -1055,6 +1056,7 @@ export class Application {
         const dt = math.clamp(this.pixi!.ticker.elapsedMS / 1000, 0.001, 1 / 8);
         if (
             this.opsiaWallFps > 0
+            && this.opsiaWallFps <= 30
             && this.game?.initialized
             && this.game.m_playing
         ) {
