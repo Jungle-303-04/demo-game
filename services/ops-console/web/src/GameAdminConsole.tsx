@@ -532,7 +532,6 @@ function SpectatorWall({
   );
   const orderedPlayers = useMemo(
     () => {
-      if (layout === 16 || players.length <= 16) return visiblePlayers;
       const lastVisible = visiblePlayers.at(-1);
       const lastVisibleIndex = lastVisible
         ? players.findIndex((player) => player.id === lastVisible.id)
@@ -544,12 +543,12 @@ function SpectatorWall({
         if (!player) return false;
         return !visibleIds.has(player.id);
       });
-      // Browsers commonly cap simultaneous WebGL contexts at 16. Keep the
-      // current four plus the next twelve warm so Tab is instant without
-      // evicting an older context into a permanent black tile.
-      return [...visiblePlayers, ...preload].slice(0, 16);
+      // Wall tiles use the context-safe Canvas renderer. Keep one full demo
+      // room warm (hidden tickers are stopped) so both 4-up and 16-up Tab
+      // changes reuse live frames instead of showing reconnect blanks.
+      return [...visiblePlayers, ...preload].slice(0, Math.min(players.length, 20));
     },
-    [layout, players, visibleIds, visiblePlayers],
+    [players, visibleIds, visiblePlayers],
   );
 
   return (
