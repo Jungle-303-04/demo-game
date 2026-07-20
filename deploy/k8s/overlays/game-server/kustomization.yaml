@@ -15,7 +15,7 @@ images:
   - name: ghcr.io/jungle-303-04/demo-game/bot-runner
     newTag: v20260720-battle-wall-13
   - name: ghcr.io/jungle-303-04/demo-game/ops-console
-    newTag: v20260720-battle-wall-16
+    newTag: v20260720-battle-wall-17
   - name: ghcr.io/jungle-303-04/demo-game/room-orchestrator
     newTag: v20260720-battle-wall-13
 patches:

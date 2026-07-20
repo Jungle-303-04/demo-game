@@ -463,6 +463,8 @@ function PlayerSpectatorView({
         if (targetFps) frameWindow?.__opsiaSetSpectatorFps?.(targetFps);
         frameWindow?.__opsiaSetSpectatorVisible?.(true);
         frameWindow?.dispatchEvent(new Event("resize"));
+        frameWindow?.__opsiaDriveSpectatorFrame?.();
+        frameWindow?.__opsiaSetSpectatorVisible?.(true);
       } else {
         // Chrome may discard the backing store of a fully stopped transparent
         // iframe. A 5fps warm ticker is cheap at wall resolution and guarantees
