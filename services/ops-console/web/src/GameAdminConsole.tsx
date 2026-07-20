@@ -528,11 +528,25 @@ function SpectatorWall({
     [visiblePlayers],
   );
   const orderedPlayers = useMemo(
-    () => [
-      ...visiblePlayers,
-      ...players.filter((player) => !visibleIds.has(player.id)),
-    ],
-    [players, visibleIds, visiblePlayers],
+    () => {
+      if (layout === 16 || players.length <= 16) return visiblePlayers;
+      const lastVisible = visiblePlayers.at(-1);
+      const lastVisibleIndex = lastVisible
+        ? players.findIndex((player) => player.id === lastVisible.id)
+        : -1;
+      const preload = Array.from(
+        { length: players.length },
+        (_, offset) => players[(lastVisibleIndex + 1 + offset) % players.length],
+      ).filter((player): player is PlayerTelemetry => {
+        if (!player) return false;
+        return !visibleIds.has(player.id);
+      });
+      // Browsers commonly cap simultaneous WebGL contexts at 16. Keep the
+      // current four plus the next twelve warm so Tab is instant without
+      // evicting an older context into a permanent black tile.
+      return [...visiblePlayers, ...preload].slice(0, 16);
+    },
+    [layout, players, visibleIds, visiblePlayers],
   );
 
   return (
