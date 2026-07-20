@@ -464,7 +464,7 @@ export class Game {
             this.m_renderer,
         );
         this.m_decalBarn.m_update(dt, this.m_camera, this.m_renderer);
-        this.m_renderer.m_update(dt, this.m_camera, this.m_map, undefined);
+        this.m_renderer.m_update(dt, this.m_camera, this.m_map, false);
         // PIXI's application render only composites the current display tree.
         // Reproject every world layer after the camera moves or player sprites
         // remain at their previous screen-space coordinates.

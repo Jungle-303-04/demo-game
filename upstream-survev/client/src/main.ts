@@ -97,6 +97,7 @@ export class Application {
         60,
         Math.max(0, Number(new URLSearchParams(window.location.search).get("wallFps")) || 0),
     );
+    readonly opsiaWallCanvas = new URLSearchParams(window.location.search).get("wallCanvas") === "1";
     // A stable browser token is sent only to the real survev game-server's
     // reconnect adapter. It is not an account and is never used by Opsia.
     // Broadcast tabs deliberately use an ephemeral identity so changing a
@@ -391,7 +392,11 @@ export class Application {
             };
             let pixi = null;
             try {
-                pixi = createPixiApplication(false);
+                // A sixteen-player wall can exhaust the browser's process-wide
+                // WebGL context budget and evict an older tile into a black
+                // frame. Wall tiles use Pixi's low-resolution legacy canvas
+                // path; full-screen and PIP views retain accelerated WebGL.
+                pixi = createPixiApplication(this.opsiaWallCanvas);
             } catch (_e) {
                 pixi = createPixiApplication(true);
             }

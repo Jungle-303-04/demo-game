@@ -379,7 +379,10 @@ function roomWatchUrl(room: GameRoom, player: PlayerTelemetry, wallFps?: number)
   url.search = "";
   url.searchParams.set("view", "player");
   url.searchParams.set("target", player.id);
-  if (wallFps) url.searchParams.set("wallFps", String(wallFps));
+  if (wallFps) {
+    url.searchParams.set("wallFps", String(wallFps));
+    url.searchParams.set("wallCanvas", "1");
+  }
   return url.toString();
 }
 
