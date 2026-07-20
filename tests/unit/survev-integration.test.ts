@@ -138,6 +138,12 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminCss, /\.scenario-card\.is-active/);
   const roomCard = adminUi.slice(adminUi.indexOf("function RoomCard"), adminUi.indexOf("function RoomDirectory"));
   assert.match(roomCard, /<LiveRoomMiniMap room=\{room\}/);
+  assert.match(roomCard, /className="room-card-spectate"/);
+  assert.match(roomCard, /관전하기/);
+  assert.match(roomCard, /className="room-card-join"/);
+  assert.match(roomCard, /href=\{roomServiceUrl\(room\)\.toString\(\)\}/);
+  assert.match(roomCard, /참여하기/);
+  assert.match(roomCard, /target="_blank"/);
   assert.doesNotMatch(roomCard, /<iframe/);
   assert.match(deadBodies, /DEAD_BODY_TTL_SECONDS = 18/);
   assert.match(deadBodies, /this\.ageSeconds >= DEAD_BODY_TTL_SECONDS/);

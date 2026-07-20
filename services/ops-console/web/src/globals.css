@@ -424,6 +424,57 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+.room-card-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.room-card-actions button,
+.room-card-actions a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 750;
+  text-decoration: none;
+  transition: border-color 150ms ease, background 150ms ease, color 150ms ease;
+}
+
+.room-card-spectate {
+  cursor: pointer;
+  background: #f5f7f9;
+  color: var(--ink);
+}
+
+.room-card-spectate:hover {
+  border-color: #b9c9d8;
+  background: #eef3f7;
+}
+
+.room-card-join {
+  border-color: #111318;
+  background: #111318;
+  color: #fff;
+}
+
+.room-card-join:hover {
+  border-color: var(--blue);
+  background: var(--blue);
+}
+
+.room-card-actions button:focus-visible,
+.room-card-actions a:focus-visible {
+  outline: 3px solid rgba(10, 132, 255, 0.22);
+  outline-offset: 2px;
+}
+
 .map-awaiting,
 .empty-state {
   display: grid;

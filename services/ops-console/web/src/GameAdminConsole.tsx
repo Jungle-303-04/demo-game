@@ -296,13 +296,6 @@ function RoomCard({
     <article
       className="room-card"
       onClick={onOpen}
-      onKeyDown={(event) => {
-        if (event.key !== "Enter" && event.key !== " ") return;
-        event.preventDefault();
-        onOpen();
-      }}
-      role="button"
-      tabIndex={0}
     >
       <span className="room-number">{String(ordinal).padStart(2, "0")}</span>
       <div className="room-preview">
@@ -321,6 +314,28 @@ function RoomCard({
       <div className="room-card-counts">
         <span>사용자 <strong>{humans}</strong></span>
         <span>봇 <strong>{bots}</strong></span>
+      </div>
+      <div className="room-card-actions">
+        <button
+          className="room-card-spectate"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen();
+          }}
+          type="button"
+        >
+          관전하기
+        </button>
+        <a
+          aria-label={`${room.name} 참여하기 (새 창)`}
+          className="room-card-join"
+          href={roomServiceUrl(room).toString()}
+          onClick={(event) => event.stopPropagation()}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          참여하기 <span aria-hidden="true">↗</span>
+        </a>
       </div>
     </article>
   );
