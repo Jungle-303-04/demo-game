@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+    type BotBrainMapObstacle,
     type BotBrainPlayer,
     type BotBrainSnapshot,
     createBotBrainState,
@@ -22,6 +23,7 @@ const player = (overrides: Partial<BotBrainPlayer> = {}): BotBrainPlayer => ({
     ammo: 15,
     bandages: 0,
     healthkits: 0,
+    isBot: true,
     ...overrides,
 });
 
@@ -257,6 +259,59 @@ describe("Opsia protocol bot brain", () => {
         expect(choose("bot-b")).toBe(2);
     });
 
+    test("farms ammunition required by a real holstered weapon", () => {
+        const state = createBotBrainState(() => 0.5);
+        decideBotIntent(
+            snapshot({
+                loot: [
+                    { id: 31, type: "9mm", kind: "ammo", x: 510, y: 500, count: 60 },
+                    { id: 32, type: "762mm", kind: "ammo", x: 490, y: 500, count: 60 },
+                ],
+                players: [
+                    player({
+                        activeSlot: 0,
+                        primaryWeapon: "m9",
+                        primaryAmmo: 15,
+                        primaryReserve: 180,
+                        secondaryWeapon: "mosin",
+                        secondaryAmmo: 0,
+                        secondaryReserve: 0,
+                    }),
+                    player({ sessionId: "enemy", team: "blue", x: 900 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(state.targetLootId).toBe(32);
+    });
+
+    test("gives different bot identities distinct combat movement signatures", () => {
+        const chooseAngle = (sessionId: string): number => {
+            const state = createBotBrainState(() => 0.5);
+            const intent = decideBotIntent(
+                snapshot({
+                    players: [
+                        player({ sessionId }),
+                        player({ sessionId: "enemy", team: "blue", x: 600 }),
+                    ],
+                }),
+                sessionId,
+                state,
+                1_000,
+                () => 0.5,
+            );
+            return intent.moveAngle;
+        };
+
+        const angles = ["bot-a", "bot-b", "bot-c", "bot-d", "bot-e", "bot-f"]
+            .map(chooseAngle);
+        expect(Math.max(...angles) - Math.min(...angles)).toBeGreaterThan(0.2);
+    });
+
     test("alternates travel and rest without dropping combat aim", () => {
         const state = createBotBrainState(() => 0.5);
         state.movementPhase = "travel";
@@ -403,6 +458,26 @@ describe("Opsia protocol bot brain", () => {
         );
 
         expect(state.targetSessionId).toBe("wounded");
+        expect(intent.aimAngle).toBeCloseTo(Math.PI / 2);
+    });
+
+    test("prioritizes a nearby real user over a slightly closer bot", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                players: [
+                    player(),
+                    player({ sessionId: "bot-enemy", team: "blue", x: 585 }),
+                    player({ sessionId: "human-enemy", team: "blue", x: 500, y: 610, isBot: false }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(state.targetSessionId).toBe("human-enemy");
         expect(intent.aimAngle).toBeCloseTo(Math.PI / 2);
     });
 
@@ -602,7 +677,7 @@ describe("Opsia protocol bot brain", () => {
         expect(state.targetSessionId).toBeUndefined();
     });
 
-    test("does not shoot through an authoritative wall and steers around it", () => {
+    test("does not shoot through an authoritative wall and commits to a flank waypoint", () => {
         const state = createBotBrainState(() => 0.5);
         const intent = decideBotIntent(
             snapshot({
@@ -622,13 +697,50 @@ describe("Opsia protocol bot brain", () => {
             () => 0.5,
         );
 
-        expect(intent.mode).toBe("combat");
+        expect(intent.mode).toBe("flank");
         expect(intent.shoot).toBe(false);
         expect(Math.abs(intent.moveAngle)).toBeGreaterThan(1);
-        expect(state.avoidanceUntil).toBeGreaterThan(1_000);
+        expect(state.flankUntil).toBeGreaterThan(1_000);
+        expect(state.flankX).toBeDefined();
+        expect(state.flankY).toBeDefined();
     });
 
-    test("keeps a stable wall-following side instead of oscillating", () => {
+    test("reuses a snapshot spatial index instead of rescanning distant wall geometry", () => {
+        let distantGeometryReads = 0;
+        const distantWalls = Array.from({ length: 2_000 }, (_, index): BotBrainMapObstacle => ({
+            id: 1_000 + index,
+            kind: "wall",
+            get x() {
+                distantGeometryReads++;
+                return 2_000 + index % 50 * 20;
+            },
+            y: 2_000 + Math.floor(index / 50) * 20,
+            width: 4,
+            height: 4,
+        }));
+        const crowded = snapshot({
+            map: {
+                width: 5_000,
+                height: 5_000,
+                navigation: [
+                    { id: 99, kind: "wall", x: 535, y: 500, width: 6, height: 120 },
+                    ...distantWalls,
+                ],
+            },
+        });
+
+        const first = decideBotIntent(crowded, "self", createBotBrainState(() => 0.5), 1_000, () => 0.5);
+        expect(first.mode).toBe("flank");
+        expect(distantGeometryReads).toBeGreaterThanOrEqual(distantWalls.length);
+
+        distantGeometryReads = 0;
+        const cached = decideBotIntent(crowded, "self", createBotBrainState(() => 0.5), 1_000, () => 0.5);
+
+        expect(cached.mode).toBe("flank");
+        expect(distantGeometryReads).toBe(0);
+    });
+
+    test("keeps a stable flank side instead of oscillating around a wall", () => {
         const state = createBotBrainState(() => 0.5);
         const blocked = snapshot({
             capturedAt: 900,
@@ -639,10 +751,37 @@ describe("Opsia protocol bot brain", () => {
             },
         });
         const first = decideBotIntent(blocked, "self", state, 1_000, () => 0.5);
+        const firstFlankY = state.flankY;
         const second = decideBotIntent({ ...blocked, capturedAt: 1_100 }, "self", state, 1_200, () => 0.1);
 
         expect(Math.sign(first.moveAngle)).toBe(Math.sign(second.moveAngle));
-        expect(state.avoidanceUntil).toBeGreaterThan(1_200);
+        expect(state.flankY).toBe(firstFlankY);
+        expect(state.flankUntil).toBeGreaterThan(1_200);
+    });
+
+    test("force-dodges after taking damage instead of waiting in a movement rest", () => {
+        const state = createBotBrainState(() => 0.5);
+        state.movementPhase = "rest";
+        state.movementPhaseUntil = 5_000;
+        decideBotIntent(snapshot({ capturedAt: 900 }), "self", state, 1_000, () => 0.5);
+        const hit = decideBotIntent(
+            snapshot({
+                capturedAt: 1_100,
+                players: [
+                    player({ health: 82 }),
+                    player({ sessionId: "enemy", team: "blue", x: 600 }),
+                ],
+            }),
+            "self",
+            state,
+            1_200,
+            () => 0.5,
+        );
+
+        expect(hit.mode).toBe("combat");
+        expect(hit.moving).toBe(true);
+        expect(state.underFireUntil).toBeGreaterThan(1_200);
+        expect(state.strafeSign).toBe(-1);
     });
 
     test("preserves direct loot entry so bots can use building doors", () => {
@@ -668,5 +807,206 @@ describe("Opsia protocol bot brain", () => {
 
         expect(intent.mode).toBe("loot");
         expect(intent.moveAngle).toBeCloseTo(0);
+    });
+
+    test("uses authoritative wall colliders instead of a coarse building box at open doors", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                map: {
+                    width: 1_000,
+                    height: 1_000,
+                    objects: [{ id: 94, kind: "building", x: 550, y: 500, width: 90, height: 90 }],
+                    navigation: [{ id: 95, kind: "wall", x: 550, y: 540, width: 90, height: 5 }],
+                },
+                players: [
+                    player(),
+                    player({ sessionId: "enemy", team: "blue", x: 600, y: 500 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("combat");
+        expect(intent.shoot).toBe(true);
+    });
+
+    test("hunts a distant live enemy instead of wandering away from the fight", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                map: { width: 3_000, height: 3_000 },
+                zone: { x: 1_500, y: 1_500, radius: 1_450, nextX: 1_500, nextY: 1_500, nextRadius: 1_450 },
+                players: [
+                    player({ x: 1_000, y: 1_500 }),
+                    player({ sessionId: "enemy", team: "blue", x: 2_200, y: 1_500 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("hunt");
+        expect(intent.moving).toBe(true);
+        expect(Math.abs(intent.moveAngle)).toBeLessThan(0.3);
+    });
+
+    test("chooses the real secondary gun when it better fits long range", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                players: [
+                    player({
+                        activeSlot: 0,
+                        primaryWeapon: "m9",
+                        primaryAmmo: 15,
+                        primaryReserve: 30,
+                        secondaryWeapon: "mosin",
+                        secondaryAmmo: 5,
+                        secondaryReserve: 20,
+                    }),
+                    player({ sessionId: "enemy", team: "blue", x: 760 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.equip).toBe("secondary");
+    });
+
+    test("paces long-range automatic fire in observable bursts", () => {
+        const state = createBotBrainState(() => 0.5);
+        const combat = snapshot({
+            capturedAt: 900,
+            players: [
+                player({ weapon: "ak47", ammo: 30 }),
+                player({ sessionId: "enemy", team: "blue", x: 700 }),
+            ],
+        });
+        const first = decideBotIntent(combat, "self", state, 1_000, () => 0.5);
+        const pause = decideBotIntent({ ...combat, capturedAt: 1_499 }, "self", state, 1_500, () => 0.5);
+
+        expect(first.shoot).toBe(true);
+        expect(pause.shoot).toBe(false);
+        expect(state.nextBurstAt).toBeGreaterThan(1_500);
+    });
+
+    test("equips, cooks, releases, and recovers from a real frag grenade", () => {
+        const state = createBotBrainState(() => 0.5);
+        const grenadeFight = (capturedAt: number, activeSlot = 0, weapon = "m9") => snapshot({
+            capturedAt,
+            players: [
+                player({
+                    activeSlot,
+                    weapon,
+                    throwableWeapon: "frag",
+                    throwableCount: 2,
+                    primaryWeapon: "m9",
+                    primaryAmmo: 15,
+                    primaryReserve: 30,
+                }),
+                player({ sessionId: "enemy", team: "blue", teamId: 2, x: 550 }),
+                player({ sessionId: "enemy-2", team: "blue", teamId: 2, x: 555, y: 505 }),
+            ],
+        });
+
+        const equip = decideBotIntent(grenadeFight(900), "self", state, 1_000, () => 0.5);
+        const cookStart = decideBotIntent(grenadeFight(1_099, 3, "frag"), "self", state, 1_100, () => 0.5);
+        const cooking = decideBotIntent(grenadeFight(1_499, 3, "frag"), "self", state, 1_500, () => 0.5);
+        const release = decideBotIntent(grenadeFight(2_099, 3, "frag"), "self", state, 2_100, () => 0.5);
+        const recover = decideBotIntent(grenadeFight(2_199, 3, "frag"), "self", state, 2_200, () => 0.5);
+
+        expect(equip.equip).toBe("throwable");
+        expect(cookStart.shoot).toBe(true);
+        expect(cookStart.forceShootStart).toBe(true);
+        expect(cooking.shoot).toBe(true);
+        expect(release.shoot).toBe(false);
+        expect(recover.equip).toBe("lastWeapon");
+        expect(state.grenadeCooldownUntil).toBeGreaterThan(2_200);
+    });
+
+    test("never throws an explosive into an allied blast radius", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                players: [
+                    player({ throwableWeapon: "frag", throwableCount: 2 }),
+                    player({ sessionId: "enemy", team: "blue", teamId: 2, x: 550 }),
+                    player({ sessionId: "enemy-2", team: "blue", teamId: 2, x: 555 }),
+                    player({ sessionId: "ally", teamId: 1, x: 552 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).not.toBe("grenade");
+        expect(intent.equip).not.toBe("throwable");
+    });
+
+    test("crawls toward support while downed and revives a safe teammate", () => {
+        const downedState = createBotBrainState(() => 0.5);
+        const downed = decideBotIntent(
+            snapshot({
+                players: [
+                    player({ downed: true }),
+                    player({ sessionId: "ally", teamId: 1, x: 530 }),
+                ],
+            }),
+            "self",
+            downedState,
+            1_000,
+            () => 0.5,
+        );
+        const rescueState = createBotBrainState(() => 0.5);
+        const rescue = decideBotIntent(
+            snapshot({
+                players: [
+                    player(),
+                    player({ sessionId: "ally", teamId: 1, x: 504, downed: true }),
+                ],
+            }),
+            "self",
+            rescueState,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(downed.mode).toBe("downed");
+        expect(downed.moving).toBe(true);
+        expect(downed.moveAngle).toBeCloseTo(0);
+        expect(rescue.mode).toBe("rescue");
+        expect(rescue.moving).toBe(false);
+        expect(rescue.interact).toBe(true);
+    });
+
+    test("uses a real boost item during a safe tactical pause", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                players: [
+                    player({ boost: 0, sodas: 1 }),
+                    player({ sessionId: "enemy", team: "blue", x: 800 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("heal");
+        expect(intent.useItem).toBe("soda");
+        expect(intent.moving).toBe(false);
     });
 });

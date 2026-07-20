@@ -276,7 +276,7 @@ button {
 
 .room-preview {
   position: relative;
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 1;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 11px;
@@ -707,15 +707,45 @@ button {
   font-weight: 700;
 }
 
-.room-actions button:first-of-type {
+.room-actions > button:first-of-type {
   border-color: var(--blue);
   background: var(--blue);
+  color: #fff;
+}
+
+.spectator-count-switch {
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.room-actions .spectator-count-switch button {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.room-actions .spectator-count-switch button[aria-pressed="true"] {
+  background: var(--ink);
   color: #fff;
 }
 
 .room-actions button:disabled {
   cursor: wait;
   opacity: 0.55;
+}
+
+.room-actions .pip-button.is-active {
+  border-color: var(--blue);
+  background: #eaf3ff;
+  color: var(--blue);
 }
 
 .room-actions kbd {
@@ -740,6 +770,51 @@ button {
 
 .console-shell.is-room-open .world-stage {
   height: calc(100vh - 62px);
+}
+
+.world-stage.is-inline-pip {
+  position: fixed;
+  z-index: 100;
+  right: 20px;
+  bottom: 20px;
+  width: min(560px, calc(100vw - 40px));
+  height: auto !important;
+  min-height: 0;
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 14px;
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.45);
+}
+
+.world-stage.is-inline-pip .map-viewport {
+  width: min(100%, 100vh);
+}
+
+.pip-detached-placeholder {
+  display: grid;
+  height: calc(100vh - 62px);
+  place-items: center;
+  background: #11161c;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+body.opsia-pip-body {
+  margin: 0;
+  overflow: hidden;
+  background: #11161c;
+}
+
+body.opsia-pip-body .pip-root,
+body.opsia-pip-body .world-stage {
+  width: 100vw;
+  height: 100vh !important;
+  min-height: 0;
+}
+
+body.opsia-pip-body .map-viewport {
+  width: min(100vw, 100vh);
 }
 
 .tactical-map {
@@ -840,11 +915,36 @@ button {
 
 .player-spectator {
   position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .player-spectator iframe {
   display: block;
+  opacity: 0;
   pointer-events: none;
+  transition: opacity 180ms ease-out;
+}
+
+.player-spectator iframe.is-ready {
+  opacity: 1;
+}
+
+.player-spectator.is-hidden {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.spectator-wall[data-layout="4"] .player-spectator.is-hidden {
+  width: 50%;
+  height: 50%;
+}
+
+.spectator-wall[data-layout="16"] .player-spectator.is-hidden {
+  width: 25%;
+  height: 25%;
 }
 
 .spectator-label {
@@ -878,6 +978,45 @@ button {
   color: rgba(255, 255, 255, 0.58);
   font-size: 9px;
   font-weight: 750;
+}
+
+.spectator-wall {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  gap: 2px;
+  overflow: hidden;
+  background: #05070a;
+}
+
+.spectator-wall[data-layout="4"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.spectator-wall[data-layout="16"] {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-rows: repeat(4, minmax(0, 1fr));
+}
+
+.spectator-wall[data-layout="16"] .spectator-label {
+  top: 6px;
+  left: 6px;
+  gap: 4px;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
+.spectator-wall[data-layout="16"] .spectator-label strong {
+  max-width: 92px;
+  overflow: hidden;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spectator-wall[data-layout="16"] .spectator-label span {
+  display: none;
 }
 
 .world-stage:fullscreen {
@@ -1700,9 +1839,20 @@ button {
     white-space: normal;
   }
 
+  .spectator-count-switch {
+    display: none;
+  }
+
   .world-stage {
     height: calc(100vh - 116px);
     min-height: 430px;
+  }
+
+  .world-stage.is-inline-pip {
+    right: 10px;
+    bottom: 10px;
+    width: calc(100vw - 20px);
+    min-height: 0;
   }
 }
 

@@ -33,6 +33,8 @@ type BotJob = {
 };
 
 const controlToken = readControlToken();
+const NORMAL_BOT_INPUT_INTERVAL_MS = 100;
+const HACK_BOT_INPUT_INTERVAL_MS = 30;
 type RoomAwareness = {
     snapshot?: BotBrainSnapshot;
     requestedAt: number;
@@ -126,7 +128,10 @@ class SurvevProtocolBot {
         this.ws.addEventListener("message", () => {
             if (this.stopped || this.connected) return;
             this.connected = true;
-            this.timer = setInterval(() => this.sendInputs(), 30);
+            const inputInterval = this.mode === "hack"
+                ? HACK_BOT_INPUT_INTERVAL_MS
+                : NORMAL_BOT_INPUT_INTERVAL_MS;
+            this.timer = setInterval(() => this.sendInputs(), inputInterval);
             this.settleReady();
         });
         this.ws.addEventListener("close", () => {
@@ -230,7 +235,7 @@ const minimumBotsPerRoom = Math.max(
 );
 const reconcileIntervalMs = Math.max(
     1_000,
-    Math.min(30_000, Number.parseInt(process.env.OPSIA_BOT_RECONCILE_INTERVAL_MS ?? "2_000", 10) || 2_000),
+    Math.min(30_000, Number.parseInt(process.env.OPSIA_BOT_RECONCILE_INTERVAL_MS ?? "2000", 10) || 2_000),
 );
 const reconcileBatchSize = Math.max(
     1,

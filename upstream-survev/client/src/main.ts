@@ -36,6 +36,10 @@ declare global {
     interface Window {
         __opsiaDriveSpectatorFrame?: () => void;
         __opsiaDrivenSpectatorFrames?: number;
+        __opsiaSetSpectatorFps?: (fps: number) => void;
+        __opsiaWallLightFrames?: number;
+        __opsiaSetSpectatorVisible?: (visible: boolean) => void;
+        __opsiaSpectatorControllerOrigin?: string | null;
     }
 }
 
@@ -90,6 +94,26 @@ export class Application {
     readonly opsiaWatchView = new URLSearchParams(window.location.search).get("view") === "map"
         ? "map"
         : "player";
+    readonly opsiaWallFps = Math.min(
+        60,
+        Math.max(0, Number(new URLSearchParams(window.location.search).get("wallFps")) || 0),
+    );
+    readonly opsiaWallCanvas = new URLSearchParams(window.location.search).get("wallCanvas") === "1";
+    readonly opsiaControllerOrigin = (() => {
+        const value = new URLSearchParams(window.location.search).get("controllerOrigin");
+        if (!value) return null;
+        try {
+            const parsed = new URL(value);
+            if (parsed.origin !== value || !/^(https?:)$/.test(parsed.protocol)) return null;
+            if (document.referrer) {
+                const referrer = new URL(document.referrer);
+                if (/^(https?:)$/.test(referrer.protocol) && referrer.origin !== parsed.origin) return null;
+            }
+            return parsed.origin;
+        } catch {
+            return null;
+        }
+    })();
     // A stable browser token is sent only to the real survev game-server's
     // reconnect adapter. It is not an account and is never used by Opsia.
     // Broadcast tabs deliberately use an ephemeral identity so changing a
@@ -118,6 +142,7 @@ export class Application {
     }
 
     constructor() {
+        window.__opsiaSpectatorControllerOrigin = this.opsiaControllerOrigin;
         if (this.opsiaPlay) {
             document.documentElement.classList.add("opsia-play");
             document.title = "Survev quick play";
@@ -132,17 +157,24 @@ export class Application {
                 if (event.key !== "Tab" && key !== "m") return;
                 event.preventDefault();
                 event.stopImmediatePropagation();
+                if (!this.opsiaControllerOrigin) return;
                 window.parent.postMessage({
                     type: "opsia-spectator-key",
+                    version: 1,
                     key: event.key === "Tab" ? "Tab" : "m",
                     shiftKey: event.shiftKey,
-                }, "*");
+                }, this.opsiaControllerOrigin);
             }, { capture: true });
             if (this.opsiaWatchView === "player") {
                 window.addEventListener("message", (event) => {
                     if (event.source !== window.parent) return;
-                    const data = event.data as { type?: unknown; action?: unknown } | null;
-                    if (data?.type !== "opsia-spectator-command") return;
+                    if (!this.opsiaControllerOrigin || event.origin !== this.opsiaControllerOrigin) return;
+                    const data = event.data as {
+                        type?: unknown;
+                        version?: unknown;
+                        action?: unknown;
+                    } | null;
+                    if (data?.type !== "opsia-spectator-command" || data.version !== 1) return;
                     const action = data.action === "prev"
                         ? SpectateAction.Prev
                         : data.action === "next"
@@ -364,7 +396,7 @@ export class Application {
             // Keep logical game dimensions while cutting fill-rate enough for a
             // full-HD player view to hold a 60fps frame budget under load.
             const rendererRes = this.opsiaWatch
-                ? 0.7
+                ? this.opsiaWallFps > 0 && this.opsiaWallFps <= 30 ? 0.28 : 0.7
                 : window.devicePixelRatio > 1 ? 2 : 1;
 
             if (device.os == "ios") {
@@ -384,7 +416,11 @@ export class Application {
             };
             let pixi = null;
             try {
-                pixi = createPixiApplication(false);
+                // A sixteen-player wall can exhaust the browser's process-wide
+                // WebGL context budget and evict an older tile into a black
+                // frame. Wall tiles use Pixi's low-resolution legacy canvas
+                // path; full-screen and PIP views retain accelerated WebGL.
+                pixi = createPixiApplication(this.opsiaWallCanvas);
             } catch (_e) {
                 pixi = createPixiApplication(true);
             }
@@ -396,19 +432,100 @@ export class Application {
             if (this.opsiaWatch && this.opsiaWatchView === "map") {
                 this.pixi.ticker.maxFPS = 5;
             }
+            if (this.opsiaWatch && this.opsiaWatchView === "player" && this.opsiaWallFps > 0) {
+                this.pixi.ticker.maxFPS = this.opsiaWallFps;
+            }
             this.pixi.ticker.add(this.update, this);
             if (this.opsiaWatch && this.opsiaWatchView === "player") {
                 let externallyDriven = false;
+                let lastWallFrameAt = performance.now();
                 window.__opsiaDrivenSpectatorFrames = 0;
+                window.__opsiaSetSpectatorFps = (fps) => {
+                    if (this.pixi) this.pixi.ticker.maxFPS = math.clamp(fps, 1, 60);
+                };
+                window.__opsiaSetSpectatorVisible = (visible) => {
+                    if (visible) this.pixi?.ticker.start();
+                    else if (this.game?.initialized && this.game.m_playing) this.pixi?.ticker.stop();
+                };
                 window.__opsiaDriveSpectatorFrame = () => {
                     if (!externallyDriven) {
                         this.pixi?.ticker.stop();
                         externallyDriven = true;
                     }
-                    this.pixi?.ticker.update(performance.now());
+                    const frameAt = performance.now();
+                    const lightweightWall = this.opsiaWallFps > 0
+                        && this.opsiaWallFps <= 30
+                        && this.game?.initialized
+                        && this.game.m_playing;
+                    if (lightweightWall && this.pixi && this.game) {
+                        const dt = math.clamp((frameAt - lastWallFrameAt) / 1_000, 0.001, 1 / 8);
+                        this.game.updateOpsiaWall(dt);
+                        this.pixi.renderer.render(this.pixi.stage);
+                    } else {
+                        this.pixi?.ticker.update(frameAt);
+                    }
+                    lastWallFrameAt = frameAt;
                     window.__opsiaDrivenSpectatorFrames =
                         (window.__opsiaDrivenSpectatorFrames ?? 0) + 1;
                 };
+                const postWallStatus = (requestId?: unknown) => {
+                    if (!this.opsiaControllerOrigin) return;
+                    const status: {
+                        type: "opsia-spectator-status";
+                        version: 1;
+                        requestId?: string;
+                        frames: number;
+                        fps: number;
+                        at: number;
+                        playing: boolean;
+                    } = {
+                        type: "opsia-spectator-status",
+                        version: 1,
+                        frames: window.__opsiaWallLightFrames ?? 0,
+                        fps: this.pixi?.ticker.maxFPS ?? 0,
+                        at: performance.now(),
+                        playing: Boolean(this.game?.initialized && this.game.m_playing),
+                    };
+                    if (typeof requestId === "string" && requestId.length <= 64) {
+                        status.requestId = requestId;
+                    }
+                    window.parent.postMessage(status, this.opsiaControllerOrigin);
+                };
+                window.addEventListener("message", (event) => {
+                    if (event.source !== window.parent) return;
+                    if (!this.opsiaControllerOrigin || event.origin !== this.opsiaControllerOrigin) return;
+                    const data = event.data as {
+                        type?: unknown;
+                        version?: unknown;
+                        requestId?: unknown;
+                        fps?: unknown;
+                        running?: unknown;
+                        resize?: unknown;
+                        drawNow?: unknown;
+                    } | null;
+                    if (!data || data.version !== 1) return;
+                    if (data.type === "opsia-spectator-stats-request") {
+                        postWallStatus(data.requestId);
+                        return;
+                    }
+                    if (data.type !== "opsia-spectator-control") return;
+                    if (
+                        typeof data.fps === "number"
+                        && Number.isInteger(data.fps)
+                        && data.fps >= 1
+                        && data.fps <= 60
+                    ) {
+                        window.__opsiaSetSpectatorFps?.(data.fps);
+                    }
+                    if (typeof data.running === "boolean") {
+                        window.__opsiaSetSpectatorVisible?.(data.running);
+                    }
+                    if (data.resize === true) window.dispatchEvent(new Event("resize"));
+                    if (data.drawNow === true) window.__opsiaDriveSpectatorFrame?.();
+                    if (data.running === true) window.__opsiaSetSpectatorVisible?.(true);
+                    postWallStatus(data.requestId);
+                });
+                postWallStatus();
             }
             this.pixi.renderer.background.color = 7378501;
             this.resourceManager = new ResourceManager(
@@ -1033,6 +1150,21 @@ export class Application {
 
     update() {
         const dt = math.clamp(this.pixi!.ticker.elapsedMS / 1000, 0.001, 1 / 8);
+        if (
+            this.opsiaWallFps > 0
+            && this.opsiaWallFps <= 30
+            && this.game?.initialized
+            && this.game.m_playing
+        ) {
+            if (this.active) {
+                this.setAppActive(false);
+                this.setPlayLockout(true);
+            }
+            this.game.updateOpsiaWall(dt);
+            window.__opsiaWallLightFrames = (window.__opsiaWallLightFrames ?? 0) + 1;
+            this.input!.flush();
+            return;
+        }
         this.pingTest.update(dt);
         if (!this.checkedPingTest && this.pingTest.isComplete()) {
             if (!this.config.get("regionSelected")) {

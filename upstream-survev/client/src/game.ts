@@ -392,6 +392,85 @@ export class Game {
         );
     }
 
+    updateOpsiaWall(dt: number) {
+        const debug = {} as DebugRenderOpts;
+        if (this.m_playing) this.m_playingTicker += dt;
+        this.m_playerBarn.m_update(
+            dt,
+            this.m_activeId,
+            this.m_renderer,
+            this.m_particleBarn,
+            this.m_camera,
+            this.m_map,
+            this.m_inputBinds,
+            this.m_audioManager,
+            this.m_ui2Manager,
+            false,
+            false,
+            this.m_spectating,
+        );
+        this.m_camera.m_pos = v2.copy(this.m_activePlayer.m_visualPos);
+        const zoom = this.m_activePlayer.m_getZoom();
+        const minDim = math.min(this.m_camera.m_screenWidth, this.m_camera.m_screenHeight);
+        const maxDim = math.max(this.m_camera.m_screenWidth, this.m_camera.m_screenHeight);
+        const maxScreenDim = math.max(minDim * (16 / 9), maxDim);
+        this.m_camera.m_targetZoom = (maxScreenDim * 0.5) / (zoom * this.m_camera.m_ppu);
+        // Wall tiles must frame the active spectator immediately. A slow zoom
+        // interpolation exposes the map origin and oversized sprites while a
+        // tile is joining or being revealed.
+        this.m_camera.m_zoom = this.m_camera.m_targetZoom;
+        this.m_bulletBarn.m_update(
+            dt,
+            this.m_playerBarn,
+            this.m_map,
+            this.m_camera,
+            this.m_activePlayer,
+            this.m_renderer,
+            this.m_particleBarn,
+            this.m_audioManager,
+        );
+        this.m_projectileBarn.m_update(
+            dt,
+            this.m_particleBarn,
+            this.m_audioManager,
+            this.m_activePlayer,
+            this.m_map,
+            this.m_renderer,
+            this.m_camera,
+        );
+        this.m_explosionBarn.m_update(
+            dt,
+            this.m_map,
+            this.m_playerBarn,
+            this.m_camera,
+            this.m_particleBarn,
+            this.m_audioManager,
+            debug,
+        );
+        this.m_shotBarn.m_update(
+            dt,
+            this.m_activeId,
+            this.m_playerBarn,
+            this.m_particleBarn,
+            this.m_audioManager,
+        );
+        this.m_particleBarn.m_update(dt, this.m_camera);
+        this.m_deadBodyBarn.m_update(
+            dt,
+            this.m_playerBarn,
+            this.m_activePlayer,
+            this.m_map,
+            this.m_camera,
+            this.m_renderer,
+        );
+        this.m_decalBarn.m_update(dt, this.m_camera, this.m_renderer);
+        this.m_renderer.m_update(dt, this.m_camera, this.m_map, false);
+        // PIXI's application render only composites the current display tree.
+        // Reproject every world layer after the camera moves or player sprites
+        // remain at their previous screen-space coordinates.
+        this.m_render(dt, debug, false);
+    }
+
     update(dt: number) {
         this.debugHUD.m_update(dt, this);
 
@@ -991,7 +1070,7 @@ export class Game {
         this.m_render(dt, debug);
     }
 
-    m_render(dt: number, debug: DebugRenderOpts) {
+    m_render(dt: number, debug: DebugRenderOpts, renderUi = true) {
         const grassColor = this.m_map.mapLoaded
             ? this.m_map.getMapDef().biome.colors.grass
             : 0x80af49;
@@ -1003,12 +1082,14 @@ export class Game {
         this.m_decalBarn.m_render(this.m_camera, debug, this.m_activePlayer.layer);
         this.m_map.m_render(this.m_camera);
         this.m_gas.m_render(dt, this.m_camera);
-        this.m_uiManager.m_render(
-            this.m_activePlayer.m_pos,
-            this.m_gas,
-            this.m_map,
-            this.m_planeBarn,
-        );
+        if (renderUi) {
+            this.m_uiManager.m_render(
+                this.m_activePlayer.m_pos,
+                this.m_gas,
+                this.m_map,
+                this.m_planeBarn,
+            );
+        }
         this.m_emoteBarn.m_render(this.m_camera);
         if (IS_DEV) {
             this.m_debugDisplay.clear();
