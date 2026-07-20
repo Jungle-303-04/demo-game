@@ -48,7 +48,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(audioManager, /this\.forcedMute = this\.permanentlyMuted \|\| mute/);
   assert.match(audioManager, /if \(this\.permanentlyMuted\) \{\s*this\.preloadedSounds = true;\s*return;/s);
   assert.match(client, /const rendererRes = this\.opsiaWatch\s*\? this\.opsiaWallFps > 0/s);
-  assert.match(client, /this\.opsiaWallFps <= 15 \? 0\.28 : 0\.7/);
+  assert.match(client, /this\.opsiaWallFps <= 30 \? 0\.28 : 0\.7/);
+  assert.match(client, /__opsiaWallLightFrames/);
   assert.match(clientCss, /html\.opsia-watch-player #game-area-wrapper > \*/);
   assert.match(clientCss, /html\.opsia-watch-map #ui-game > :not\(#big-map\)/);
   assert.match(clientCss, /html\.opsia-watch:not\(\.opsia-in-game\) #cvs/);

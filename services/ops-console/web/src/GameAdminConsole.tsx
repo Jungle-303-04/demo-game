@@ -383,12 +383,14 @@ function PlayerSpectatorView({
   room,
   player,
   managed = false,
+  selfDriven = false,
   wallFps,
   registerFrame,
 }: {
   room: GameRoom;
   player: PlayerTelemetry;
   managed?: boolean;
+  selfDriven?: boolean;
   wallFps?: number;
   registerFrame?: (playerId: string, frame: HTMLIFrameElement | null) => void;
 }) {
@@ -396,7 +398,7 @@ function PlayerSpectatorView({
   const initialUrlRef = useRef(roomWatchUrl(room, player, wallFps));
 
   useEffect(() => {
-    if (managed) return undefined;
+    if (managed || selfDriven) return undefined;
     let animationFrame = 0;
     const driveSpectatorFrame = () => {
       try {
@@ -411,7 +413,7 @@ function PlayerSpectatorView({
     };
     animationFrame = window.requestAnimationFrame(driveSpectatorFrame);
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [managed]);
+  }, [managed, selfDriven]);
 
   useEffect(() => {
     if (!managed || !registerFrame) return undefined;
@@ -502,11 +504,12 @@ function SpectatorWall({
       {players.map((player) => (
         <PlayerSpectatorView
           key={player.id}
-          managed
+          managed={players.length <= 4}
           player={player}
           registerFrame={registerFrame}
           room={room}
-          wallFps={players.length > 4 ? 15 : 60}
+          selfDriven={players.length > 4}
+          wallFps={players.length > 4 ? 30 : 60}
         />
       ))}
     </div>
