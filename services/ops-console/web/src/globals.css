@@ -475,7 +475,7 @@ button {
 }
 
 .join-room-dialog {
-  width: min(400px, calc(100vw - 28px));
+  width: min(940px, calc(100vw - 28px));
   max-width: none;
   max-height: calc(100dvh - 28px);
   margin: auto;
@@ -499,7 +499,7 @@ button {
   flex-direction: column;
   align-items: center;
   max-height: calc(100dvh - 28px);
-  padding: 32px;
+  padding: 34px 40px;
   overflow-y: auto;
   border: 1px solid rgba(255, 255, 255, 0.72);
   border-radius: inherit;
@@ -545,7 +545,7 @@ button {
 }
 
 .join-dialog-panel p {
-  max-width: 290px;
+  max-width: 520px;
   margin: 9px 0 20px;
   color: var(--muted);
   font-size: 13px;
@@ -555,7 +555,8 @@ button {
 .join-dialog-qr {
   display: grid;
   place-items: center;
-  width: min(252px, 100%);
+  width: min(50vw, calc(100dvh - 220px), 860px);
+  max-width: 100%;
   aspect-ratio: 1;
   padding: 16px;
   border: 1px solid var(--line);
@@ -1616,7 +1617,7 @@ button {
   }
 
   .join-dialog-qr {
-    width: min(232px, 100%);
+    width: min(76vw, calc(100dvh - 220px), 360px);
   }
 
   .room-toolbar {

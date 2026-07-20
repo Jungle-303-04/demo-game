@@ -158,6 +158,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.doesNotMatch(joinDialog, /if \(dialog\.open\) dialog\.close\(\)/);
   assert.match(adminCss, /max-height: calc\(100dvh - 28px\)/);
   assert.match(adminCss, /overflow-y: auto/);
+  assert.match(adminCss, /width: min\(50vw, calc\(100dvh - 220px\), 860px\)/);
   assert.match(compose, /PUBLIC_GAME_HOST:-localhost/);
   assert.match(compose, /"8190:8001"/);
   assert.match(deadBodies, /DEAD_BODY_TTL_SECONDS = 18/);
