@@ -2,6 +2,8 @@ import { DisconnectMsg } from "../../../shared/net/disconnectMsg.ts";
 import { MsgStream, MsgType } from "../../../shared/net/net.ts";
 
 export abstract class ClientSocket<T> {
+    /** Stable identity authenticated by the Session Gateway upgrade. */
+    gatewaySessionId?: string;
     private _userData!: T;
     setUserData(data: T) {
         this._userData = data;

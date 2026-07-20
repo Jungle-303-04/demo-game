@@ -11,7 +11,11 @@ spec:
         - name: bot-runner
           image: ghcr.io/jungle-303-04/demo-game/bot-runner:stable
           env:
-            - { name: OPSIA_ROOM_ENDPOINTS, value: "room-0=http://game-0.game-headless.sandbox.svc.cluster.local:8001,room-1=http://game-1.game-headless.sandbox.svc.cluster.local:8001,room-2=http://game-2.game-headless.sandbox.svc.cluster.local:8001" }
+            - { name: OPSIA_ROOM_DIRECTORY_URL, value: http://room-orchestrator:8082 }
+            - { name: SESSION_GATEWAY_INTERNAL_URL, value: http://session-gateway:8083 }
+            - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
+            - name: OPS_CONTROL_TOKEN
+              valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
           ports: [{ name: http, containerPort: 8084 }]
 ---
 apiVersion: v1

@@ -6,6 +6,8 @@ resources:
   - redis.yaml
   - game.yaml
   - services.yaml
+  - canary.yaml
+  - session-gateway.yaml
   - rbac.yaml
   - management-server.yaml
   - gateway.yaml

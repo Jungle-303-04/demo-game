@@ -1,0 +1,122 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canary-room
+  namespace: sandbox
+  labels:
+    app: game-server
+    app.kubernetes.io/part-of: demo-game
+    opsia.dev/fleet: canary
+    opsia.dev/room-id: canary-room
+    opsia.dev/room-profile: faction
+    opsia.dev/public: disabled
+    opsia.dev/matchmaking: disabled
+    opsia.dev/canary-id: bootstrap
+    opsia.dev/revision: stable
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: game-server, opsia.dev/fleet: canary, opsia.dev/room-id: canary-room } }
+  template:
+    metadata:
+      labels:
+        app: game-server
+        app.kubernetes.io/part-of: demo-game
+        opsia.dev/fleet: canary
+        opsia.dev/room-id: canary-room
+        opsia.dev/room-profile: faction
+        opsia.dev/public: disabled
+        opsia.dev/matchmaking: disabled
+        opsia.dev/canary-id: bootstrap
+        opsia.dev/revision: stable
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: game-server
+          image: ghcr.io/jungle-303-04/demo-game/game-server:stable
+          imagePullPolicy: Always
+          env:
+            - { name: ROOM_ID, value: canary-room }
+            - { name: OPSIA_MAP_NAME, value: faction }
+            - { name: OPSIA_ROOM_PROFILE, value: faction }
+            - { name: OPSIA_CANARY, value: "true" }
+            - { name: OPSIA_PUBLIC_MATCHMAKING, value: "false" }
+            - { name: OPSIA_REDIS_KEY_PREFIX, value: "room:canary-room:" }
+            - { name: REDIS_URL, value: redis://redis:6379/1 }
+            - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+            - { name: STRICT_MODE, value: "false" }
+            - { name: OPSIA_ROOM, value: "true" }
+            - { name: OPSIA_INFINITE, value: "true" }
+            - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
+            - { name: REQUIRE_SESSION_GATEWAY, value: "false" }
+            - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
+            - name: OPS_CONTROL_TOKEN
+              valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
+          ports: [{ containerPort: 8001, name: http }]
+          resources:
+            # Canary must reproduce live behavior with the same limits. Its
+            # Redis database and room key namespace remain isolated.
+            requests: { cpu: "1", memory: 2Gi }
+            limits: { cpu: "3", memory: 4Gi }
+          readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 5, periodSeconds: 2, failureThreshold: 30 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 30, periodSeconds: 10 }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: canary-room
+  namespace: sandbox
+  labels: { app: game-server, opsia.dev/fleet: canary, opsia.dev/public: disabled }
+spec:
+  type: ClusterIP
+  selector: { app: game-server, opsia.dev/fleet: canary, opsia.dev/room-id: canary-room }
+  ports: [{ name: http, port: 8001, targetPort: http }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: canary-validation-bot
+  namespace: sandbox
+  labels:
+    app: canary-validation-bot
+    app.kubernetes.io/part-of: demo-game
+    opsia.dev/fleet: canary
+    opsia.dev/validation-only: "true"
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: canary-validation-bot } }
+  template:
+    metadata:
+      labels:
+        app: canary-validation-bot
+        app.kubernetes.io/part-of: demo-game
+        opsia.dev/fleet: canary
+        opsia.dev/validation-only: "true"
+    spec:
+      containers:
+        - name: bot-runner
+          image: ghcr.io/jungle-303-04/demo-game/bot-runner:stable
+          imagePullPolicy: Always
+          env:
+            - { name: OPSIA_ROOM_ENDPOINTS, value: "canary-room=http://canary-room:8001" }
+            - { name: OPSIA_MIN_BOTS_PER_ROOM, value: "10" }
+            - { name: OPSIA_BOT_RECONCILE_INTERVAL_MS, value: "2000" }
+            - { name: OPSIA_BOT_RECONCILE_BATCH_SIZE, value: "5" }
+            - { name: OPSIA_VALIDATION_ONLY, value: "true" }
+            - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
+            - name: OPS_CONTROL_TOKEN
+              valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
+          ports: [{ name: http, containerPort: 8084 }]
+          readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 2 }
+          resources: { requests: { cpu: 250m, memory: 256Mi }, limits: { cpu: "1", memory: 1Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: canary-validation-bot
+  namespace: sandbox
+  labels: { app: canary-validation-bot, opsia.dev/fleet: canary, opsia.dev/validation-only: "true" }
+spec:
+  type: ClusterIP
+  selector: { app: canary-validation-bot }
+  ports: [{ name: http, port: 8084, targetPort: http }]

@@ -238,7 +238,7 @@ export class FailureScenarioController {
           );
           run.status = "recovering";
           run.evidence = evidence;
-          return this.started(room.id, run, "게임 Pod를 삭제했습니다. StatefulSet 자동 복구를 기다리는 중입니다.");
+          return this.started(room.id, run, "게임 Pod를 삭제했습니다. Room Deployment 자동 복구를 기다리는 중입니다.");
         }
       }
     } catch (error) {

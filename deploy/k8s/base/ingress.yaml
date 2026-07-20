@@ -7,9 +7,8 @@ metadata:
     kubernetes.io/ingress.class: nginx
     nginx.ingress.kubernetes.io/server-snippet: |
       resolver kube-dns.kube-system.svc.cluster.local valid=10s;
-      location ~ ^/(?:play|watch)/room-([0-9]+)(?:/.*)?$ {
-        set $game_pod game-$1.game-headless.sandbox.svc.cluster.local;
-        proxy_pass http://$game_pod:8001;
+      location ~ ^/(?:play|watch)/room-[0-9]+(?:/.*)?$ {
+        proxy_pass http://session-gateway.sandbox.svc.cluster.local:8083;
       }
 spec:
   rules:
@@ -17,10 +16,10 @@ spec:
         paths:
           - path: /play
             pathType: Prefix
-            backend: { service: { name: api-server, port: { name: http } } }
+            backend: { service: { name: session-gateway, port: { name: http } } }
           - path: /watch
             pathType: Prefix
-            backend: { service: { name: api-server, port: { name: http } } }
+            backend: { service: { name: session-gateway, port: { name: http } } }
           - path: /api/find-game
             pathType: Prefix
             backend: { service: { name: api-server, port: { name: http } } }

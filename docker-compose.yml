@@ -1,6 +1,8 @@
 x-control-environment: &control-environment
   REQUIRE_CONTROL_TOKEN: "true"
   OPS_CONTROL_TOKEN: "${OPS_CONTROL_TOKEN:-demo-game-local-control-token}"
+x-session-gateway-environment: &session-gateway-environment
+  SESSION_GATEWAY_SHARED_SECRET: "${SESSION_GATEWAY_SHARED_SECRET:-demo-game-local-gateway-secret-change-me-32-bytes}"
 
 services:
   redis:
@@ -15,35 +17,62 @@ services:
   game-0:
     build: { context: ., dockerfile: services/game-server/Dockerfile }
     environment:
-      <<: *control-environment
+      <<: [*control-environment, *session-gateway-environment]
+      REQUIRE_SESSION_GATEWAY: "true"
       ROOM_ID: room-0
       OPSIA_MAP_NAME: faction
       POD_NAME: game-0
       REDIS_URL: redis://redis:6379
-      PUBLIC_BASE_URL: "http://${PUBLIC_GAME_HOST:-localhost}:8190"
-    ports: ["8090:8001", "8190:8001"]
+      PUBLIC_BASE_URL: "http://${PUBLIC_GAME_HOST:-localhost}:8083"
+    ports: ["127.0.0.1:8090:8001"]
     depends_on: { redis: { condition: service_healthy } }
   game-1:
     build: { context: ., dockerfile: services/game-server/Dockerfile }
     environment:
-      <<: *control-environment
+      <<: [*control-environment, *session-gateway-environment]
+      REQUIRE_SESSION_GATEWAY: "true"
       ROOM_ID: room-1
       OPSIA_MAP_NAME: desert
       POD_NAME: game-1
       REDIS_URL: redis://redis:6379
-      PUBLIC_BASE_URL: "http://${PUBLIC_GAME_HOST:-localhost}:8191"
-    ports: ["8091:8001", "8191:8001"]
+      PUBLIC_BASE_URL: "http://${PUBLIC_GAME_HOST:-localhost}:8083"
+    ports: ["127.0.0.1:8091:8001"]
     depends_on: { redis: { condition: service_healthy } }
   game-2:
     build: { context: ., dockerfile: services/game-server/Dockerfile }
     environment:
-      <<: *control-environment
+      <<: [*control-environment, *session-gateway-environment]
+      REQUIRE_SESSION_GATEWAY: "true"
       ROOM_ID: room-2
       OPSIA_MAP_NAME: snow
       POD_NAME: game-2
       REDIS_URL: redis://redis:6379
-      PUBLIC_BASE_URL: "http://${PUBLIC_GAME_HOST:-localhost}:8192"
-    ports: ["8092:8001", "8192:8001"]
+      PUBLIC_BASE_URL: "http://${PUBLIC_GAME_HOST:-localhost}:8083"
+    ports: ["127.0.0.1:8092:8001"]
+    depends_on: { redis: { condition: service_healthy } }
+  game-3:
+    build: { context: ., dockerfile: services/game-server/Dockerfile }
+    environment:
+      <<: [*control-environment, *session-gateway-environment]
+      REQUIRE_SESSION_GATEWAY: "true"
+      ROOM_ID: room-3
+      OPSIA_MAP_NAME: main
+      POD_NAME: game-3
+      REDIS_URL: redis://redis:6379
+      PUBLIC_BASE_URL: "http://${PUBLIC_GAME_HOST:-localhost}:8083"
+    ports: ["127.0.0.1:8093:8001"]
+    depends_on: { redis: { condition: service_healthy } }
+  game-4:
+    build: { context: ., dockerfile: services/game-server/Dockerfile }
+    environment:
+      <<: [*control-environment, *session-gateway-environment]
+      REQUIRE_SESSION_GATEWAY: "true"
+      ROOM_ID: room-4
+      OPSIA_MAP_NAME: woods
+      POD_NAME: game-4
+      REDIS_URL: redis://redis:6379
+      PUBLIC_BASE_URL: "http://${PUBLIC_GAME_HOST:-localhost}:8083"
+    ports: ["127.0.0.1:8094:8001"]
     depends_on: { redis: { condition: service_healthy } }
 
   room-orchestrator:
@@ -51,31 +80,48 @@ services:
     environment:
       <<: *control-environment
       REDIS_URL: redis://redis:6379
-      INITIAL_ROOMS: "3"
+      MAX_ROOMS: "5"
+      INITIAL_ROOMS: "5"
       GAME_ENDPOINT_TEMPLATE: "http://game-{ordinal}:8001"
-    depends_on: { redis: { condition: service_healthy }, game-0: { condition: service_started }, game-1: { condition: service_started }, game-2: { condition: service_started } }
+      GAME_WORKLOAD_NAME_TEMPLATE: "game-{ordinal}"
+      SESSION_GATEWAY_INTERNAL_URL: http://session-gateway:8083
+      REQUIRE_CANARY_APPROVAL: "false"
+      OPSIA_EVENT_ENDPOINT: "${OPSIA_EVENT_ENDPOINT:-}"
+      OPSIA_AGENT_TOKEN: "${OPSIA_AGENT_TOKEN:-}"
+      OPSIA_WORKSPACE_ID: "${OPSIA_WORKSPACE_ID:-demo-game}"
+      OPSIA_CLUSTER_ID: "${OPSIA_CLUSTER_ID:-game-server}"
+      OPSIA_APPLICATION_ID: "${OPSIA_APPLICATION_ID:-demo-game}"
+    depends_on: { redis: { condition: service_healthy }, game-0: { condition: service_started }, game-1: { condition: service_started }, game-2: { condition: service_started }, game-3: { condition: service_started }, game-4: { condition: service_started } }
+  session-gateway:
+    build: { context: ., dockerfile: services/session-gateway/Dockerfile }
+    environment:
+      <<: [*control-environment, *session-gateway-environment]
+      SESSION_ROOM_ENDPOINTS: "room-0=http://game-0:8001,room-1=http://game-1:8001,room-2=http://game-2:8001,room-3=http://game-3:8001,room-4=http://game-4:8001"
+    ports: ["8083:8083"]
+    depends_on: { game-0: { condition: service_started }, game-1: { condition: service_started }, game-2: { condition: service_started }, game-3: { condition: service_started }, game-4: { condition: service_started } }
   api-server:
     build: { context: ., dockerfile: services/api-server/Dockerfile }
     environment:
       <<: *control-environment
       ORCHESTRATOR_URL: http://room-orchestrator:8082
-      PUBLIC_ROOM_URLS: "room-0=http://${PUBLIC_GAME_HOST:-localhost}:8190/play/room-0/,room-1=http://${PUBLIC_GAME_HOST:-localhost}:8191/play/room-1/,room-2=http://${PUBLIC_GAME_HOST:-localhost}:8192/play/room-2/"
+      PUBLIC_ROOM_URLS: "room-0=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-0/,room-1=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-1/,room-2=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-2/,room-3=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-3/,room-4=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-4/"
     ports: ["8081:8081"]
     depends_on: { room-orchestrator: { condition: service_started } }
   bot-runner:
     build: { context: ., dockerfile: services/bot-runner/Dockerfile }
     environment:
       <<: *control-environment
-      OPSIA_ROOM_ENDPOINTS: "room-0=http://game-0:8001,room-1=http://game-1:8001,room-2=http://game-2:8001"
-      OPSIA_MIN_BOTS_PER_ROOM: "10"
+      OPSIA_ROOM_DIRECTORY_URL: http://room-orchestrator:8082
+      SESSION_GATEWAY_INTERNAL_URL: http://session-gateway:8083
+      OPSIA_MIN_BOTS_PER_ROOM: "${OPSIA_MIN_BOTS_PER_ROOM:-10}"
     ports: ["8084:8084"]
-    depends_on: { game-0: { condition: service_started }, game-1: { condition: service_started }, game-2: { condition: service_started } }
+    depends_on: { room-orchestrator: { condition: service_started }, session-gateway: { condition: service_started } }
   ops-console:
     build: { context: ., dockerfile: services/ops-console/Dockerfile }
     environment:
       <<: *control-environment
       ORCHESTRATOR_URL: http://room-orchestrator:8082
       BOT_RUNNER_URL: http://bot-runner:8084
-      PUBLIC_ROOM_URLS: "room-0=http://${PUBLIC_GAME_HOST:-localhost}:8190/play/room-0/,room-1=http://${PUBLIC_GAME_HOST:-localhost}:8191/play/room-1/,room-2=http://${PUBLIC_GAME_HOST:-localhost}:8192/play/room-2/"
+      PUBLIC_ROOM_URLS: "room-0=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-0/,room-1=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-1/,room-2=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-2/,room-3=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-3/,room-4=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-4/"
     ports: ["8085:8085"]
     depends_on: { room-orchestrator: { condition: service_started }, bot-runner: { condition: service_started } }

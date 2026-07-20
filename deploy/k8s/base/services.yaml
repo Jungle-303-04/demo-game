@@ -1,13 +1,36 @@
 apiVersion: v1
 kind: Service
-metadata:
-  name: game-headless
-  namespace: sandbox
-  labels: { app: game-server }
+metadata: { name: game-room-0, namespace: sandbox, labels: { app: game-server, opsia.dev/room-id: room-0 } }
 spec:
-  clusterIP: None
-  publishNotReadyAddresses: true
-  selector: { app: game-server }
+  selector: { app: game-server, opsia.dev/fleet: live, opsia.dev/room-id: room-0 }
+  ports: [{ name: http, port: 8001, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: game-room-1, namespace: sandbox, labels: { app: game-server, opsia.dev/room-id: room-1 } }
+spec:
+  selector: { app: game-server, opsia.dev/fleet: live, opsia.dev/room-id: room-1 }
+  ports: [{ name: http, port: 8001, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: game-room-2, namespace: sandbox, labels: { app: game-server, opsia.dev/room-id: room-2 } }
+spec:
+  selector: { app: game-server, opsia.dev/fleet: live, opsia.dev/room-id: room-2 }
+  ports: [{ name: http, port: 8001, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: game-room-3, namespace: sandbox, labels: { app: game-server, opsia.dev/room-id: room-3 } }
+spec:
+  selector: { app: game-server, opsia.dev/fleet: live, opsia.dev/room-id: room-3 }
+  ports: [{ name: http, port: 8001, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: game-room-4, namespace: sandbox, labels: { app: game-server, opsia.dev/room-id: room-4 } }
+spec:
+  selector: { app: game-server, opsia.dev/fleet: live, opsia.dev/room-id: room-4 }
   ports: [{ name: http, port: 8001, targetPort: http }]
 ---
 apiVersion: v1
@@ -15,7 +38,7 @@ kind: Service
 metadata:
   name: game-metrics
   namespace: sandbox
-  labels: { app: game-server }
+  labels: { app: game-server, opsia.dev/fleet: live }
 spec:
-  selector: { app: game-server }
+  selector: { app: game-server, opsia.dev/fleet: live }
   ports: [{ name: http, port: 8001, targetPort: http }]

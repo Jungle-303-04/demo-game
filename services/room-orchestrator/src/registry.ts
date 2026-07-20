@@ -109,13 +109,13 @@ export const specForOrdinal = (ordinal: number, current?: RoomSpec): RoomSpec =>
   };
 };
 
-export const recordForOrdinal = (ordinal: number, endpoint?: string): RoomRegistryRecord => {
+export const recordForOrdinal = (ordinal: number, endpoint?: string, workloadName?: string): RoomRegistryRecord => {
   const createdAt = new Date().toISOString();
   return {
     roomId: `room-${ordinal}`,
     ordinal,
-    podName: `game-${ordinal}`,
-    endpoint: endpoint ?? `http://game-${ordinal}:8080`,
+    podName: workloadName ?? `game-room-${ordinal}`,
+    endpoint: endpoint ?? `http://game-room-${ordinal}:8001`,
     status: "waiting",
     players: 0,
     alive: 0,
@@ -128,15 +128,21 @@ export const recordForOrdinal = (ordinal: number, endpoint?: string): RoomRegist
 
 export class RoomReconciler {
   constructor(private readonly registry: RoomRegistry) {}
-  async reconcile(replicas: number, endpointForOrdinal: (ordinal: number) => string = (ordinal) => `http://game-${ordinal}:8080`): Promise<RoomRegistryRecord[]> {
+  async reconcile(
+    replicas: number,
+    endpointForOrdinal: (ordinal: number) => string = (ordinal) => `http://game-room-${ordinal}:8001`,
+    workloadNameForOrdinal: (ordinal: number) => string = (ordinal) => `game-room-${ordinal}`,
+  ): Promise<RoomRegistryRecord[]> {
     if (!Number.isInteger(replicas) || replicas < 0) throw new Error("invalid_replicas");
     const existing = await this.registry.list();
     const changedAt = new Date().toISOString();
     for (let ordinal = 0; ordinal < replicas; ordinal += 1) {
-      const record = existing.find((entry) => entry.ordinal === ordinal) ?? recordForOrdinal(ordinal, endpointForOrdinal(ordinal));
+      const record = existing.find((entry) => entry.ordinal === ordinal)
+        ?? recordForOrdinal(ordinal, endpointForOrdinal(ordinal), workloadNameForOrdinal(ordinal));
       const status = record.status === "inactive" ? "waiting" : record.status;
       await this.registry.put({
         ...record,
+        podName: workloadNameForOrdinal(ordinal),
         endpoint: endpointForOrdinal(ordinal),
         status,
         spec: specForOrdinal(ordinal, record.spec),

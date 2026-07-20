@@ -1,6 +1,9 @@
 import { math } from "./math.ts";
 import { v2, type Vec2 } from "./v2.ts";
 
+let scopedRandomSource: (() => number) | undefined;
+const currentRandom = (): number => (scopedRandomSource ?? Math.random)();
+
 export class AssertionError extends Error {
     name = "AssertionError";
     constructor(message?: string, options?: ErrorOptions) {
@@ -31,6 +34,14 @@ export type DeepPartial<T> = T extends object ? {
     : T;
 
 export const util = {
+    /** Installs a synchronous, nestable RNG scope and returns its disposer. */
+    useRandomSource(rand: () => number): () => void {
+        const previous = scopedRandomSource;
+        scopedRandomSource = rand;
+        return () => {
+            scopedRandomSource = previous;
+        };
+    },
     //
     // Game objects can belong to the following layers:
     //   0: ground layer
@@ -60,21 +71,22 @@ export const util = {
         return a & 0x1;
     },
 
-    random(min: number, max: number, rand = Math.random) {
-        return math.lerp(rand(), min, max);
+    random(min: number, max: number, rand?: () => number) {
+        return math.lerp((rand ?? currentRandom)(), min, max);
     },
 
-    randomInt(min: number, max: number, rand = Math.random) {
+    randomInt(min: number, max: number, rand?: () => number) {
         min = Math.ceil(min);
         max = Math.floor(max);
-        return Math.floor(rand() * (max - min + 1)) + min;
+        return Math.floor((rand ?? currentRandom)() * (max - min + 1)) + min;
     },
 
     // Uniformly distributed random point within circle
     // Taken from https://stackoverflow.com/questions/5837572/generate-a-random-point-within-a-circle-uniformly
-    randomPointInCircle(rad: number, rand = Math.random) {
-        let a = rand();
-        let b = rand();
+    randomPointInCircle(rad: number, rand?: () => number) {
+        const source = rand ?? currentRandom;
+        let a = source();
+        let b = source();
         if (b < a) {
             const c = a;
             a = b;
@@ -87,7 +99,7 @@ export const util = {
         return pos;
     },
 
-    randomPointInAabb(aabb: { min: Vec2; max: Vec2 }, rand = Math.random) {
+    randomPointInAabb(aabb: { min: Vec2; max: Vec2 }, rand?: () => number) {
         return v2.create(
             util.random(aabb.min.x, aabb.max.x, rand),
             util.random(aabb.min.y, aabb.max.y, rand),
@@ -312,14 +324,23 @@ export const util = {
         return this.mergeDeep(target, ...sources);
     },
 
-    cloneDeep(source: unknown) {
-        // @TODO: This does not properly handle arrays
-        return util.mergeDeep({}, source);
+    cloneDeep<T>(source: T): T {
+        if (Array.isArray(source)) {
+            return source.map((item) => util.cloneDeep(item)) as T;
+        }
+        if (util.isObject(source)) {
+            const clone: Record<string, unknown> = {};
+            for (const [key, value] of Object.entries(source as Record<string, unknown>)) {
+                clone[key] = util.cloneDeep(value);
+            }
+            return clone as T;
+        }
+        return source;
     },
 
     shuffleArray(arr: unknown[]) {
         for (let i = arr.length - 1; i >= 0; i--) {
-            const idx = Math.floor(Math.random() * (i + 1));
+            const idx = Math.floor(currentRandom() * (i + 1));
             const tmp = arr[i];
             arr[i] = arr[idx];
             arr[idx] = tmp;
@@ -341,13 +362,13 @@ export const util = {
 
     weightedRandom<T extends object>(
         items: Array<T & { weight: number }>,
-        rand = Math.random,
+        rand?: () => number,
     ) {
         let total = 0.0;
         for (let i = 0; i < items.length; i++) {
             total += items[i].weight;
         }
-        let rng = rand() * total;
+        let rng = (rand ?? currentRandom)() * total;
         let idx = 0;
         while (rng > items[idx].weight) {
             rng -= items[idx].weight;
@@ -356,7 +377,7 @@ export const util = {
         return items[idx];
     },
 
-    randomItem<T>(array: T[], rand = Math.random): T | undefined {
+    randomItem<T>(array: T[], rand?: () => number): T | undefined {
         if (array.length === 0) return undefined;
         return array[util.randomInt(0, array.length - 1, rand)];
     },

@@ -5,6 +5,13 @@ import { type MapDefKey, MapDefs } from "../../../shared/defs/mapDefs.ts";
 import type { TeamMode } from "../../../shared/gameConfig.ts";
 import * as net from "../../../shared/net/net.ts";
 import { util } from "../../../shared/utils/util.ts";
+import { encodeGatewayAck, encodeGatewayOutput } from "../opsia/gatewayWire.ts";
+import type {
+    ActiveReleaseRequest,
+    CandidatePromoteRequest,
+    CandidateSeedRequest,
+    OpsiaHandoffStatusData,
+} from "../opsia/candidate.ts";
 import { ServerLogger } from "../utils/logger.ts";
 import { type FindGamePrivateBody, type ServerGameConfig } from "../utils/types.ts";
 import { type GameData, type OpsiaSnapshotData, type ProcessMsg, ProcessMsgType } from "./ipcTypes.ts";
@@ -14,6 +21,26 @@ if (process.env.NODE_ENV === "production") {
     procFile = "dist/gameProcess.js";
 } else {
     procFile = "src/game/gameProcess.ts";
+}
+
+/**
+ * Preserves the raw Survev browser protocol for direct sockets while requiring
+ * an authoritative child-process epoch for every Gateway-bound output.
+ */
+export function frameGameProcessOutput(
+    socketData: { gatewaySessionId?: string; roomEpoch?: number },
+    payload: ArrayBuffer | Uint8Array,
+    authoritativeRoomEpoch?: number,
+    serverTick = 0,
+): ArrayBuffer | Uint8Array | undefined {
+    if (!socketData.gatewaySessionId) return payload;
+    if (!Number.isSafeInteger(authoritativeRoomEpoch)
+        || authoritativeRoomEpoch !== socketData.roomEpoch) return undefined;
+    return encodeGatewayOutput({
+        roomEpoch: authoritativeRoomEpoch!,
+        serverTick,
+        payload,
+    });
 }
 
 export enum ProcState {
@@ -66,6 +93,11 @@ class GameProcess {
     }>();
     private readonly pendingOpsiaSaves = new Map<string, {
         resolve: (savedAt: number) => void;
+        reject: (error: Error) => void;
+        timeout: NodeJS.Timeout;
+    }>();
+    private readonly pendingOpsiaHandoffs = new Map<string, {
+        resolve: (status: OpsiaHandoffStatusData) => void;
         reject: (error: Error) => void;
         timeout: NodeJS.Timeout;
     }>();
@@ -125,10 +157,34 @@ class GameProcess {
                     const socket = this.manager.sockets.get(socketMsg.socketId);
 
                     if (!socket) continue;
-                    if (socket.getUserData().closed) continue;
-                    socket.send(socketMsg.data, true, false);
+                    const socketData = socket.getUserData();
+                    if (socketData.closed) continue;
+                    const output = frameGameProcessOutput(
+                        socketData,
+                        socketMsg.data,
+                        socketMsg.roomEpoch,
+                        socketMsg.serverTick,
+                    );
+                    if (output) socket.send(output, true, false);
                 }
                 break;
+            case ProcessMsgType.GatewayInputAck: {
+                const gatewaySocket = this.manager.sockets.get(msg.socketId);
+                const gatewayData = gatewaySocket?.getUserData();
+                if (
+                    !gatewaySocket
+                    || !gatewayData
+                    || gatewayData.closed
+                    || !gatewayData.gatewaySessionId
+                    || gatewayData.roomEpoch !== msg.roomEpoch
+                ) break;
+                gatewaySocket.send(encodeGatewayAck({
+                    roomEpoch: msg.roomEpoch,
+                    lastAckInputSequence: msg.lastAckInputSequence,
+                    serverTick: msg.serverTick,
+                }), true, false);
+                break;
+            }
             case ProcessMsgType.SocketClose:
                 const socket = this.manager.sockets.get(msg.socketId);
                 if (socket && !socket.getUserData().closed) {
@@ -137,7 +193,13 @@ class GameProcess {
                         disconnectMsg.reason = msg.reason;
                         const stream = new net.MsgStream(new ArrayBuffer(128));
                         stream.serializeMsg(net.MsgType.Disconnect, disconnectMsg);
-                        socket.send(stream.getBuffer(), true, false);
+                        const output = frameGameProcessOutput(
+                            socket.getUserData(),
+                            stream.getBuffer(),
+                            msg.roomEpoch,
+                            msg.serverTick,
+                        );
+                        if (output) socket.send(output, true, false);
                     }
                     socket.end();
                 }
@@ -164,6 +226,18 @@ class GameProcess {
                 this.pendingOpsiaSaves.delete(msg.requestId);
                 if (msg.ok && msg.savedAt) pending.resolve(msg.savedAt);
                 else pending.reject(new Error(msg.error ?? "opsia_snapshot_failed"));
+                break;
+            }
+            case ProcessMsgType.OpsiaHandoffStatusResult:
+            case ProcessMsgType.OpsiaHandoffSeedResult:
+            case ProcessMsgType.OpsiaHandoffReleaseResult:
+            case ProcessMsgType.OpsiaHandoffPromoteResult: {
+                const pending = this.pendingOpsiaHandoffs.get(msg.requestId);
+                if (!pending) break;
+                clearTimeout(pending.timeout);
+                this.pendingOpsiaHandoffs.delete(msg.requestId);
+                if (msg.ok && msg.status) pending.resolve(msg.status);
+                else pending.reject(new Error(msg.error ?? "opsia_handoff_request_failed"));
                 break;
             }
         }
@@ -270,19 +344,29 @@ class GameProcess {
         this.avaliableSlots = Math.max(0, maxPlayers - connectedPlayers - participantReservations);
     }
 
-    handleSocketOpen(socketId: string, ip: string) {
+    handleSocketOpen(socketId: string, ip: string, gatewaySessionId?: string, roomEpoch?: number) {
         this.send({
             type: ProcessMsgType.SocketOpen,
             socketId,
             ip,
+            gatewaySessionId,
+            roomEpoch,
         });
     }
 
-    handleMsg(data: ArrayBuffer, socketId: string) {
+    handleMsg(
+        data: ArrayBuffer,
+        socketId: string,
+        gateway?: { sessionId: string; inputSequence: number; clientTick: number; roomEpoch: number },
+    ) {
         this.send({
             type: ProcessMsgType.ClientSocketMsg,
             socketId,
             data,
+            gatewaySessionId: gateway?.sessionId,
+            inputSequence: gateway?.inputSequence,
+            clientTick: gateway?.clientTick,
+            roomEpoch: gateway?.roomEpoch,
         });
     }
 
@@ -330,6 +414,52 @@ class GameProcess {
             this.send({ type: ProcessMsgType.OpsiaSave, requestId });
         });
     }
+
+    requestOpsiaHandoffStatus(): Promise<OpsiaHandoffStatusData> {
+        return this.requestOpsiaHandoff((requestId) => ({
+            type: ProcessMsgType.OpsiaHandoffStatus,
+            requestId,
+        }));
+    }
+
+    seedOpsiaCandidate(request: CandidateSeedRequest): Promise<OpsiaHandoffStatusData> {
+        return this.requestOpsiaHandoff((requestId) => ({
+            type: ProcessMsgType.OpsiaHandoffSeed,
+            requestId,
+            request,
+        }));
+    }
+
+    releaseOpsiaAuthority(request: ActiveReleaseRequest): Promise<OpsiaHandoffStatusData> {
+        return this.requestOpsiaHandoff((requestId) => ({
+            type: ProcessMsgType.OpsiaHandoffRelease,
+            requestId,
+            request,
+        }));
+    }
+
+    promoteOpsiaCandidate(request: CandidatePromoteRequest): Promise<OpsiaHandoffStatusData> {
+        return this.requestOpsiaHandoff((requestId) => ({
+            type: ProcessMsgType.OpsiaHandoffPromote,
+            requestId,
+            request,
+        }));
+    }
+
+    private requestOpsiaHandoff(
+        message: (requestId: string) => ProcessMsg,
+    ): Promise<OpsiaHandoffStatusData> {
+        if (this.process.killed || !this.process.channel) return Promise.reject(new Error("room_process_unavailable"));
+        const requestId = randomUUID();
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                this.pendingOpsiaHandoffs.delete(requestId);
+                reject(new Error("opsia_handoff_timeout"));
+            }, 5_000);
+            this.pendingOpsiaHandoffs.set(requestId, { resolve, reject, timeout });
+            this.send(message(requestId));
+        });
+    }
 }
 
 export interface GameSocketData {
@@ -339,6 +469,9 @@ export interface GameSocketData {
     rateLimit: Record<symbol, number>;
     ip: string;
     disconnectReason: string;
+    gatewaySessionId?: string;
+    roomEpoch?: number;
+    gatewayJoinConsumed?: boolean;
 }
 
 export class GameProcessManager {
@@ -585,13 +718,22 @@ export class GameProcessManager {
             return;
         }
         this.sockets.set(socketId, socket);
-        this.processById.get(data.gameId)?.handleSocketOpen(socketId, data.ip);
+        this.processById.get(data.gameId)?.handleSocketOpen(
+            socketId,
+            data.ip,
+            data.gatewaySessionId,
+            data.roomEpoch,
+        );
     }
 
-    onMsg(socketId: string, msg: ArrayBuffer): void {
+    onMsg(
+        socketId: string,
+        msg: ArrayBuffer,
+        gateway?: { sessionId: string; inputSequence: number; clientTick: number; roomEpoch: number },
+    ): void {
         const data = this.sockets.get(socketId)?.getUserData();
         if (!data) return;
-        this.processById.get(data.gameId)?.handleMsg(msg, socketId);
+        this.processById.get(data.gameId)?.handleMsg(msg, socketId, gateway);
     }
 
     onClose(socketId: string) {
@@ -610,14 +752,40 @@ export class GameProcessManager {
     }
 
     resetOpsiaRoom(): Promise<number> {
+        if (process.env.OPSIA_ROLE === "candidate") return Promise.reject(new Error("candidate_read_only"));
         const proc = this.processes.find((candidate) => !candidate.gameData.stopped);
         if (!proc) return Promise.reject(new Error("room_not_ready"));
         return proc.reset();
     }
 
     saveOpsiaRoom(): Promise<number> {
+        if (process.env.OPSIA_ROLE === "candidate") return Promise.reject(new Error("candidate_read_only"));
         const proc = this.processes.find((candidate) => !candidate.gameData.stopped);
         if (!proc) return Promise.reject(new Error("room_not_ready"));
         return proc.saveOpsiaSnapshot();
+    }
+
+    getOpsiaHandoffStatus(): Promise<OpsiaHandoffStatusData> {
+        const proc = this.processes.find((candidate) => !candidate.gameData.stopped);
+        if (!proc) return Promise.reject(new Error("room_not_ready"));
+        return proc.requestOpsiaHandoffStatus();
+    }
+
+    seedOpsiaCandidate(request: CandidateSeedRequest): Promise<OpsiaHandoffStatusData> {
+        const proc = this.processes.find((candidate) => !candidate.gameData.stopped);
+        if (!proc) return Promise.reject(new Error("room_not_ready"));
+        return proc.seedOpsiaCandidate(request);
+    }
+
+    releaseOpsiaAuthority(request: ActiveReleaseRequest): Promise<OpsiaHandoffStatusData> {
+        const proc = this.processes.find((candidate) => !candidate.gameData.stopped);
+        if (!proc) return Promise.reject(new Error("room_not_ready"));
+        return proc.releaseOpsiaAuthority(request);
+    }
+
+    promoteOpsiaCandidate(request: CandidatePromoteRequest): Promise<OpsiaHandoffStatusData> {
+        const proc = this.processes.find((candidate) => !candidate.gameData.stopped);
+        if (!proc) return Promise.reject(new Error("room_not_ready"));
+        return proc.promoteOpsiaCandidate(request);
     }
 }

@@ -3,13 +3,13 @@
  * reviewed deployment plan, never in game logs or player-controlled input.
  */
 export type RecoveryRequest =
-  | { action: "image_rollforward"; image: string }
-  | { action: "image_rollback"; image: string }
+  | { action: "image_rollforward"; image: string; roomId: string }
+  | { action: "image_rollback"; image: string; roomId: string }
   | { action: "deployment_scale"; replicas: number };
 
 export interface WorkloadPatch {
-  kind: "StatefulSet" | "Deployment";
-  name: "game" | "api-server";
+  kind: "Deployment";
+  name: string;
   patch: Record<string, unknown>;
 }
 
@@ -19,5 +19,10 @@ export const recoveryPatch = (request: RecoveryRequest): WorkloadPatch => {
     return { kind: "Deployment", name: "api-server", patch: { spec: { replicas: request.replicas } } };
   }
   if (!/^ghcr\.io\/jungle-303-04\/demo-game\/game-server:[a-zA-Z0-9._-]+$/.test(request.image)) throw new Error("unapproved_image");
-  return { kind: "StatefulSet", name: "game", patch: { spec: { template: { spec: { containers: [{ name: "game-server", image: request.image }] } } } } };
+  if (!/^room-[0-4]$/.test(request.roomId)) throw new Error("invalid_room_id");
+  return {
+    kind: "Deployment",
+    name: `game-${request.roomId}`,
+    patch: { spec: { template: { spec: { containers: [{ name: "game-server", image: request.image }] } } } },
+  };
 };

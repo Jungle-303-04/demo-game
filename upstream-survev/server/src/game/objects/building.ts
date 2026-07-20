@@ -35,6 +35,7 @@ export class Building extends BaseGameObject {
     puzzleErrSeq = 0;
     puzzleOrder: string[] = [];
     puzzleResetTimeout?: NodeJS.Timeout;
+    readonly pendingPuzzleTimeouts = new Set<NodeJS.Timeout>();
 
     scale = 1;
 
@@ -290,7 +291,11 @@ export class Building extends BaseGameObject {
     }
 
     puzzlePieceToggled(piece: Obstacle): void {
-        if (this.puzzleResetTimeout) clearTimeout(this.puzzleResetTimeout);
+        if (this.puzzleResetTimeout) {
+            clearTimeout(this.puzzleResetTimeout);
+            this.pendingPuzzleTimeouts.delete(this.puzzleResetTimeout);
+            this.puzzleResetTimeout = undefined;
+        }
 
         this.puzzleOrder.push(piece.puzzlePiece!);
 
@@ -309,7 +314,7 @@ export class Building extends BaseGameObject {
                     obj.__type === ObjectType.Obstacle
                     && obj.type === puzzleDef.completeUseType
                 ) {
-                    setTimeout(() => {
+                    this.schedulePuzzleTimeout(() => {
                         if (obj.isDoor) {
                             obj.toggleDoor();
                         } else if (obj.isButton) {
@@ -332,26 +337,36 @@ export class Building extends BaseGameObject {
                     this.parentStructure.setDirty();
                 }
             }
-            setTimeout(this.resetPuzzle.bind(this), puzzleDef.completeOffDelay * 1000);
+            this.schedulePuzzleTimeout(this.resetPuzzle.bind(this), puzzleDef.completeOffDelay * 1000);
             this.setPartDirty();
         } else if (this.puzzleOrder.length >= puzzleOrder.length) {
             this.puzzleErrSeq++;
             this.setPartDirty();
-            this.puzzleResetTimeout = setTimeout(
+            this.puzzleResetTimeout = this.schedulePuzzleTimeout(
                 this.resetPuzzle.bind(this),
                 puzzleDef.errorResetDelay * 1000,
             ) as NodeJS.Timeout;
         } else {
-            this.puzzleResetTimeout = setTimeout(() => {
+            this.puzzleResetTimeout = this.schedulePuzzleTimeout(() => {
                 this.puzzleErrSeq++;
                 this.setPartDirty();
-                setTimeout(
+                this.schedulePuzzleTimeout(
                     this.resetPuzzle.bind(this),
                     puzzleDef.errorResetDelay * 1000,
-                    this,
                 );
-            }, puzzleDef.pieceResetDelay * 1000) as NodeJS.Timeout;
+            }, puzzleDef.pieceResetDelay * 1000);
         }
+    }
+
+    private schedulePuzzleTimeout(callback: () => void, delay: number): NodeJS.Timeout {
+        let timeout: NodeJS.Timeout;
+        timeout = setTimeout(() => {
+            this.pendingPuzzleTimeouts.delete(timeout);
+            if (this.puzzleResetTimeout === timeout) this.puzzleResetTimeout = undefined;
+            callback();
+        }, delay);
+        this.pendingPuzzleTimeouts.add(timeout);
+        return timeout;
     }
 
     onGoreRegionKill() {

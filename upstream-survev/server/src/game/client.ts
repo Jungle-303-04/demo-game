@@ -20,6 +20,7 @@ import type { ClientSocket } from "./socket.ts";
 
 export class ClientBarn {
     clients: Client[] = [];
+    private readonly retainedSessions = new Map<string, { player: Player; expiresAt: number }>();
 
     /**
      * All msgs created this tick that will be sent to all players
@@ -33,6 +34,7 @@ export class ClientBarn {
     }
 
     update(dt: number) {
+        this.cleanupRetainedSessions();
         for (let i = 0; i < this.clients.length; i++) {
             this.clients[i].update(dt);
         }
@@ -62,6 +64,23 @@ export class ClientBarn {
             return;
         }
         this.game.joinTokens.delete(joinMsg.matchPriv);
+
+        // The opaque join token and the signed Gateway upgrade must name the
+        // same stable session. Otherwise a valid token cannot be replayed on a
+        // socket authenticated for a different player.
+        if (socket.gatewaySessionId && joinData.opsiaSessionId !== socket.gatewaySessionId) {
+            socket.closeWithReason("gateway_session_identity_mismatch");
+            return;
+        }
+
+        const sessionId = joinData.opsiaSessionId;
+        const existingSessionPlayer = sessionId
+            ? this.game.playerBarn.players.find((player) => player.opsiaSessionId === sessionId)
+            : undefined;
+        if (existingSessionPlayer && !existingSessionPlayer.disconnected) {
+            socket.closeWithReason("session_already_connected");
+            return;
+        }
 
         if (Config.rateLimitsEnabled) {
             const count = this.clients.filter(
@@ -94,6 +113,26 @@ export class ClientBarn {
                 )
                 : undefined;
             client.spectating = requestedPlayer ?? client.getNewPlayerToSpectate();
+            return client;
+        }
+
+        if (sessionId && existingSessionPlayer) {
+            const retained = this.retainedSessions.get(sessionId);
+            if (!retained || retained.player !== existingSessionPlayer || retained.expiresAt < Date.now()) {
+                this.retainedSessions.delete(sessionId);
+                util.removeFrom(this.clients, client);
+                socket.closeWithReason("session_reattach_expired");
+                return;
+            }
+            const previousClient = existingSessionPlayer.client;
+            previousClient.player = undefined;
+            existingSessionPlayer.client = client;
+            client.player = existingSessionPlayer;
+            this.retainedSessions.delete(sessionId);
+            existingSessionPlayer.setPartDirty();
+            existingSessionPlayer.group?.checkPlayers();
+            existingSessionPlayer.setGroupStatuses();
+            this.game.logger.info(`"${existingSessionPlayer.name}" reattached`);
             return client;
         }
 
@@ -271,8 +310,32 @@ export class ClientBarn {
         player.setGroupStatuses();
         player.questManager.flushProgress();
 
+        if (
+            process.env.OPSIA_ROOM === "true"
+            && player.opsiaSessionId.length >= 16
+        ) {
+            const configuredTtl = Number.parseInt(process.env.OPSIA_SESSION_REATTACH_TTL_MS ?? "120000", 10);
+            const ttlMs = Math.max(5_000, Math.min(300_000, Number.isFinite(configuredTtl) ? configuredTtl : 120_000));
+            this.retainedSessions.set(player.opsiaSessionId, { player, expiresAt: Date.now() + ttlMs });
+            return;
+        }
+
         if (player.canDespawn()) {
             player.game.playerBarn.removePlayer(player);
+        }
+    }
+
+    private cleanupRetainedSessions(now = Date.now()): void {
+        for (const [sessionId, retained] of this.retainedSessions) {
+            if (!this.game.playerBarn.players.includes(retained.player)) {
+                this.retainedSessions.delete(sessionId);
+                continue;
+            }
+            if (retained.expiresAt > now) continue;
+            this.retainedSessions.delete(sessionId);
+            if (retained.player.disconnected && retained.player.canDespawn()) {
+                this.game.playerBarn.removePlayer(retained.player);
+            }
         }
     }
 

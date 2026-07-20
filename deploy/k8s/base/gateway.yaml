@@ -32,13 +32,12 @@ data:
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
       }
 
-      location ~ ^/(?:play|watch)/room-[0-2]$ {
+      location ~ ^/(?:play|watch)/room-\d+$ {
         return 308 $uri/;
       }
 
-      location ~ ^/(?:play|watch)/room-(?<room_ordinal>[0-2])(?:/|$) {
-        set $game_backend game-$room_ordinal.game-headless.sandbox.svc.cluster.local;
-        proxy_pass http://$game_backend:8001;
+      location ~ ^/(?:play|watch)/room-\d+(?:/|$) {
+        proxy_pass http://session-gateway.sandbox.svc.cluster.local:8083;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header Upgrade $http_upgrade;

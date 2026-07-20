@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: session-gateway
+  namespace: sandbox
+  labels: { app: session-gateway, app.kubernetes.io/part-of: demo-game }
+spec:
+  # The current gateway keeps session buffers in-process, so one authoritative
+  # replica is required until a shared session store is introduced.
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
+  selector: { matchLabels: { app: session-gateway } }
+  template:
+    metadata: { labels: { app: session-gateway, app.kubernetes.io/part-of: demo-game } }
+    spec:
+      containers:
+        - name: session-gateway
+          image: ghcr.io/jungle-303-04/demo-game/session-gateway:stable
+          imagePullPolicy: Always
+          env:
+            - { name: SESSION_ROOM_ENDPOINTS, value: "room-0=http://game-room-0:8001,room-1=http://game-room-1:8001,room-2=http://game-room-2:8001,room-3=http://game-room-3:8001,room-4=http://game-room-4:8001" }
+            - name: SESSION_GATEWAY_SHARED_SECRET
+              valueFrom: { secretKeyRef: { name: demo-game-session-gateway, key: shared-secret } }
+            - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
+            - name: OPS_CONTROL_TOKEN
+              valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
+          ports: [{ name: http, containerPort: 8083 }]
+          readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 2 }
+          resources: { requests: { cpu: 100m, memory: 128Mi }, limits: { cpu: "1", memory: 1Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: session-gateway, namespace: sandbox, labels: { app: session-gateway } }
+spec:
+  selector: { app: session-gateway }
+  ports: [{ name: http, port: 8083, targetPort: http }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: session-gateway, namespace: sandbox }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: session-gateway } }

@@ -150,10 +150,11 @@ const roomScenario = (state: ScenarioState, roomId: string): ScenarioRoomState =
   return room;
 };
 
-test("compose starts three actual survev rooms, distributes 30 protocol bots, and exposes playerBarn snapshots", { skip: !enabled }, async () => {
+test("compose starts five actual survev rooms, discovers them for 50 protocol bots, and exposes playerBarn snapshots", { skip: !enabled }, async () => {
   await waitFor(`${opsUrl}/healthz`);
   await waitFor("http://localhost:8084/healthz");
-  await waitFor("http://localhost:8090/healthz");
+  await waitFor("http://localhost:8083/healthz");
+  await Promise.all([8090, 8091, 8092, 8093, 8094].map((port) => waitFor(`http://localhost:${port}/healthz`)));
   const unauthenticatedBots = await fetch("http://localhost:8084/bots");
   assert.equal(unauthenticatedBots.status, 401);
   assert.equal((await fetch("http://localhost:8084/bots", { headers: controlHeaders })).status, 200);
@@ -164,27 +165,29 @@ test("compose starts three actual survev rooms, distributes 30 protocol bots, an
   let before: { rooms: Array<{ roomId: string }> } | undefined;
   for (let attempt = 0; attempt < 40; attempt += 1) {
     const candidate = await (await fetch(`${opsUrl}/api/rooms`)).json() as Partial<{ rooms: Array<{ roomId: string }> }>;
-    if (candidate.rooms?.length === 3) { before = { rooms: candidate.rooms }; break; }
+    if (candidate.rooms?.length === 5) { before = { rooms: candidate.rooms }; break; }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   assert.ok(before, "room_registry_not_ready");
-  assert.equal(before.rooms.length, 3);
+  assert.equal(before.rooms.length, 5);
   const adminState = await getAdminState();
-  assert.equal(adminState.rooms.length, 3);
+  assert.equal(adminState.rooms.length, 5);
   assert.deepEqual(adminState.rooms.map((room) => [room.id, room.map, room.mode, room.maxPlayers]), [
     ["room-0", "Faction Island", "Faction 50v50", 100],
     ["room-1", "Desert", "Solo FFA", 80],
     ["room-2", "Snow", "Solo FFA", 80],
+    ["room-3", "Main Island", "Solo FFA", 80],
+    ["room-4", "Woods", "Solo FFA", 80],
   ]);
-  assert.deepEqual(adminState.capabilities, { scalingAvailable: false, maxRooms: 3 });
+  assert.deepEqual(adminState.capabilities, { scalingAvailable: false, maxRooms: 5 });
 
-  const mapSnapshots = await Promise.all([8090, 8091, 8092].map(async (port) => {
+  const mapSnapshots = await Promise.all([8090, 8091, 8092, 8093, 8094].map(async (port) => {
     const response = await fetch(`http://localhost:${port}/ops/snapshot`, { headers: controlHeaders });
     assert.equal(response.status, 200);
     return response.json() as Promise<{ map: { name: string; maxPlayers: number } }>;
   }));
-  assert.deepEqual(mapSnapshots.map((snapshot) => snapshot.map.name), ["faction", "desert", "snow"]);
-  assert.deepEqual(mapSnapshots.map((snapshot) => snapshot.map.maxPlayers), [100, 80, 80]);
+  assert.deepEqual(mapSnapshots.map((snapshot) => snapshot.map.name), ["faction", "desert", "snow", "main", "woods"]);
+  assert.deepEqual(mapSnapshots.map((snapshot) => snapshot.map.maxPlayers), [100, 80, 80, 80, 80]);
   for (const preview of ["faction", "desert", "snow"]) {
     const response = await fetch(`${opsUrl}/map-previews/${preview}.png`);
     assert.equal(response.status, 200);
@@ -407,13 +410,13 @@ test("compose starts three actual survev rooms, distributes 30 protocol bots, an
   assert.equal(roomScenario(recoveredStormState, "room-2").lastResults["admission-storm"]?.evidence?.requests, 90);
 
   const finalBots = await waitForBaselineBots(roomIds);
-  assert.equal(finalBots.bots.filter((bot) => bot.connected).length, 30);
+  assert.equal(finalBots.bots.filter((bot) => bot.connected).length, 50);
   const finalScenarioState = await getScenarioState();
   assert.ok(finalScenarioState.rooms.every((room) => room.active === undefined));
   const finalAdminState = await waitForCondition(
     "final_room_health",
     getAdminState,
-    (state) => state.rooms.length === 3 && state.rooms.every((room) =>
+    (state) => state.rooms.length === 5 && state.rooms.every((room) =>
       room.status === "running" && room.podHealthy && !room.joinLocked),
     30_000,
     300,
@@ -426,11 +429,11 @@ test("compose starts three actual survev rooms, distributes 30 protocol bots, an
       assert.equal(response.status, 200);
       return (await response.json() as { players: unknown[] }).players;
     })),
-    (roomPlayers) => roomPlayers.reduce((total, players) => total + players.length, 0) === 30,
+    (roomPlayers) => roomPlayers.reduce((total, players) => total + players.length, 0) === 50,
     15_000,
     250,
   );
-  assert.equal(snapshots.reduce((total, players) => total + players.length, 0), 30);
+  assert.equal(snapshots.reduce((total, players) => total + players.length, 0), 50);
   const page = await (await fetch(`${opsUrl}/`)).text();
   assert.match(page, /<title>Opsia Live Games<\/title>/);
   assert.match(page, /<div id="root"><\/div>/);
@@ -438,7 +441,7 @@ test("compose starts three actual survev rooms, distributes 30 protocol bots, an
   const scenarioPage = await (await fetch(`${opsUrl}/scenarios`)).text();
   assert.match(scenarioPage, /<title>Opsia Live Games<\/title>/);
   assert.match(scenarioPage, /<div id="root"><\/div>/);
-  const participant = await (await fetch("http://localhost:8090/play/room-0/")).text();
+  const participant = await (await fetch("http://localhost:8083/play/room-0/")).text();
   assert.match(participant, /<canvas tabindex="1" id="cvs"><\/canvas>/);
   assert.match(participant, /js\//);
   const scenarioEvents = await (await fetch(`${opsUrl}/api/admin/events`)).json() as {

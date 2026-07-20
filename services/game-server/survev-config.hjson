@@ -20,5 +20,7 @@
     { mapName: "faction", teamMode: 1, enabled: true }
     { mapName: "desert", teamMode: 1, enabled: true }
     { mapName: "snow", teamMode: 1, enabled: true }
+    { mapName: "main", teamMode: 1, enabled: true }
+    { mapName: "woods", teamMode: 1, enabled: true }
   ]
 }

@@ -1041,9 +1041,17 @@ export class Application {
         );
         const urls: string[] = [];
         for (let i = 0; i < hosts.length; i++) {
-            urls.push(
-                `ws${matchData.useHttps ? "s" : ""}://${hosts[i]}${roomPath}?gameId=${matchData.gameId}`,
+            const gatewayUrl = new URL(
+                `ws${matchData.useHttps ? "s" : ""}://${hosts[i]}${roomPath}`,
             );
+            gatewayUrl.searchParams.set("gameId", matchData.gameId);
+            gatewayUrl.searchParams.set("sessionId", this.sessionId);
+            if (this.opsiaWatch) {
+                gatewayUrl.searchParams.set("spectator", "1");
+                const targetSessionId = helpers.getParameterByName("target");
+                if (targetSessionId) gatewayUrl.searchParams.set("target", targetSessionId);
+            }
+            urls.push(gatewayUrl.toString());
         }
         const joinGameImpl = (urls: string[], matchData: FindGameMatchData) => {
             const url = urls.shift();

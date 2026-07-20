@@ -1,11 +1,11 @@
 export const GAME_MODES = ["Faction 50v50", "Solo FFA"] as const;
 export type GameMode = typeof GAME_MODES[number];
 
-export const GAME_MAPS = ["Faction Island", "Desert", "Snow"] as const;
+export const GAME_MAPS = ["Faction Island", "Desert", "Snow", "Main Island", "Woods"] as const;
 export type GameMap = typeof GAME_MAPS[number];
 
 export interface RoomProfile {
-  mapKey: "faction" | "desert" | "snow";
+  mapKey: "faction" | "desert" | "snow" | "main" | "woods";
   name: string;
   description: string;
   region: "Seoul / ap-northeast-2";
@@ -39,6 +39,24 @@ export const ROOM_PROFILES: readonly RoomProfile[] = [
     description: "Survev snow solo live room",
     region: "Seoul / ap-northeast-2",
     map: "Snow",
+    mode: "Solo FFA",
+    maxPlayers: 80,
+  },
+  {
+    mapKey: "main",
+    name: "Main Island",
+    description: "Survev classic island solo live room",
+    region: "Seoul / ap-northeast-2",
+    map: "Main Island",
+    mode: "Solo FFA",
+    maxPlayers: 80,
+  },
+  {
+    mapKey: "woods",
+    name: "Woods Patrol",
+    description: "Survev woods solo live room",
+    region: "Seoul / ap-northeast-2",
+    map: "Woods",
     mode: "Solo FFA",
     maxPlayers: 80,
   },

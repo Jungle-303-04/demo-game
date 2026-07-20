@@ -33,10 +33,26 @@ spec:
           env:
             - { name: REDIS_URL, value: redis://redis:6379 }
             - { name: NAMESPACE, value: sandbox }
-            - { name: GAME_STATEFULSET, value: game }
-            - { name: MAX_ROOMS, value: "3" }
-            - { name: INITIAL_ROOMS, value: "3" }
-            - { name: GAME_ENDPOINT_TEMPLATE, value: "http://game-{ordinal}.game-headless.sandbox.svc.cluster.local:8001" }
+            - { name: GAME_DEPLOYMENT_PREFIX, value: game-room }
+            - { name: MAX_ROOMS, valueFrom: { configMapKeyRef: { name: ops-policy, key: desiredRooms } } }
+            - { name: INITIAL_ROOMS, valueFrom: { configMapKeyRef: { name: ops-policy, key: desiredRooms } } }
+            - { name: DESIRED_ROOM_PROFILES, valueFrom: { configMapKeyRef: { name: ops-policy, key: roomProfiles } } }
+            - { name: GAME_ENDPOINT_TEMPLATE, value: "http://game-room-{ordinal}:8001" }
+            - { name: SESSION_GATEWAY_INTERNAL_URL, value: "http://session-gateway:8083" }
+            - { name: GAME_IMAGE_REPOSITORY, value: "ghcr.io/jungle-303-04/demo-game/game-server" }
+            - { name: CANARY_GAME_ENDPOINT, value: "http://canary-room:8001" }
+            - { name: CANARY_BOT_RUNNER_URL, value: "http://canary-validation-bot:8084" }
+            - { name: REQUIRE_CANARY_APPROVAL, value: "true" }
+            - name: OPSIA_EVENT_ENDPOINT
+              valueFrom: { configMapKeyRef: { name: ops-policy, key: opsiaEventEndpoint } }
+            - name: OPSIA_WORKSPACE_ID
+              valueFrom: { configMapKeyRef: { name: ops-policy, key: opsiaWorkspaceId } }
+            - name: OPSIA_CLUSTER_ID
+              valueFrom: { configMapKeyRef: { name: ops-policy, key: opsiaClusterId } }
+            - name: OPSIA_APPLICATION_ID
+              valueFrom: { configMapKeyRef: { name: ops-policy, key: opsiaApplicationId } }
+            - name: OPSIA_AGENT_TOKEN
+              valueFrom: { secretKeyRef: { name: demo-game-opsia-agent, key: token, optional: true } }
             - { name: NODE_EXTRA_CA_CERTS, value: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt }
             - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
             - name: OPS_CONTROL_TOKEN
@@ -50,7 +66,8 @@ spec:
           image: ghcr.io/jungle-303-04/demo-game/bot-runner:stable
           imagePullPolicy: Always
           env:
-            - { name: OPSIA_ROOM_ENDPOINTS, value: "room-0=http://game-0.game-headless.sandbox.svc.cluster.local:8001,room-1=http://game-1.game-headless.sandbox.svc.cluster.local:8001,room-2=http://game-2.game-headless.sandbox.svc.cluster.local:8001" }
+            - { name: OPSIA_ROOM_DIRECTORY_URL, value: http://127.0.0.1:8082 }
+            - { name: SESSION_GATEWAY_INTERNAL_URL, value: http://session-gateway:8083 }
             - { name: OPSIA_MIN_BOTS_PER_ROOM, value: "20" }
             - { name: OPSIA_BOT_RECONCILE_INTERVAL_MS, value: "2000" }
             - { name: OPSIA_BOT_RECONCILE_BATCH_SIZE, value: "5" }

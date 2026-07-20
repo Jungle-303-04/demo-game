@@ -7,5 +7,41 @@ data:
   accountsEnabled: "false"
   alertmanagerWebhookPath: "/api/rca/alertmanager"
   recoveryActions: "image_rollforward,image_rollback,deployment_scale"
+  desiredRooms: "5"
+  roomProfiles: "room-0,room-1,room-2,room-3,room-4"
+  # Leave empty until the Opsia gateway is reachable from this cluster. The
+  # orchestrator still retains the authoritative local Redis event stream.
+  opsiaEventEndpoint: ""
+  opsiaWorkspaceId: "demo-game"
+  opsiaClusterId: "game-server"
+  opsiaApplicationId: "demo-game"
+  gameFleet.yaml: |
+    apiVersion: demo.opsia.io/v1alpha1
+    kind: GameFleet
+    metadata:
+      name: live-rooms
+      namespace: sandbox
+    spec:
+      desiredRooms: 5
+      roomProfiles:
+        - room-0
+        - room-1
+        - room-2
+        - room-3
+        - room-4
+      workloadNameTemplate: game-room-{ordinal}
+      serviceNameTemplate: game-room-{ordinal}
+      rollout:
+        maxConcurrentRooms: 1
+        maxSurge: 1
+        maxUnavailable: 0
+        requireStateChecksum: true
+        requireSessionContinuity: true
+      canary:
+        roomId: canary-room
+        public: false
+        matchmaking: false
+        redisKeyPrefix: "room:canary-room:"
+        validationBots: 10
   note: "No session identifiers or mutable enforcement values are stored here."
 

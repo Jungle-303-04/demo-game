@@ -23,10 +23,25 @@ test("scenario 01 speed-hack: real protocol flood emits an input event and stric
   assert.match(bot, /count = this\.mode === "hack" \? 20 : 1/);
   assert.match(bot, /net\.MsgType\.Input/);
   assert.match(runtime, /input_rate_exceeded/);
-  assert.deepEqual(recoveryPatch({ action: "image_rollforward", image: "ghcr.io/jungle-303-04/demo-game/game-server:strict" }).kind, "StatefulSet");
+  assert.deepEqual(
+    recoveryPatch({
+      action: "image_rollforward",
+      image: "ghcr.io/jungle-303-04/demo-game/game-server:strict",
+      roomId: "room-0",
+    }),
+    {
+      kind: "Deployment",
+      name: "game-room-0",
+      patch: { spec: { template: { spec: { containers: [{ name: "game-server", image: "ghcr.io/jungle-303-04/demo-game/game-server:strict" }] } } } },
+    },
+  );
 });
 
 test("scenario 06 join-storm and 08 bad-canary retain supported recovery actions only", () => {
   assert.deepEqual(recoveryPatch({ action: "deployment_scale", replicas: 4 }), { kind: "Deployment", name: "api-server", patch: { spec: { replicas: 4 } } });
-  assert.deepEqual(recoveryPatch({ action: "image_rollback", image: "ghcr.io/jungle-303-04/demo-game/game-server:stable" }).kind, "StatefulSet");
+  assert.equal(recoveryPatch({
+    action: "image_rollback",
+    image: "ghcr.io/jungle-303-04/demo-game/game-server:stable",
+    roomId: "room-4",
+  }).name, "game-room-4");
 });

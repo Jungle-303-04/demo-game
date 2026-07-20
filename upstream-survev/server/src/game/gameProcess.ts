@@ -2,7 +2,20 @@ import fs from "node:fs";
 import { platform } from "node:os";
 import path from "node:path";
 import { Config } from "../config.ts";
-import { makeOpsSnapshot, opsiaEnabled, OpsiaSnapshotStore } from "../opsia/runtime.ts";
+import type {
+    ActiveReleaseRequest,
+    CandidatePromoteRequest,
+    CandidateSeedRequest,
+    OpsiaHandoffStatusData,
+} from "../opsia/candidate.ts";
+import {
+    lastProcessedGatewayInput,
+    makeOpsSnapshot,
+    opsiaEnabled,
+    OpsiaSnapshotStore,
+    recordProcessedGatewayInput,
+} from "../opsia/runtime.ts";
+import { readSnapshotRuntimeConfig } from "../opsia/snapshot.ts";
 import { apiPrivateRouter } from "../utils/apiRouter.ts";
 import { logErrorToWebhook } from "../utils/logger.ts";
 import type { SaveGameBody } from "../utils/types.ts";
@@ -25,17 +38,59 @@ class ServerGame extends Game {
     }
 
     async initializeOpsia(): Promise<void> {
+        let ready = true;
         if (opsiaEnabled()) {
             this.opsiaStore = new OpsiaSnapshotStore();
-            await this.opsiaStore.start(this);
+            ready = await this.opsiaStore.start(this);
         }
-        this.opsiaReady = true;
+        this.opsiaReady = ready;
         this.updateData();
     }
 
-    async snapshotOpsia(): Promise<void> {
+    async snapshotOpsia(serverTick = 0): Promise<void> {
         if (!this.opsiaReady) return;
-        await this.opsiaStore?.save(this);
+        await this.opsiaStore?.save(this, serverTick);
+    }
+
+    opsiaSnapshotMetrics() {
+        return this.opsiaStore?.snapshotMetrics();
+    }
+
+    canSnapshotOpsia(): boolean {
+        return this.opsiaStore?.canWriteSnapshots() ?? false;
+    }
+
+    acceptsGatewayInput(roomEpoch: number): boolean {
+        return this.opsiaStore?.acceptsGatewayInput(roomEpoch) ?? !opsiaEnabled();
+    }
+
+    opsiaHandoffStatus(): OpsiaHandoffStatusData {
+        if (!this.opsiaStore) throw new Error("opsia_store_unavailable");
+        return this.opsiaStore.handoffStatus();
+    }
+
+    async seedOpsiaCandidate(request: CandidateSeedRequest): Promise<OpsiaHandoffStatusData> {
+        if (!this.opsiaStore) throw new Error("opsia_store_unavailable");
+        const status = await this.opsiaStore.seedCandidate(this, request);
+        this.opsiaReady = status.ready;
+        this.updateData();
+        return status;
+    }
+
+    async releaseOpsiaAuthority(request: ActiveReleaseRequest): Promise<OpsiaHandoffStatusData> {
+        if (!this.opsiaStore) throw new Error("opsia_store_unavailable");
+        const status = await this.opsiaStore.releaseActiveForHandoff(request);
+        this.opsiaReady = true;
+        this.updateData();
+        return status;
+    }
+
+    async promoteOpsiaCandidate(request: CandidatePromoteRequest): Promise<OpsiaHandoffStatusData> {
+        if (!this.opsiaStore) throw new Error("opsia_store_unavailable");
+        const status = await this.opsiaStore.promoteCandidate(request);
+        this.opsiaReady = true;
+        this.updateData();
+        return status;
     }
 
     async stopOpsia(): Promise<void> {
@@ -44,6 +99,7 @@ class ServerGame extends Game {
     }
 
     async resetOpsia(): Promise<void> {
+        if (!this.opsiaStore?.canWriteSnapshots()) throw new Error("candidate_read_only");
         // Pause ticks, telemetry and periodic saves synchronously before the
         // first await. The store's Redis client orders any already-issued save
         // before the guarded clear below.
@@ -55,7 +111,10 @@ class ServerGame extends Game {
     override updateData() {
         // Do not admit join tokens until a replacement process has acquired the
         // Redis lease and loaded its real Game projection.
-        if (!this.opsiaReady) return;
+        if (!this.opsiaReady) {
+            sendMsg({ type: ProcessMsgType.KeepAlive });
+            return;
+        }
         sendMsg({
             type: ProcessMsgType.UpdateData,
             id: this.id,
@@ -184,7 +243,7 @@ const gracefulExit = async () => {
     if (stopping) return;
     stopping = true;
     try {
-        await game?.snapshotOpsia();
+        await game?.snapshotOpsia(opsiaServerTick);
         await game?.stopOpsia();
     } finally {
         process.exit();
@@ -204,6 +263,8 @@ const socketMsgs: Array<{
     socketId: string;
     data: Uint8Array;
     ip: string;
+    roomEpoch?: number;
+    serverTick?: number;
 }> = [];
 
 let lastMsgTime = Date.now();
@@ -213,10 +274,13 @@ class ProcessSocket<T> extends ClientSocket<T> {
     private _id: string;
     private _ip: string;
     _closed = false;
-    constructor(id: string, ip: string) {
+    readonly roomEpoch?: number;
+    constructor(id: string, ip: string, gatewaySessionId?: string, roomEpoch?: number) {
         super();
         this._id = id;
         this._ip = ip;
+        this.gatewaySessionId = gatewaySessionId;
+        this.roomEpoch = roomEpoch;
     }
 
     ip(): string {
@@ -229,6 +293,22 @@ class ProcessSocket<T> extends ClientSocket<T> {
 
     send(data: Uint8Array<ArrayBuffer>): void {
         if (this.closed()) return;
+
+        // A Gateway socket is allowed to emit only while this child owns the
+        // exact lease epoch from its authenticated upgrade. This check occurs
+        // in the authoritative game process, so a released old Pod cannot
+        // leak one final raw output while the Gateway is switching upstreams.
+        if (this.gatewaySessionId) {
+            if (this.roomEpoch === undefined || !game?.acceptsGatewayInput(this.roomEpoch)) return;
+            socketMsgs.push({
+                socketId: this._id,
+                data,
+                ip: "",
+                roomEpoch: this.roomEpoch,
+                serverTick: opsiaServerTick,
+            });
+            return;
+        }
 
         socketMsgs.push({
             socketId: this._id,
@@ -247,10 +327,17 @@ class ProcessSocket<T> extends ClientSocket<T> {
 
     closeWithReason(reason: string): void {
         this._closed = true;
+        const authoritativeEpoch = this.gatewaySessionId
+            && this.roomEpoch !== undefined
+            && game?.acceptsGatewayInput(this.roomEpoch)
+            ? this.roomEpoch
+            : undefined;
         sendMsg({
             type: ProcessMsgType.SocketClose,
             socketId: this._id,
             reason: reason,
+            roomEpoch: authoritativeEpoch,
+            serverTick: authoritativeEpoch === undefined ? undefined : opsiaServerTick,
         });
     }
 }
@@ -275,12 +362,45 @@ process.on("message", (msg: ProcessMsg) => {
             game.addJoinTokens(msg.tokens, msg.autoFill);
             break;
         case ProcessMsgType.SocketOpen: {
-            const socket = new ProcessSocket<Client | undefined>(msg.socketId, msg.ip);
+            const socket = new ProcessSocket<Client | undefined>(
+                msg.socketId,
+                msg.ip,
+                msg.gatewaySessionId,
+                msg.roomEpoch,
+            );
             socketIdToSocket.set(msg.socketId, socket);
             break;
         }
         case ProcessMsgType.ClientSocketMsg: {
-            let socket = socketIdToSocket.get(msg.socketId)!;
+            const socket = socketIdToSocket.get(msg.socketId);
+            if (!socket) break;
+            if (msg.inputSequence !== undefined) {
+                if (
+                    !socket.gatewaySessionId
+                    || msg.gatewaySessionId !== socket.gatewaySessionId
+                    || msg.roomEpoch !== socket.roomEpoch
+                    || !Number.isSafeInteger(msg.roomEpoch)
+                    || !game.acceptsGatewayInput(msg.roomEpoch!)
+                    || !Number.isSafeInteger(msg.inputSequence)
+                    || msg.inputSequence < 1
+                ) {
+                    socket.closeWithReason("gateway_input_metadata_invalid");
+                    break;
+                }
+                const previous = lastProcessedGatewayInput(game, socket.gatewaySessionId);
+                if (msg.inputSequence > previous) {
+                    game.clientBarn.handleMsg(msg.data as ArrayBuffer, socket);
+                    recordProcessedGatewayInput(game, socket.gatewaySessionId, msg.inputSequence);
+                }
+                sendMsg({
+                    type: ProcessMsgType.GatewayInputAck,
+                    socketId: msg.socketId,
+                    roomEpoch: socket.roomEpoch!,
+                    lastAckInputSequence: lastProcessedGatewayInput(game, socket.gatewaySessionId),
+                    serverTick: opsiaServerTick,
+                });
+                break;
+            }
             game.clientBarn.handleMsg(msg.data as ArrayBuffer, socket);
             break;
         }
@@ -333,7 +453,7 @@ process.on("message", (msg: ProcessMsg) => {
                 });
                 break;
             }
-            void game.snapshotOpsia().then(() => {
+            void game.snapshotOpsia(opsiaServerTick).then(() => {
                 sendMsg({
                     type: ProcessMsgType.OpsiaSaveResult,
                     requestId: msg.requestId,
@@ -344,6 +464,74 @@ process.on("message", (msg: ProcessMsg) => {
                 const message = error instanceof Error ? error.message : "opsia_snapshot_failed";
                 console.error("Opsia manual snapshot failed", error);
                 sendMsg({ type: ProcessMsgType.OpsiaSaveResult, requestId: msg.requestId, ok: false, error: message });
+            });
+            break;
+        case ProcessMsgType.OpsiaHandoffStatus:
+            try {
+                sendMsg({
+                    type: ProcessMsgType.OpsiaHandoffStatusResult,
+                    requestId: msg.requestId,
+                    ok: true,
+                    status: game.opsiaHandoffStatus(),
+                });
+            } catch (error) {
+                sendMsg({
+                    type: ProcessMsgType.OpsiaHandoffStatusResult,
+                    requestId: msg.requestId,
+                    ok: false,
+                    error: error instanceof Error ? error.message : "handoff_status_failed",
+                });
+            }
+            break;
+        case ProcessMsgType.OpsiaHandoffSeed:
+            void game.seedOpsiaCandidate(msg.request).then((status) => {
+                sendMsg({
+                    type: ProcessMsgType.OpsiaHandoffSeedResult,
+                    requestId: msg.requestId,
+                    ok: true,
+                    status,
+                });
+            }).catch((error) => {
+                sendMsg({
+                    type: ProcessMsgType.OpsiaHandoffSeedResult,
+                    requestId: msg.requestId,
+                    ok: false,
+                    error: error instanceof Error ? error.message : "candidate_seed_failed",
+                });
+            });
+            break;
+        case ProcessMsgType.OpsiaHandoffRelease:
+            void game.releaseOpsiaAuthority(msg.request).then((status) => {
+                sendMsg({
+                    type: ProcessMsgType.OpsiaHandoffReleaseResult,
+                    requestId: msg.requestId,
+                    ok: true,
+                    status,
+                });
+            }).catch((error) => {
+                sendMsg({
+                    type: ProcessMsgType.OpsiaHandoffReleaseResult,
+                    requestId: msg.requestId,
+                    ok: false,
+                    error: error instanceof Error ? error.message : "authority_release_failed",
+                });
+            });
+            break;
+        case ProcessMsgType.OpsiaHandoffPromote:
+            void game.promoteOpsiaCandidate(msg.request).then((status) => {
+                sendMsg({
+                    type: ProcessMsgType.OpsiaHandoffPromoteResult,
+                    requestId: msg.requestId,
+                    ok: true,
+                    status,
+                });
+            }).catch((error) => {
+                sendMsg({
+                    type: ProcessMsgType.OpsiaHandoffPromoteResult,
+                    requestId: msg.requestId,
+                    ok: false,
+                    error: error instanceof Error ? error.message : "candidate_promote_failed",
+                });
             });
             break;
     }
@@ -376,12 +564,15 @@ if (platform() === "win32") {
 
 let lastOpsiaSnapshotAt = Date.now();
 let lastOpsiaSaveAt = 0;
+let opsiaServerTick = 0;
+const opsiaSnapshotIntervalMs = opsiaEnabled() ? readSnapshotRuntimeConfig().intervalMs : 1_000;
 let opsiaTickWindowStartedAt = performance.now();
 let opsiaTickSamples: number[] = [];
 setGameInterval(() => {
     const startedAt = performance.now();
     game?.update();
     if (game && opsiaEnabled() && game.isOpsiaReady()) {
+        opsiaServerTick++;
         const now = Date.now();
         const tickMs = performance.now() - startedAt;
         opsiaTickSamples.push(tickMs);
@@ -395,14 +586,16 @@ setGameInterval(() => {
             const measuredTickRate = opsiaTickSamples.length * 1000 / elapsedMs;
             sendMsg({
                 type: ProcessMsgType.OpsiaSnapshot,
-                snapshot: makeOpsSnapshot(game, tickP95Ms, measuredTickRate),
+                snapshot: makeOpsSnapshot(game, tickP95Ms, measuredTickRate, game.opsiaSnapshotMetrics()),
             });
             opsiaTickWindowStartedAt = sampledAt;
             opsiaTickSamples = [];
         }
-        if (now - lastOpsiaSaveAt >= 1000) {
+        if (game.canSnapshotOpsia() && now - lastOpsiaSaveAt >= opsiaSnapshotIntervalMs) {
             lastOpsiaSaveAt = now;
-            void game.snapshotOpsia().catch((error) => console.error("Opsia snapshot save failed", error));
+            void game.snapshotOpsia(opsiaServerTick).catch((error) =>
+                console.error("Opsia snapshot save failed", error)
+            );
         }
     }
 }, 1000 / Config.gameTps);

@@ -3,7 +3,7 @@ import { MapObjectDefs } from "../defs/register.ts";
 import { type AABB, coldet, type Collider } from "./coldet.ts";
 import { collider } from "./collider.ts";
 import { math } from "./math.ts";
-import { assert, util } from "./util.ts";
+import { assert } from "./util.ts";
 import { v2, type Vec2 } from "./v2.ts";
 
 // Memoize computed object colliders
@@ -57,11 +57,17 @@ function computeBoundingCollider(type: string): Collider {
         // Map objects
         for (let i = 0; i < def.mapObjects.length; i++) {
             const mapObj = def.mapObjects[i];
-            let mt = mapObj.type!;
-            if (typeof mt === "object") {
-                mt = util.weightedRandomObject(mt);
-            }
-            if (mt !== "") {
+            const possibleTypes = typeof mapObj.type === "object"
+                ? Object.entries(mapObj.type)
+                    .filter(([type, weight]) => type !== "" && weight > 0)
+                    .map(([type]) => type)
+                : mapObj.type
+                    ? [mapObj.type]
+                    : [];
+            // A bounding collider is memoized and must not consume gameplay
+            // entropy. Include every weighted variant so a cold cache and a
+            // warm cache produce the same conservative spawn bounds.
+            for (const mt of possibleTypes) {
                 const rot = math.oriToRad(mapObj.ori);
                 const col = collider.transform(
                     mapHelpers.getBoundingCollider(mt),

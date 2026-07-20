@@ -15,6 +15,13 @@ import { Config } from "./config.ts";
 import { GameProcessManager, type GameSocketData, ProcState } from "./game/gameProcessManager.ts";
 import type { OpsiaSnapshotData } from "./game/ipcTypes.ts";
 import { controlTokenMatches, readControlToken } from "./opsia/controlPlaneAuth.ts";
+import { decodeGatewayFrame, encodeGatewayOutput } from "./opsia/gatewayWire.ts";
+import {
+    assertGatewaySharedSecret,
+    type GatewayConnectionIdentity,
+    readGatewayJoin,
+    verifyGatewayConnection,
+} from "./opsia/sessionGatewayProtocol.ts";
 import { apiPrivateRouter } from "./utils/apiRouter.ts";
 import { GIT_VERSION } from "./utils/gitRevision.ts";
 import { logErrorToWebhook, ServerLogger } from "./utils/logger.ts";
@@ -38,8 +45,23 @@ const zOpsiaFindGame = z.object({
     spectator: z.boolean().optional(),
     spectateSessionId: z.string().min(16).max(128).optional(),
 }).passthrough();
+const zCandidateSeed = z.object({
+    expectedEpoch: z.number().int().nonnegative(),
+    targetTick: z.number().int().nonnegative(),
+    expectedChecksum: z.string().regex(/^[a-f\d]{64}$/).optional(),
+    maxEntries: z.number().int().min(1).max(512).optional(),
+}).strict();
+const zAuthorityRelease = z.object({
+    expectedEpoch: z.number().int().nonnegative(),
+    expectedChecksum: z.string().regex(/^[a-f\d]{64}$/),
+}).strict();
+const zCandidatePromote = z.object({
+    expectedEpoch: z.number().int().nonnegative(),
+    nextEpoch: z.number().int().positive(),
+    expectedChecksum: z.string().regex(/^[a-f\d]{64}$/),
+}).strict();
 
-const opsiaMapName = z.enum(["faction", "desert", "snow"]).parse(
+const opsiaMapName = z.enum(["faction", "desert", "snow", "main", "woods"]).parse(
     process.env.OPSIA_MAP_NAME ?? "faction",
 );
 const getOpsiaMode = () => {
@@ -52,6 +74,19 @@ const opsiaModeLabel = opsiaMapName === "faction" ? "Faction 50v50" : "Solo FFA"
 const opsiaMaxPlayers = MapDefs[opsiaMapName].gameMode.maxPlayers;
 
 const controlToken = readControlToken();
+const requireSessionGateway = process.env.OPSIA_ROOM === "true"
+    && process.env.REQUIRE_SESSION_GATEWAY === "true";
+const sessionGatewaySharedSecret = process.env.SESSION_GATEWAY_SHARED_SECRET?.trim() ?? "";
+if (requireSessionGateway) assertGatewaySharedSecret(sessionGatewaySharedSecret);
+const consumedGatewayNonces = new Map<string, number>();
+const consumeGatewayNonce = (nonce: string, now = Date.now()): boolean => {
+    for (const [candidate, expiresAt] of consumedGatewayNonces) {
+        if (expiresAt <= now) consumedGatewayNonces.delete(candidate);
+    }
+    if (consumedGatewayNonces.has(nonce)) return false;
+    consumedGatewayNonces.set(nonce, now + 60_000);
+    return true;
+};
 const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> => {
     let timer: NodeJS.Timeout | undefined;
     try {
@@ -68,6 +103,10 @@ const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, message:
 
 class OpsiaMetrics {
     readonly registry = new Registry();
+    private readonly snapshotCounterBaselines = new Map<
+        string,
+        { coalescedTotal: number; failuresTotal: number; timeoutsTotal: number }
+    >();
     private readonly tickP95 = new Gauge({
         name: "tick_p95_ms",
         help: "500ms-window p95 of survev Game.update duration",
@@ -77,6 +116,12 @@ class OpsiaMetrics {
     private readonly online = new Gauge({
         name: "players_online",
         help: "players in the real survev playerBarn",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly processResidentMemory = new Gauge({
+        name: "process_resident_memory_bytes",
+        help: "resident memory of the authoritative survev game process",
         labelNames: ["room"] as const,
         registers: [this.registry],
     });
@@ -92,15 +137,107 @@ class OpsiaMetrics {
         labelNames: ["room", "outcome"] as const,
         registers: [this.registry],
     });
+    private readonly snapshotInflight = new Gauge({
+        name: "game_snapshot_inflight",
+        help: "whether a room snapshot write is currently in flight",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly snapshotPending = new Gauge({
+        name: "game_snapshot_pending",
+        help: "bounded latest snapshot request waiting behind the active write",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly snapshotPayloadBytes = new Gauge({
+        name: "game_snapshot_payload_bytes",
+        help: "serialized snapshot envelope size",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly snapshotWriteDuration = new Gauge({
+        name: "game_snapshot_write_duration_seconds",
+        help: "duration of the latest snapshot write",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly snapshotCoalesced = new Counter({
+        name: "game_snapshot_coalesced_total",
+        help: "snapshot requests coalesced into the bounded latest request",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly snapshotFailures = new Counter({
+        name: "game_snapshot_failures_total",
+        help: "snapshot serialization, write, journal, and timeout failures",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly snapshotTimeouts = new Counter({
+        name: "game_snapshot_timeouts_total",
+        help: "snapshot writes that crossed the bounded write deadline",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly snapshotCircuitOpen = new Gauge({
+        name: "game_snapshot_circuit_open",
+        help: "whether repeated snapshot failures have disabled handoff",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly snapshotHandoffEnabled = new Gauge({
+        name: "game_snapshot_handoff_enabled",
+        help: "whether the latest snapshot state is eligible for room handoff",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly roomEpoch = new Gauge({
+        name: "game_room_epoch",
+        help: "fencing epoch attached to the latest snapshot",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
+    private readonly serverTick = new Gauge({
+        name: "game_server_tick",
+        help: "authoritative server tick attached to the latest snapshot",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
 
     observe(snapshot: OpsiaSnapshotData): void {
         this.tickP95.labels(snapshot.roomId).set(snapshot.tickP95Ms);
         this.online.labels(snapshot.roomId).set(snapshot.players.filter((player) => player.connected).length);
+        this.processResidentMemory.labels(snapshot.roomId).set(Math.round(snapshot.memoryMb * 1024 * 1024));
         this.alive.labels(snapshot.roomId).set(
             snapshot.players.filter((player) => player.connected && player.alive).length,
         );
         if (snapshot.inputAccepted) this.inputs.labels(snapshot.roomId, "accepted").inc(snapshot.inputAccepted);
         if (snapshot.inputRejected) this.inputs.labels(snapshot.roomId, "rejected").inc(snapshot.inputRejected);
+        const writer = snapshot.snapshot;
+        this.snapshotInflight.labels(snapshot.roomId).set(writer.inflight);
+        this.snapshotPending.labels(snapshot.roomId).set(writer.pending);
+        this.snapshotPayloadBytes.labels(snapshot.roomId).set(writer.payloadBytes);
+        this.snapshotWriteDuration.labels(snapshot.roomId).set(writer.writeDurationMs / 1_000);
+        this.snapshotCircuitOpen.labels(snapshot.roomId).set(writer.circuitOpen ? 1 : 0);
+        this.snapshotHandoffEnabled.labels(snapshot.roomId).set(writer.handoffEnabled ? 1 : 0);
+        this.roomEpoch.labels(snapshot.roomId).set(writer.roomEpoch);
+        this.serverTick.labels(snapshot.roomId).set(writer.serverTick);
+        const previous = this.snapshotCounterBaselines.get(snapshot.roomId) ?? {
+            coalescedTotal: 0,
+            failuresTotal: 0,
+            timeoutsTotal: 0,
+        };
+        const coalescedDelta = Math.max(0, writer.coalescedTotal - previous.coalescedTotal);
+        const failureDelta = Math.max(0, writer.failuresTotal - previous.failuresTotal);
+        const timeoutDelta = Math.max(0, writer.timeoutsTotal - previous.timeoutsTotal);
+        if (coalescedDelta) this.snapshotCoalesced.labels(snapshot.roomId).inc(coalescedDelta);
+        if (failureDelta) this.snapshotFailures.labels(snapshot.roomId).inc(failureDelta);
+        if (timeoutDelta) this.snapshotTimeouts.labels(snapshot.roomId).inc(timeoutDelta);
+        this.snapshotCounterBaselines.set(snapshot.roomId, {
+            coalescedTotal: writer.coalescedTotal,
+            failuresTotal: writer.failuresTotal,
+            timeoutsTotal: writer.timeoutsTotal,
+        });
     }
 }
 
@@ -178,6 +315,7 @@ class GameServer {
     }
 
     async findOpsiaGame(body: z.infer<typeof zOpsiaFindGame>, host: string, ip: string, useHttps = this.region.https) {
+        if (process.env.OPSIA_ROLE === "candidate") return { error: "candidate_not_public" };
         // Fail closed and, critically, finish the HTTP response if Redis is
         // unavailable. A join-lock lookup must never leave admission hanging.
         await withTimeout(this.refreshJoinLock(), 1_500, "join_lock_unavailable");
@@ -338,6 +476,30 @@ app.get("/health", (res) => {
 });
 
 app.get("/healthz", (res) => {
+    if (process.env.OPSIA_ROOM === "true" && ["auto", "candidate"].includes(process.env.OPSIA_ROLE ?? "")) {
+        res.onAborted(() => {
+            res.aborted = true;
+        });
+        void server.manager.getOpsiaHandoffStatus().then((handoff) => {
+            if (res.aborted) return;
+            const healthy = handoff.role === "active" && handoff.ready && server.manager.isOpsiaReady();
+            res.cork(() => {
+                if (!healthy) res.writeStatus("503 Service Unavailable");
+                uwsHelpers.returnJson(res, {
+                    status: healthy ? "ok" : "handoff-waiting",
+                    roomId: process.env.ROOM_ID ?? "room-0",
+                    runtime: "survev-gameServer",
+                    role: handoff.role,
+                    phase: handoff.phase,
+                });
+            });
+        }).catch(() => {
+            if (!res.aborted) {
+                res.cork(() => res.writeStatus("503 Service Unavailable").end("handoff status unavailable"));
+            }
+        });
+        return;
+    }
     if (process.env.OPSIA_ROOM === "true" && !server.manager.isOpsiaReady()) {
         res.writeStatus("503 Service Unavailable");
         uwsHelpers.returnJson(res, {
@@ -395,6 +557,7 @@ app.get("/summary", (res) => {
         uptimeSeconds: snapshot?.uptimeSeconds,
         inputAccepted: snapshot?.inputAccepted,
         inputRejected: snapshot?.inputRejected,
+        opsiaRole: process.env.OPSIA_ROLE ?? "active",
         qrUrl: `${process.env.PUBLIC_BASE_URL ?? "http://localhost:8090"}/play/${process.env.ROOM_ID ?? "room-0"}/`,
     });
 });
@@ -462,6 +625,124 @@ app.post("/ops/snapshot/save", (res, req) => {
             );
         }
     });
+});
+
+app.get("/ops/handoff/status", (res, req) => {
+    if (!authorizeOpsRequest(res, req)) return;
+    res.onAborted(() => {
+        res.aborted = true;
+    });
+    void server.manager.getOpsiaHandoffStatus().then((status) => {
+        if (!res.aborted) res.cork(() => uwsHelpers.returnJson(res, status as unknown as Record<string, unknown>));
+    }).catch((error) => {
+        if (!res.aborted) {
+            res.cork(() =>
+                res.writeStatus("503 Service Unavailable")
+                    .writeHeader("Content-Type", "application/json")
+                    .end(JSON.stringify({ error: error instanceof Error ? error.message : "handoff_status_failed" }))
+            );
+        }
+    });
+});
+
+app.post("/ops/handoff/seed", (res, req) => {
+    if (!authorizeOpsRequest(res, req)) return;
+    res.onAborted(() => {
+        res.aborted = true;
+    });
+    void (async () => {
+        let request: z.infer<typeof zCandidateSeed>;
+        try {
+            request = await uwsHelpers.getJsonBody(res, zCandidateSeed);
+        } catch (error) {
+            server.logger.warn("/ops/handoff/seed invalid body: ", error);
+            return;
+        }
+        try {
+            const status = await server.manager.seedOpsiaCandidate(request);
+            if (res.aborted) return;
+            res.cork(() => {
+                if (!status.ready) res.writeStatus("409 Conflict");
+                uwsHelpers.returnJson(res, status as unknown as Record<string, unknown>);
+            });
+        } catch (error) {
+            if (!res.aborted) {
+                const message = error instanceof Error ? error.message : "candidate_seed_failed";
+                const responseStatus = message === "candidate_role_required"
+                    ? "409 Conflict"
+                    : "503 Service Unavailable";
+                res.cork(() =>
+                    res.writeStatus(responseStatus)
+                        .writeHeader("Content-Type", "application/json")
+                        .end(JSON.stringify({ error: message }))
+                );
+            }
+        }
+    })();
+});
+
+app.post("/ops/handoff/release", (res, req) => {
+    if (!authorizeOpsRequest(res, req)) return;
+    res.onAborted(() => {
+        res.aborted = true;
+    });
+    void (async () => {
+        let request: z.infer<typeof zAuthorityRelease>;
+        try {
+            request = await uwsHelpers.getJsonBody(res, zAuthorityRelease);
+        } catch (error) {
+            server.logger.warn("/ops/handoff/release invalid body: ", error);
+            return;
+        }
+        try {
+            const status = await server.manager.releaseOpsiaAuthority(request);
+            if (!res.aborted) res.cork(() => uwsHelpers.returnJson(res, status as unknown as Record<string, unknown>));
+        } catch (error) {
+            if (!res.aborted) {
+                res.cork(() =>
+                    res.writeStatus("409 Conflict")
+                        .writeHeader("Content-Type", "application/json")
+                        .end(
+                            JSON.stringify({
+                                error: error instanceof Error ? error.message : "authority_release_failed",
+                            }),
+                        )
+                );
+            }
+        }
+    })();
+});
+
+app.post("/ops/handoff/promote", (res, req) => {
+    if (!authorizeOpsRequest(res, req)) return;
+    res.onAborted(() => {
+        res.aborted = true;
+    });
+    void (async () => {
+        let request: z.infer<typeof zCandidatePromote>;
+        try {
+            request = await uwsHelpers.getJsonBody(res, zCandidatePromote);
+        } catch (error) {
+            server.logger.warn("/ops/handoff/promote invalid body: ", error);
+            return;
+        }
+        try {
+            const status = await server.manager.promoteOpsiaCandidate(request);
+            if (!res.aborted) res.cork(() => uwsHelpers.returnJson(res, status as unknown as Record<string, unknown>));
+        } catch (error) {
+            if (!res.aborted) {
+                res.cork(() =>
+                    res.writeStatus("409 Conflict")
+                        .writeHeader("Content-Type", "application/json")
+                        .end(
+                            JSON.stringify({
+                                error: error instanceof Error ? error.message : "candidate_promote_failed",
+                            }),
+                        )
+                );
+            }
+        }
+    })();
 });
 
 app.post("/ops/failure/process-crash", (res, req) => {
@@ -657,7 +938,7 @@ const gameWsRateLimit = new WebSocketRateLimit(500, 1000, opsiaRoom ? 100 : 5);
 
 const gameWsBehavior: import("uWebSockets.js").WebSocketBehavior<GameSocketData> = {
     idleTimeout: 30,
-    maxPayloadLength: 1024,
+    maxPayloadLength: 2 * 1024,
 
     async upgrade(res, req, context): Promise<void> {
         res.onAborted((): void => {
@@ -687,11 +968,42 @@ const gameWsBehavior: import("uWebSockets.js").WebSocketBehavior<GameSocketData>
 
         const searchParams = new URLSearchParams(req.getQuery());
         const gameId = searchParams.get("gameId");
+        const gatewayRequested = searchParams.get("opsiaGateway") === "1";
+        const gatewaySessionId = gatewayRequested ? searchParams.get("gatewaySessionId") ?? "" : undefined;
+        const roomEpoch = gatewayRequested ? Number(searchParams.get("roomEpoch")) : undefined;
+        const gatewayIssuedAt = gatewayRequested ? Number(searchParams.get("gatewayIssuedAt")) : undefined;
+        const gatewayNonce = gatewayRequested ? searchParams.get("gatewayNonce") ?? "" : undefined;
+        const gatewaySignature = gatewayRequested ? searchParams.get("gatewaySignature") ?? "" : undefined;
 
         if (!gameId) {
             server.logger.warn("Websocket upgrade closed: no game ID");
             uwsHelpers.forbidden(res);
             return;
+        }
+        if (requireSessionGateway && !gatewayRequested) {
+            res.writeStatus("403 Forbidden").end("session_gateway_required");
+            return;
+        }
+        if (gatewayRequested) {
+            const identity: GatewayConnectionIdentity = {
+                roomId: process.env.ROOM_ID ?? "",
+                gameId,
+                sessionId: gatewaySessionId ?? "",
+                roomEpoch: roomEpoch ?? Number.NaN,
+                issuedAt: gatewayIssuedAt ?? Number.NaN,
+                nonce: gatewayNonce ?? "",
+            };
+            if (
+                !verifyGatewayConnection(
+                    sessionGatewaySharedSecret,
+                    identity,
+                    gatewaySignature ?? "",
+                )
+                || !consumeGatewayNonce(identity.nonce)
+            ) {
+                res.writeStatus("403 Forbidden").end("invalid_gateway_signature");
+                return;
+            }
         }
         const proc = server.manager.getById(gameId);
 
@@ -731,6 +1043,9 @@ const gameWsBehavior: import("uWebSockets.js").WebSocketBehavior<GameSocketData>
                     rateLimit: {},
                     ip,
                     disconnectReason,
+                    gatewaySessionId,
+                    roomEpoch,
+                    gatewayJoinConsumed: false,
                 },
                 wskey,
                 wsProtocol,
@@ -748,7 +1063,14 @@ const gameWsBehavior: import("uWebSockets.js").WebSocketBehavior<GameSocketData>
             disconnectMsg.reason = data.disconnectReason;
             const stream = new net.MsgStream(new ArrayBuffer(128));
             stream.serializeMsg(net.MsgType.Disconnect, disconnectMsg);
-            socket.send(stream.getBuffer(), true, false);
+            const output = data.gatewaySessionId && Number.isSafeInteger(data.roomEpoch)
+                ? encodeGatewayOutput({
+                    roomEpoch: data.roomEpoch!,
+                    serverTick: 0,
+                    payload: stream.getBuffer(),
+                })
+                : stream.getBuffer();
+            socket.send(output, true, false);
             socket.end();
             return;
         }
@@ -762,7 +1084,45 @@ const gameWsBehavior: import("uWebSockets.js").WebSocketBehavior<GameSocketData>
             socket.close();
             return;
         }
-        server.manager.onMsg(socket.getUserData().id, message);
+        const data = socket.getUserData();
+        if (data.gatewaySessionId) {
+            let frame: ReturnType<typeof decodeGatewayFrame>;
+            try {
+                frame = decodeGatewayFrame(message);
+            } catch {
+                socket.end(1002, "invalid_gateway_wire_frame");
+                return;
+            }
+            if (frame?.kind !== "input" || frame.roomEpoch !== data.roomEpoch) {
+                socket.end(1002, "gateway_epoch_or_frame_invalid");
+                return;
+            }
+            if (frame.inputSequence === 0) {
+                if (data.gatewayJoinConsumed || !readGatewayJoin(frame.payload)) {
+                    socket.end(1002, "gateway_join_frame_invalid");
+                    return;
+                }
+                data.gatewayJoinConsumed = true;
+                server.manager.onMsg(data.id, Uint8Array.from(frame.payload).buffer);
+                return;
+            }
+            if (!data.gatewayJoinConsumed) {
+                socket.end(1002, "gateway_join_required");
+                return;
+            }
+            server.manager.onMsg(
+                data.id,
+                Uint8Array.from(frame.payload).buffer,
+                {
+                    sessionId: data.gatewaySessionId,
+                    inputSequence: frame.inputSequence,
+                    clientTick: frame.clientTick,
+                    roomEpoch: frame.roomEpoch,
+                },
+            );
+            return;
+        }
+        server.manager.onMsg(data.id, message);
     },
 
     close(socket: WebSocket<GameSocketData>) {

@@ -2,11 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MemoryRoomRegistry, RoomReconciler } from "../../services/room-orchestrator/src/registry.js";
 
-test("registry fixes room IDs to StatefulSet ordinals and only deactivates high ordinals", async () => {
+test("registry fixes room IDs to room Deployment names and only deactivates high ordinals", async () => {
   const registry = new MemoryRoomRegistry();
   const reconciler = new RoomReconciler(registry);
-  await reconciler.reconcile(3, (ordinal) => `http://game-${ordinal}:8080`);
-  assert.deepEqual((await registry.list()).map((room) => [room.roomId, room.podName]), [["room-0", "game-0"], ["room-1", "game-1"], ["room-2", "game-2"]]);
+  await reconciler.reconcile(3);
+  assert.deepEqual((await registry.list()).map((room) => [room.roomId, room.podName]), [["room-0", "game-room-0"], ["room-1", "game-room-1"], ["room-2", "game-room-2"]]);
   await reconciler.reconcile(2);
   const rooms = await registry.list();
   assert.equal(rooms[0]?.status, "waiting");
@@ -35,15 +35,17 @@ test("registry preserves room metadata and does not expose mutable spec referenc
   assert.equal(reconciled?.spec?.mode, "Faction 50v50");
 });
 
-test("registry assigns the fixed map profile for each StatefulSet ordinal", async () => {
+test("registry assigns the fixed map profile for each room Deployment ordinal", async () => {
   const registry = new MemoryRoomRegistry();
   const reconciler = new RoomReconciler(registry);
-  await reconciler.reconcile(3);
+  await reconciler.reconcile(5);
   const rooms = await registry.list();
 
   assert.deepEqual(rooms.map((room) => [room.spec?.map, room.spec?.mode, room.spec?.maxPlayers]), [
     ["Faction Island", "Faction 50v50", 100],
     ["Desert", "Solo FFA", 80],
     ["Snow", "Solo FFA", 80],
+    ["Main Island", "Solo FFA", 80],
+    ["Woods", "Solo FFA", 80],
   ]);
 });

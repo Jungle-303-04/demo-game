@@ -17,8 +17,10 @@ import { assert, util } from "../../../shared/utils/util.ts";
 import { v2, type Vec2 } from "../../../shared/utils/v2.ts";
 import { Config } from "../config.ts";
 import type { Game } from "./game.ts";
+import { Grid } from "./grid.ts";
 import type { Group, Team } from "./group.ts";
 import { Building } from "./objects/building.ts";
+import { ObjectRegister } from "./objects/gameObject.ts";
 import { Obstacle } from "./objects/obstacle.ts";
 import type { Player } from "./objects/player.ts";
 import { Structure } from "./objects/structure.ts";
@@ -306,7 +308,21 @@ export class GameMap {
     }
 
     init(seed?: number) {
+        // Generation helpers consume/shuffle nested map-definition arrays.
+        // Regeneration must start from the immutable registry definition or a
+        // pod's previous map seed leaks into the next layout.
+        this.mapDef = util.cloneDeep(MapDefs[this.game.config.mapName]) as MapDef;
         this.seed = seed ?? util.randomInt(0, 2 ** 32 - 1);
+        // Object placement historically mixed seeded terrain RNG with the
+        // process-global Math.random. That made two servers with the same map
+        // seed produce different authoritative obstacle/building layouts. Map
+        // generation is synchronous, so scope a deterministic stream to this
+        // call and always restore the process RNG before returning.
+        const processRandom = Math.random;
+        const generationRandom = util.seededRand(this.seed);
+        Math.random = () => generationRandom();
+        const restoreRandomSource = util.useRandomSource(() => generationRandom());
+        try {
 
         this.obstacles = [];
         this.dynamicObstacles = [];
@@ -314,6 +330,8 @@ export class GameMap {
         this.buildingsWithEmitters = [];
         this.structures = [];
         this.bridges = [];
+        this.scheduledUnlocks = [];
+        this.unlocks = [];
         this.riverDescs = [];
         this.lakeObjs = [];
         this.grid = new MapGrid(this.width, this.height);
@@ -392,6 +410,10 @@ export class GameMap {
 
         this.mapStream.stream.index = 0;
         this.mapStream.serializeMsg(MsgType.Map, this.msg);
+        } finally {
+            restoreRandomSource();
+            Math.random = processRandom;
+        }
     }
 
     regenerate(seed?: number) {
@@ -409,6 +431,15 @@ export class GameMap {
             ) {
                 obj.destroy();
             }
+        }
+
+        // Complete unregistration before generation. Leaving destroyed map
+        // objects in ObjectRegister made parent lookups and collision queries
+        // depend on the previous layout, even when the requested seed matched.
+        this.game.objectRegister.flush();
+        if (this.game.playerBarn.players.length === 0 && this.game.clientBarn.clients.length === 0) {
+            this.game.grid = new Grid(this.width, this.height);
+            this.game.objectRegister = new ObjectRegister(this.game.grid);
         }
 
         this.init(seed);

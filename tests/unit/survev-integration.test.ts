@@ -28,6 +28,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   const controlPlaneClient = await readFile(join(process.cwd(), "services/ops-console/web/src/control-plane-client.ts"), "utf8");
   const failureScenarios = await readFile(join(process.cwd(), "services/ops-console/src/failure-scenarios.ts"), "utf8");
   const botRunner = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRunner.ts"), "utf8");
+  const botRouting = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRouting.ts"), "utf8");
   const gameProcessManager = await readFile(join(process.cwd(), "upstream-survev/server/src/game/gameProcessManager.ts"), "utf8");
   const adminCss = await readFile(join(process.cwd(), "services/ops-console/web/src/globals.css"), "utf8");
   const adminHtml = await readFile(join(process.cwd(), "services/ops-console/web/index.html"), "utf8");
@@ -168,6 +169,18 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(botRunner, /const HACK_BOT_INPUT_INTERVAL_MS = 30/);
   assert.match(botRunner, /this\.mode === "hack"/);
   assert.match(botRunner, /OPSIA_BOT_RECONCILE_INTERVAL_MS \?\? "2000"/);
+  assert.match(botRunner, /SESSION_GATEWAY_INTERNAL_URL/);
+  assert.match(botRunner, /botFindGameUrl\(roomId, endpoint, sessionGatewayUrl\)/);
+  assert.match(botRunner, /botWebsocketUrl\(roomId, match\.res\[0\], sessionId, sessionGatewayUrl\)/);
+  assert.match(botRouting, /roomId === "canary-room"/);
+  assert.match(botRouting, /session_gateway_url_required_for_live_bots/);
+  assert.match(gameServer, /verifyGatewayConnection/);
+  assert.match(gameServer, /consumeGatewayNonce/);
+  assert.match(gameServer, /session_gateway_required/);
+  assert.match(gameServer, /gateway_join_frame_invalid/);
+  assert.match(gameServer, /gateway_join_required/);
+  assert.match(serverClient, /session_already_connected/);
+  assert.match(serverClient, /session_reattach_expired/);
   assert.match(gameServer, /app\.post\("\/ops\/failure\/process-crash"/);
   assert.match(gameProcessManager, /crashOpsiaRoom\(\): number/);
   assert.match(gameProcessManager, /this\.killProcess\(proc, "SIGKILL"\)/);
@@ -202,7 +215,9 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminCss, /overflow-y: auto/);
   assert.match(adminCss, /width: min\(50vw, calc\(100dvh - 220px\), 860px\)/);
   assert.match(compose, /PUBLIC_GAME_HOST:-localhost/);
-  assert.match(compose, /"8190:8001"/);
+  assert.match(compose, /"8083:8083"/);
+  assert.match(compose, /SESSION_ROOM_ENDPOINTS:[^\n]*room-4=http:\/\/game-4:8001/);
+  assert.doesNotMatch(compose, /"8190:8001"/);
   assert.match(deadBodies, /DEAD_BODY_TTL_SECONDS = 18/);
   assert.match(deadBodies, /this\.ageSeconds >= DEAD_BODY_TTL_SECONDS/);
   assert.match(loot, /cleanupAfterSeconds/);
@@ -212,22 +227,67 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.doesNotMatch(docker, /services\/game-server\/src\/main/);
 });
 
-test("the three room pods run distinct validated maps", async () => {
+test("five room Deployments, isolated canary, and registry discovery match the fleet contract", async () => {
   const gameServer = await readFile(join(process.cwd(), "upstream-survev/server/src/gameServer.ts"), "utf8");
   const roomConfig = await readFile(join(process.cwd(), "services/game-server/survev-config.hjson"), "utf8");
   const compose = await readFile(join(process.cwd(), "docker-compose.yml"), "utf8");
-  const statefulSet = await readFile(join(process.cwd(), "deploy/k8s/base/game.yaml"), "utf8");
+  const liveDeployments = await readFile(join(process.cwd(), "deploy/k8s/base/game.yaml"), "utf8");
+  const roomServices = await readFile(join(process.cwd(), "deploy/k8s/base/services.yaml"), "utf8");
+  const canary = await readFile(join(process.cwd(), "deploy/k8s/base/canary.yaml"), "utf8");
+  const gateway = await readFile(join(process.cwd(), "deploy/k8s/base/gateway.yaml"), "utf8");
+  const policy = await readFile(join(process.cwd(), "deploy/k8s/base/configmap.yaml"), "utf8");
+  const management = await readFile(join(process.cwd(), "deploy/k8s/base/management-server.yaml"), "utf8");
+  const sessionGateway = await readFile(join(process.cwd(), "deploy/k8s/base/session-gateway.yaml"), "utf8");
+  const botRunner = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRunner.ts"), "utf8");
+  const botRouting = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRouting.ts"), "utf8");
 
-  assert.match(gameServer, /z\.enum\(\["faction", "desert", "snow"\]\)/);
+  assert.match(gameServer, /z\.enum\(\["faction", "desert", "snow", "main", "woods"\]\)/);
   assert.match(gameServer, /process\.env\.OPSIA_MAP_NAME \?\? "faction"/);
   assert.match(gameServer, /server\.manager\.newGame\(opsiaMode\)/);
   assert.match(gameServer, /modes: process\.env\.OPSIA_ROOM === "true" \? \[opsiaMode\] : Config\.modes/);
   assert.match(gameServer, /mapName: opsiaMapName/);
   assert.match(gameServer, /mode: opsiaModeLabel/);
   assert.match(gameServer, /maxPlayers: opsiaMaxPlayers/);
-  for (const mapName of ["faction", "desert", "snow"]) {
+  for (const mapName of ["faction", "desert", "snow", "main", "woods"]) {
     assert.match(roomConfig, new RegExp(`mapName: "${mapName}"`));
     assert.match(compose, new RegExp(`OPSIA_MAP_NAME: ${mapName}`));
-    assert.match(statefulSet, new RegExp(`export OPSIA_MAP_NAME=${mapName}`));
+    assert.match(liveDeployments, new RegExp(`OPSIA_MAP_NAME, value: ${mapName}`));
   }
+  assert.equal((liveDeployments.match(/name: game-room-[0-4]\n/g) ?? []).length, 5);
+  assert.equal((liveDeployments.match(/replicas: 1/g) ?? []).length, 5);
+  assert.equal((liveDeployments.match(/maxSurge: 1/g) ?? []).length, 5);
+  assert.equal((liveDeployments.match(/maxUnavailable: 0/g) ?? []).length, 5);
+  assert.equal((liveDeployments.match(/opsia\.dev\/rollout-role: active-candidate/g) ?? []).length, 5);
+  assert.doesNotMatch(liveDeployments, /kind: StatefulSet/);
+  for (let ordinal = 0; ordinal < 5; ordinal += 1) {
+    assert.match(roomServices, new RegExp(`name: game-room-${ordinal}`));
+  }
+  assert.match(gateway, /room-\\d\+/);
+  assert.match(gateway, /proxy_pass http:\/\/session-gateway\.sandbox\.svc\.cluster\.local:8083/);
+  assert.match(policy, /desiredRooms: "5"/);
+  assert.match(policy, /roomProfiles: "room-0,room-1,room-2,room-3,room-4"/);
+  assert.match(policy, /kind: GameFleet/);
+  assert.match(policy, /maxConcurrentRooms: 1/);
+  assert.match(management, /OPSIA_ROOM_DIRECTORY_URL/);
+  assert.match(management, /GAME_DEPLOYMENT_PREFIX, value: game-room/);
+  assert.match(sessionGateway, /room-4=http:\/\/game-room-4:8001/);
+  assert.match(sessionGateway, /SESSION_GATEWAY_SHARED_SECRET/);
+  assert.equal((liveDeployments.match(/REQUIRE_SESSION_GATEWAY, value: "true"/g) ?? []).length, 5);
+  assert.equal((liveDeployments.match(/name: SESSION_GATEWAY_SHARED_SECRET/g) ?? []).length, 5);
+  assert.match(management, /SESSION_GATEWAY_INTERNAL_URL, value: http:\/\/session-gateway:8083/);
+  assert.doesNotMatch(sessionGateway, /canary-room=http/);
+  assert.doesNotMatch(gateway, /canary-room/);
+  assert.match(canary, /name: canary-room/);
+  assert.match(canary, /OPSIA_REDIS_KEY_PREFIX, value: "room:canary-room:"/);
+  assert.match(canary, /REDIS_URL, value: redis:\/\/redis:6379\/1/);
+  assert.match(canary, /OPSIA_ROOM_ENDPOINTS, value: "canary-room=http:\/\/canary-room:8001"/);
+  assert.match(canary, /OPSIA_MIN_BOTS_PER_ROOM, value: "10"/);
+  assert.match(canary, /limits: \{ cpu: "3", memory: 4Gi \}/);
+  assert.match(canary, /opsia\.dev\/public: disabled/);
+  assert.match(canary, /opsia\.dev\/matchmaking: disabled/);
+  assert.match(canary, /REQUIRE_SESSION_GATEWAY, value: "false"/);
+  assert.match(botRunner, /fetch\(`\$\{roomDirectoryUrl\}\/rooms`/);
+  assert.match(botRouting, /session_gateway_url_required_for_live_bots/);
+  assert.match(botRunner, /room\.status === "inactive"/);
+  assert.doesNotMatch(botRunner, /room-0=http:\/\/game-0/);
 });

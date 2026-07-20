@@ -3,6 +3,7 @@ import { GameConfig } from "../../../shared/gameConfig.ts";
 import * as net from "../../../shared/net/net.ts";
 import { type BotBrainSnapshot, createBotBrainState, decideBotIntent } from "./botBrain.ts";
 import { createBotInput } from "./botInput.ts";
+import { botFindGameUrl, botWebsocketUrl, normalizeSessionGatewayUrl } from "./botRouting.ts";
 import { controlTokenMatches, readControlToken } from "./controlPlaneAuth.ts";
 
 type BotMode = "normal" | "hack";
@@ -88,6 +89,7 @@ class SurvevProtocolBot {
         roomId: string,
         mode: BotMode,
         match: NonNullable<FindGameResponse["res"]>[number],
+        websocketUrl: string,
         private readonly roomEndpoint: string,
         private readonly onStopped: (id: string) => void,
     ) {
@@ -100,7 +102,7 @@ class SurvevProtocolBot {
             this.resolveReady = resolve;
             this.rejectReady = reject;
         });
-        this.ws = new WebSocket(`ws${match.useHttps ? "s" : ""}://${match.addrs[0]}/play?gameId=${match.gameId}`);
+        this.ws = new WebSocket(websocketUrl);
         this.ws.binaryType = "arraybuffer";
         this.ws.addEventListener("open", () => {
             const join = new net.JoinMsg();
@@ -215,15 +217,67 @@ class SurvevProtocolBot {
     }
 }
 
-const rooms = (): Map<string, string> => {
-    const configured = process.env.OPSIA_ROOM_ENDPOINTS
-        ?? "room-0=http://game-0:8001,room-1=http://game-1:8001,room-2=http://game-2:8001";
-    return new Map(
-        configured.split(",").map((entry) => {
-            const [roomId, endpoint] = entry.split("=");
-            return [roomId!, endpoint!];
-        }),
-    );
+const parseConfiguredRoomEndpoints = (configured = process.env.OPSIA_ROOM_ENDPOINTS ?? ""): Map<string, string> =>
+    new Map(configured.split(",").flatMap((entry) => {
+        const [roomId, endpoint] = entry.split("=").map((value) => value?.trim());
+        if (!roomId || !endpoint || !/^(?:room-\d+|canary-room)$/.test(roomId)) return [];
+        try {
+            const url = new URL(endpoint);
+            if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+            return [[roomId, url.toString().replace(/\/$/, "")]];
+        } catch {
+            return [];
+        }
+    }));
+
+const roomDirectoryUrl = process.env.OPSIA_ROOM_DIRECTORY_URL?.trim().replace(/\/$/, "");
+const sessionGatewayUrl = normalizeSessionGatewayUrl(process.env.SESSION_GATEWAY_INTERNAL_URL);
+const roomDiscoveryIntervalMs = Math.max(
+    250,
+    Math.min(30_000, Number.parseInt(process.env.OPSIA_ROOM_DISCOVERY_INTERVAL_MS ?? "1000", 10) || 1_000),
+);
+let discoveredRooms = parseConfiguredRoomEndpoints();
+let roomDiscoveryAt = 0;
+let roomDiscoveryPending: Promise<Map<string, string>> | undefined;
+
+const rooms = async (): Promise<Map<string, string>> => {
+    if (!roomDirectoryUrl) return new Map(discoveredRooms);
+    const now = Date.now();
+    if (discoveredRooms.size > 0 && now - roomDiscoveryAt < roomDiscoveryIntervalMs) {
+        return new Map(discoveredRooms);
+    }
+    if (roomDiscoveryPending) return new Map(await roomDiscoveryPending);
+    roomDiscoveryPending = (async () => {
+        try {
+            const response = await fetch(`${roomDirectoryUrl}/rooms`, {
+                headers: controlToken ? { authorization: `Bearer ${controlToken}` } : undefined,
+                signal: AbortSignal.timeout(1_500),
+            });
+            if (!response.ok) throw new Error(`room_directory_failed:${response.status}`);
+            const payload = await response.json() as {
+                rooms?: Array<{ roomId?: unknown; endpoint?: unknown; status?: unknown }>;
+            };
+            const next = new Map<string, string>();
+            for (const room of payload.rooms ?? []) {
+                if (room.status === "inactive" || typeof room.roomId !== "string" || typeof room.endpoint !== "string") {
+                    continue;
+                }
+                const parsed = parseConfiguredRoomEndpoints(`${room.roomId}=${room.endpoint}`);
+                const endpoint = parsed.get(room.roomId);
+                if (endpoint) next.set(room.roomId, endpoint);
+            }
+            if (next.size === 0) throw new Error("no_room_endpoint");
+            discoveredRooms = next;
+            roomDiscoveryAt = Date.now();
+            return next;
+        } catch (error) {
+            if (discoveredRooms.size > 0) return discoveredRooms;
+            throw error;
+        } finally {
+            roomDiscoveryPending = undefined;
+        }
+    })();
+    return new Map(await roomDiscoveryPending);
 };
 
 const bots = new Map<string, SurvevProtocolBot>();
@@ -260,7 +314,7 @@ const spawn = async (
     requestedSessionId?: string,
 ): Promise<BotSummary[]> => {
     if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error("invalid_bot_count");
-    const roomMap = rooms();
+    const roomMap = await rooms();
     const roomIds = [...roomMap.keys()];
     if (!roomIds.length) throw new Error("no_room_endpoint");
     const created: SurvevProtocolBot[] = [];
@@ -272,7 +326,8 @@ const spawn = async (
         const sessionId = requestedSessionId
             ? count === 1 ? requestedSessionId : `${requestedSessionId}-${index}`
             : `opsia-bot-${uniqueSuffix}`;
-        const response = await fetch(`${endpoint}/api/find_game`, {
+        const findGameUrl = botFindGameUrl(roomId, endpoint, sessionGatewayUrl);
+        const response = await fetch(findGameUrl, {
             method: "POST",
             headers: { "content-type": "application/json" },
             signal: AbortSignal.timeout(2_000),
@@ -295,6 +350,7 @@ const spawn = async (
             roomId,
             mode,
             match.res[0],
+            botWebsocketUrl(roomId, match.res[0], sessionId, sessionGatewayUrl),
             endpoint,
             (stoppedId) => bots.delete(stoppedId),
         );
@@ -313,7 +369,7 @@ const spawn = async (
 const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs: number): Promise<BotJob> => {
     if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error("invalid_bot_count");
     if (!Number.isInteger(intervalMs) || intervalMs < 50 || intervalMs > 5_000) throw new Error("invalid_bot_interval");
-    const endpoint = rooms().get(roomId);
+    const endpoint = (await rooms()).get(roomId);
     if (!endpoint) throw new Error("unknown_room");
     if ([...jobs.values()].some((job) => job.roomId === roomId && job.state === "running")) {
         throw new Error("bot_job_already_running");
@@ -373,7 +429,8 @@ const reconcileMinimumBots = async (): Promise<void> => {
     if (minimumBotsPerRoom <= 0 || reconciliationPending) return;
     reconciliationPending = true;
     try {
-        await Promise.all([...rooms().keys()].map(async (roomId) => {
+        const roomMap = await rooms();
+        await Promise.all([...roomMap.keys()].map(async (roomId) => {
             const deficit = minimumBotsPerRoom - connectedBotCount(roomId);
             if (deficit <= 0) return;
             const requested = Math.min(deficit, reconcileBatchSize);
@@ -415,6 +472,7 @@ const server = createServer(async (request, response) => {
                 connectedBots: [...bots.values()].filter((bot) => bot.summary().connected).length,
                 minimumBotsPerRoom,
                 reconciliationPending,
+                discoveredRooms: discoveredRooms.size,
             });
         }
         if (!controlTokenMatches(request.headers.authorization, controlToken)) {

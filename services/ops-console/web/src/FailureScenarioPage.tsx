@@ -94,7 +94,7 @@ const SCENARIOS: readonly ScenarioDefinition[] = [
     title: "게임 Pod 장애",
     summary: "Kubernetes에서 선택한 게임 Pod를 삭제해 교체 복구를 시작합니다.",
     symptom: "Pod 교체 · Redis snapshot 기반 복구",
-    recovery: "StatefulSet 재생성과 세션 재연결 확인",
+    recovery: "Room Deployment 재생성과 세션 재연결 확인",
     tone: "critical",
     requiresPodFailure: true,
   },
