@@ -36,6 +36,7 @@ declare global {
     interface Window {
         __opsiaDriveSpectatorFrame?: () => void;
         __opsiaDrivenSpectatorFrames?: number;
+        __opsiaSetSpectatorFps?: (fps: number) => void;
         __opsiaWallLightFrames?: number;
         __opsiaSetSpectatorVisible?: (visible: boolean) => void;
     }
@@ -410,6 +411,9 @@ export class Application {
                 let externallyDriven = false;
                 let lastWallFrameAt = performance.now();
                 window.__opsiaDrivenSpectatorFrames = 0;
+                window.__opsiaSetSpectatorFps = (fps) => {
+                    if (this.pixi) this.pixi.ticker.maxFPS = math.clamp(fps, 1, 60);
+                };
                 window.__opsiaSetSpectatorVisible = (visible) => {
                     if (visible) this.pixi?.ticker.start();
                     else if (this.game?.initialized && this.game.m_playing) this.pixi?.ticker.stop();

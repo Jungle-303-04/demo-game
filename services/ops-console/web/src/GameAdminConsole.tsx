@@ -36,6 +36,7 @@ interface PictureInPictureSession {
 type SpectatorViewCount = 1 | 4 | 16;
 type SpectatorFrameWindow = Window & {
   __opsiaDriveSpectatorFrame?: () => void;
+  __opsiaSetSpectatorFps?: (fps: number) => void;
   __opsiaSetSpectatorVisible?: (visible: boolean) => void;
 };
 
@@ -390,6 +391,7 @@ function PlayerSpectatorView({
   loadDelayMs = 0,
   visible = true,
   wallFps,
+  targetFps,
   registerFrame,
 }: {
   room: GameRoom;
@@ -399,6 +401,7 @@ function PlayerSpectatorView({
   loadDelayMs?: number;
   visible?: boolean;
   wallFps?: number;
+  targetFps?: number;
   registerFrame?: (playerId: string, frame: HTMLIFrameElement | null) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -453,6 +456,7 @@ function PlayerSpectatorView({
     if (!frameReady) return;
     try {
       const frameWindow = iframeRef.current?.contentWindow as SpectatorFrameWindow | null;
+      if (visible && targetFps) frameWindow?.__opsiaSetSpectatorFps?.(targetFps);
       frameWindow?.__opsiaSetSpectatorVisible?.(visible);
       if (visible) {
         frameWindow?.dispatchEvent(new Event("resize"));
@@ -460,7 +464,7 @@ function PlayerSpectatorView({
     } catch {
       // Cross-origin development clients cannot be resized by the console.
     }
-  }, [frameReady, visible]);
+  }, [frameReady, targetFps, visible]);
 
   useEffect(() => {
     if (managed || selfDriven) return undefined;
@@ -540,8 +544,9 @@ function SpectatorWall({
           player={player}
           room={room}
           selfDriven
+          targetFps={layout === 4 ? 60 : 30}
           visible={visibleIds.has(player.id)}
-          wallFps={layout === 4 ? 60 : 30}
+          wallFps={30}
         />
       ))}
     </div>
