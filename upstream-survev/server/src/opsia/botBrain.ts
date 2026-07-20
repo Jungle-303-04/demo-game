@@ -45,7 +45,7 @@ export interface BotBrainLoot {
     count: number;
 }
 
-export type BotIntentMode = "wander" | "loot" | "combat" | "zone" | "edge" | "unstuck" | "heal";
+export type BotIntentMode = "wander" | "loot" | "combat" | "retreat" | "zone" | "edge" | "unstuck" | "heal";
 export type BotEquipIntent = "otherGun";
 export type BotUseItemIntent = "bandage" | "healthkit";
 export type BotMovementPhase = "travel" | "rest";
@@ -93,11 +93,18 @@ type BotIntentWithoutMovement = Omit<BotIntent, "moving">;
 type MovementPolicy = "rhythm" | "force" | "stop";
 type Target = { player: BotBrainPlayer; distance: number };
 type LootTarget = { loot: BotBrainLoot; distance: number; utility: number };
+type WeaponProfile = {
+    kind: "gun" | "melee" | "other";
+    effectiveRange: number;
+    preferredRange: number;
+    projectileSpeed: number;
+    powerScore: number;
+    maxClip: number;
+};
 
 const snapshotFreshnessMs = 2_000;
 const targetLockMinMs = 1_000;
 const targetLockJitterMs = 800;
-const gunFireDistance = 220;
 const meleeAttackDistance = 5.5;
 const combatAwarenessDistance = 900;
 const lootAwarenessDistance = 340;
@@ -192,6 +199,45 @@ const weaponKind = (weapon: string): "gun" | "melee" | "other" => {
     return "other";
 };
 
+const weaponProfile = (weapon: string): WeaponProfile => {
+    const definition = GameObjectDefs.typeToDefSafe(weapon);
+    if (definition?.type === "gun") {
+        const bullet = GameObjectDefs.typeToDefSafe(definition.bulletType);
+        const bulletDistance = bullet?.type === "bullet" ? bullet.distance : 100;
+        const projectileSpeed = bullet?.type === "bullet" ? bullet.speed : 85;
+        const bulletDamage = bullet?.type === "bullet" ? bullet.damage : 10;
+        const effectiveRange = Math.min(360, Math.max(18, bulletDistance));
+        const preferredRange = effectiveRange * (definition.bulletCount > 1 ? 0.62 : 0.68);
+        const sustainedDamage = bulletDamage * definition.bulletCount / Math.max(0.05, definition.fireDelay);
+        return {
+            kind: "gun",
+            effectiveRange,
+            preferredRange,
+            projectileSpeed,
+            powerScore: sustainedDamage * Math.sqrt(effectiveRange),
+            maxClip: Math.max(1, definition.maxClip),
+        };
+    }
+    if (definition?.type === "melee" || weapon === "fists") {
+        return {
+            kind: "melee",
+            effectiveRange: meleeAttackDistance,
+            preferredRange: meleeAttackDistance * 0.72,
+            projectileSpeed: Number.POSITIVE_INFINITY,
+            powerScore: 1,
+            maxClip: 0,
+        };
+    }
+    return {
+        kind: "other",
+        effectiveRange: 0,
+        preferredRange: 0,
+        projectileSpeed: Number.POSITIVE_INFINITY,
+        powerScore: 0,
+        maxClip: 0,
+    };
+};
+
 const reloadGraceMs = (weapon: string): number => {
     const definition = GameObjectDefs.typeToDefSafe(weapon);
     if (definition?.type !== "gun") return 2_800;
@@ -227,6 +273,15 @@ const weaponActions = (
 
     state.emptyAmmoWeapon = undefined;
     state.emptyAmmoSince = 0;
+    if (kind === "gun") {
+        const profile = weaponProfile(self.weapon);
+        const tacticalReloadThreshold = Math.max(2, Math.floor(profile.maxClip * 0.2));
+        const safeToReload = targetDistance === undefined || targetDistance > profile.effectiveRange * 0.9;
+        if (self.ammo <= tacticalReloadThreshold && safeToReload && now >= state.nextReloadAt) {
+            state.nextReloadAt = now + 2_400;
+            return { reload: true };
+        }
+    }
     if (
         kind !== "gun"
         && now >= state.nextWeaponSwapAt
@@ -240,9 +295,9 @@ const weaponActions = (
 
 const canShootTarget = (self: BotBrainPlayer, target: Target | undefined): boolean => {
     if (!target) return false;
-    const kind = weaponKind(self.weapon);
-    if (kind === "gun") return self.ammo > 0 && target.distance <= gunFireDistance;
-    if (kind === "melee") return target.distance <= meleeAttackDistance;
+    const profile = weaponProfile(self.weapon);
+    if (profile.kind === "gun") return self.ammo > 0 && target.distance <= profile.effectiveRange;
+    if (profile.kind === "melee") return target.distance <= meleeAttackDistance;
     return false;
 };
 
@@ -253,12 +308,23 @@ const selectTarget = (
     random: () => number,
 ): Target | undefined => {
     const nearest = enemies[0];
+    const priority = enemies.reduce<Target | undefined>((best, candidate) => {
+        const score = candidate.distance
+            - (100 - Math.max(0, candidate.player.health)) * 0.42
+            - (weaponKind(candidate.player.weapon) === "gun" && candidate.player.ammo > 0 ? 14 : 0);
+        if (!best) return candidate;
+        const bestScore = best.distance
+            - (100 - Math.max(0, best.player.health)) * 0.42
+            - (weaponKind(best.player.weapon) === "gun" && best.player.ammo > 0 ? 14 : 0);
+        return score < bestScore ? candidate : best;
+    }, undefined);
     const locked = now < state.targetLockedUntil
         ? enemies.find(({ player }) => player.sessionId === state.targetSessionId)
         : undefined;
     const immediateThreat = nearest
-        && (!locked || nearest.distance < 70 || nearest.distance < locked.distance * 0.55);
-    const target = immediateThreat ? nearest : locked ?? nearest;
+        && locked
+        && (nearest.distance < 70 || nearest.distance < locked.distance * 0.55);
+    const target = immediateThreat ? nearest : locked ?? priority;
 
     if (!target) {
         state.targetSessionId = undefined;
@@ -276,8 +342,15 @@ const lootUtility = (self: BotBrainPlayer, loot: BotBrainLoot): number => {
     const currentWeapon = GameObjectDefs.typeToDefSafe(self.weapon);
     const matchingAmmo = currentWeapon?.type === "gun" && currentWeapon.ammo === loot.type;
     switch (loot.kind) {
-        case "gun":
-            return weaponKind(self.weapon) === "gun" && self.ammo > 0 ? 58 : 120;
+        case "gun": {
+            const currentProfile = weaponProfile(self.weapon);
+            const candidateProfile = weaponProfile(loot.type);
+            if (currentProfile.kind !== "gun" || self.ammo <= 0) return 120;
+            const upgradeRatio = candidateProfile.powerScore / Math.max(1, currentProfile.powerScore);
+            if (upgradeRatio >= 1.35) return 102;
+            if (upgradeRatio >= 1.12) return 76;
+            return 24;
+        }
         case "ammo":
             return matchingAmmo ? (self.ammo < 12 ? 115 : self.ammo < 45 ? 82 : 24) : 18;
         case "heal":
@@ -298,11 +371,24 @@ const lootUtility = (self: BotBrainPlayer, loot: BotBrainLoot): number => {
     }
 };
 
+const stableHash = (value: string): number => {
+    let hash = 2_166_136_261;
+    for (let index = 0; index < value.length; index++) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16_777_619);
+    }
+    return hash >>> 0;
+};
+
+const lootAffinity = (sessionId: string, lootId: number): number =>
+    stableHash(`${sessionId}:${lootId}`) % 13;
+
 const selectLootTarget = (
     snapshot: BotBrainSnapshot,
     self: BotBrainPlayer,
     state: BotBrainState,
     now: number,
+    sessionId: string,
 ): LootTarget | undefined => {
     const candidates = (snapshot.loot ?? [])
         .map((loot) => ({
@@ -312,7 +398,8 @@ const selectLootTarget = (
         }))
         .filter((candidate) => candidate.distance <= lootAwarenessDistance && candidate.utility >= 20)
         .sort((left, right) =>
-            (right.utility - right.distance * 0.12) - (left.utility - left.distance * 0.12)
+            (right.utility - right.distance * 0.12 + lootAffinity(sessionId, right.loot.id))
+            - (left.utility - left.distance * 0.12 + lootAffinity(sessionId, left.loot.id))
         );
     const locked = now < state.lootLockedUntil
         ? candidates.find((candidate) => candidate.loot.id === state.targetLootId)
@@ -427,12 +514,16 @@ export const decideBotIntent = (
         }))
         .sort((left, right) => left.distance - right.distance);
     const target = selectTarget(enemies, state, now, random);
+    const selfWeapon = weaponProfile(self.weapon);
+    const projectileTravelSeconds = target && Number.isFinite(selfWeapon.projectileSpeed)
+        ? Math.min(0.72, target.distance / Math.max(1, selfWeapon.projectileSpeed))
+        : 0;
     const targetAngle = target
         ? angleTo(
             self.x,
             self.y,
-            target.player.x + target.player.vx * Math.min(0.45, target.distance / 500),
-            target.player.y + target.player.vy * Math.min(0.45, target.distance / 500),
+            target.player.x + target.player.vx * projectileTravelSeconds,
+            target.player.y + target.player.vy * projectileTravelSeconds,
         )
         : state.wanderAngle;
     const combatActions = { ...actions, ...weaponActions(state, self, target?.distance, now) };
@@ -519,7 +610,10 @@ export const decideBotIntent = (
     }
 
     const nearestEnemy = enemies[0];
-    const closeThreat = Boolean(nearestEnemy && nearestEnemy.distance <= gunFireDistance);
+    const closeThreatDistance = selfWeapon.kind === "gun"
+        ? Math.max(70, Math.min(220, selfWeapon.effectiveRange * 1.15))
+        : 70;
+    const closeThreat = Boolean(nearestEnemy && nearestEnemy.distance <= closeThreatDistance);
     if (state.healingUntil > now && !closeThreat && self.health < 90) {
         return finishIntent(
             state,
@@ -538,10 +632,10 @@ export const decideBotIntent = (
         );
     }
     if (closeThreat || self.health >= 90) state.healingUntil = 0;
-    if (self.health < 45 && !closeThreat && now >= state.nextHealAt) {
+    if (self.health < 68 && !closeThreat && now >= state.nextHealAt) {
         const bandages = self.bandages ?? 0;
         const healthkits = self.healthkits ?? 0;
-        const useItem: BotUseItemIntent | undefined = self.health <= 25 && healthkits > 0
+        const useItem: BotUseItemIntent | undefined = self.health <= 32 && healthkits > 0
             ? "healthkit"
             : bandages > 0
             ? "bandage"
@@ -572,7 +666,7 @@ export const decideBotIntent = (
         }
     }
 
-    const lootTarget = selectLootTarget(snapshot, self, state, now);
+    const lootTarget = selectLootTarget(snapshot, self, state, now, sessionId);
     const needsWeaponOrAmmo = weaponKind(self.weapon) !== "gun" || self.ammo <= 0;
     const canBreakForLoot = !target
         || target.distance > (needsWeaponOrAmmo || (lootTarget?.utility ?? 0) >= 90 ? 70 : 520);
@@ -606,26 +700,34 @@ export const decideBotIntent = (
             state.nextStrafeFlipAt = now + 550 + random() * 900;
         }
         let moveAngle = targetAngle;
-        if (weaponKind(self.weapon) === "gun") {
-            if (target.distance < 45) {
+        let mode: BotIntentMode = "combat";
+        let movementPolicy: MovementPolicy = "rhythm";
+        if (selfWeapon.kind === "gun") {
+            const criticalHealthRetreat = self.health <= 28
+                && target.distance <= Math.max(100, selfWeapon.effectiveRange * 1.45);
+            if (criticalHealthRetreat) {
+                mode = "retreat";
+                movementPolicy = "force";
+                moveAngle += Math.PI + state.strafeSign * 0.18;
+            } else if (target.distance < selfWeapon.preferredRange * 0.62) {
                 moveAngle += Math.PI;
-            } else if (target.distance <= 180) {
+            } else if (target.distance <= selfWeapon.preferredRange * 1.3) {
                 moveAngle += state.strafeSign * Math.PI / 2;
             } else {
-                moveAngle += state.strafeSign * 0.2;
+                moveAngle += state.strafeSign * 0.14;
             }
         }
         return finishIntent(
             state,
             {
-                mode: "combat",
+                mode,
                 moveAngle,
                 aimAngle: targetAngle,
                 aimDistance: aimDistance(target),
                 shoot,
                 ...combatActions,
             },
-            "rhythm",
+            movementPolicy,
             now,
             random,
         );

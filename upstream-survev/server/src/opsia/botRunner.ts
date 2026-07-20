@@ -223,6 +223,19 @@ const rooms = (): Map<string, string> => {
 const bots = new Map<string, SurvevProtocolBot>();
 const jobs = new Map<string, BotJob>();
 let roundRobin = 0;
+const minimumBotsPerRoom = Math.max(
+    0,
+    Math.min(100, Number.parseInt(process.env.OPSIA_MIN_BOTS_PER_ROOM ?? "0", 10) || 0),
+);
+const reconcileIntervalMs = Math.max(
+    1_000,
+    Math.min(30_000, Number.parseInt(process.env.OPSIA_BOT_RECONCILE_INTERVAL_MS ?? "2_000", 10) || 2_000),
+);
+const reconcileBatchSize = Math.max(
+    1,
+    Math.min(20, Number.parseInt(process.env.OPSIA_BOT_RECONCILE_BATCH_SIZE ?? "5", 10) || 5),
+);
+let reconciliationPending = false;
 
 const readJson = async (request: IncomingMessage): Promise<Record<string, unknown>> => {
     const chunks: Buffer[] = [];
@@ -342,11 +355,59 @@ const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs
     return job;
 };
 
+const connectedBotCount = (roomId: string): number =>
+    [...bots.values()].filter((bot) => {
+        const summary = bot.summary();
+        return summary.roomId === roomId && summary.connected;
+    }).length;
+
+const reconcileMinimumBots = async (): Promise<void> => {
+    if (minimumBotsPerRoom <= 0 || reconciliationPending) return;
+    reconciliationPending = true;
+    try {
+        await Promise.all([...rooms().keys()].map(async (roomId) => {
+            const deficit = minimumBotsPerRoom - connectedBotCount(roomId);
+            if (deficit <= 0) return;
+            const requested = Math.min(deficit, reconcileBatchSize);
+            try {
+                const created = await spawn(requested, roomId, "normal");
+                console.log(JSON.stringify({
+                    level: "info",
+                    event: "bot_population_reconciled",
+                    detail: {
+                        roomId,
+                        created: created.length,
+                        connected: connectedBotCount(roomId),
+                        desiredMinimum: minimumBotsPerRoom,
+                    },
+                }));
+            } catch (error) {
+                console.warn(JSON.stringify({
+                    level: "warn",
+                    event: "bot_population_reconcile_retry",
+                    detail: {
+                        roomId,
+                        error: error instanceof Error ? error.message : "bot_reconcile_failed",
+                    },
+                }));
+            }
+        }));
+    } finally {
+        reconciliationPending = false;
+    }
+};
+
 const server = createServer(async (request, response) => {
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
     try {
         if (request.method === "GET" && pathname === "/healthz") {
-            return reply(response, 200, { status: "ok", protocol: "survev" });
+            return reply(response, 200, {
+                status: "ok",
+                protocol: "survev",
+                connectedBots: [...bots.values()].filter((bot) => bot.summary().connected).length,
+                minimumBotsPerRoom,
+                reconciliationPending,
+            });
         }
         if (!controlTokenMatches(request.headers.authorization, controlToken)) {
             response.setHeader("www-authenticate", "Bearer realm=\"demo-game-control\"");
@@ -415,7 +476,16 @@ server.listen(Number(process.env.PORT ?? 8084), () => {
         JSON.stringify({
             level: "info",
             event: "bot_runner_listening",
-            detail: { protocol: "survev", port: Number(process.env.PORT ?? 8084) },
+            detail: {
+                protocol: "survev",
+                port: Number(process.env.PORT ?? 8084),
+                minimumBotsPerRoom,
+                reconcileIntervalMs,
+            },
         }),
     );
+    if (minimumBotsPerRoom > 0) {
+        setTimeout(() => void reconcileMinimumBots(), 500);
+        setInterval(() => void reconcileMinimumBots(), reconcileIntervalMs);
+    }
 });

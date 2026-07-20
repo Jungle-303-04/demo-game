@@ -149,6 +149,114 @@ describe("Opsia protocol bot brain", () => {
         expect(intent.aimAngle).toBeGreaterThan(0);
     });
 
+    test("respects the real projectile range before spending short-range ammunition", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                players: [
+                    player({ weapon: "mac10", ammo: 32 }),
+                    player({ sessionId: "enemy", team: "blue", x: 560 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("combat");
+        expect(intent.shoot).toBe(false);
+        expect(Math.abs(intent.moveAngle)).toBeLessThan(0.3);
+    });
+
+    test("keeps firing while force-retreating at critical health", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                players: [
+                    player({ health: 20, bandages: 0, healthkits: 0 }),
+                    player({ sessionId: "enemy", team: "blue", x: 560 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("retreat");
+        expect(intent.moving).toBe(true);
+        expect(intent.shoot).toBe(true);
+        expect(Math.cos(intent.moveAngle)).toBeLessThan(-0.9);
+    });
+
+    test("tactically reloads a low magazine before a distant engagement", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                players: [
+                    player({ ammo: 2 }),
+                    player({ sessionId: "enemy", team: "blue", x: 700 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("combat");
+        expect(intent.shoot).toBe(false);
+        expect(intent.reload).toBe(true);
+    });
+
+    test("upgrades an armed bot when real weapon ballistics are materially stronger", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                loot: [{ id: 11, type: "m249", kind: "gun", x: 510, y: 500, count: 1 }],
+                players: [
+                    player({ weapon: "m9", ammo: 15 }),
+                    player({ sessionId: "enemy", team: "blue", x: 900 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("loot");
+        expect(state.targetLootId).toBe(11);
+    });
+
+    test("spreads equally useful loot targets across bot identities", () => {
+        const realLoot = [
+            { id: 1, type: "m9", kind: "gun", x: 510, y: 500, count: 1 },
+            { id: 2, type: "m9", kind: "gun", x: 490, y: 500, count: 1 },
+        ];
+        const choose = (sessionId: string): number | undefined => {
+            const state = createBotBrainState(() => 0.5);
+            decideBotIntent(
+                snapshot({
+                    loot: realLoot,
+                    players: [
+                        player({ sessionId, weapon: "fists", ammo: 0 }),
+                        player({ sessionId: "enemy", team: "blue", x: 900 }),
+                    ],
+                }),
+                sessionId,
+                state,
+                1_000,
+                () => 0.5,
+            );
+            return state.targetLootId;
+        };
+
+        expect(choose("bot-a")).toBe(1);
+        expect(choose("bot-b")).toBe(2);
+    });
+
     test("alternates travel and rest without dropping combat aim", () => {
         const state = createBotBrainState(() => 0.5);
         state.movementPhase = "travel";
@@ -276,6 +384,26 @@ describe("Opsia protocol bot brain", () => {
         expect(decideBotIntent(changed, "self", state, 1_300, () => 0.5).aimAngle).toBeCloseTo(0);
         expect(decideBotIntent({ ...changed, capturedAt: 2_600 }, "self", state, 2_700, () => 0.5).aimAngle)
             .toBeCloseTo(Math.PI / 2);
+    });
+
+    test("finishes a wounded armed threat when it is only slightly farther away", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                players: [
+                    player(),
+                    player({ sessionId: "near", team: "blue", x: 600, health: 100 }),
+                    player({ sessionId: "wounded", team: "blue", x: 500, y: 625, health: 10 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(state.targetSessionId).toBe("wounded");
+        expect(intent.aimAngle).toBeCloseTo(Math.PI / 2);
     });
 
     test("reloads an empty gun, then tries another gun after the reload grace", () => {
