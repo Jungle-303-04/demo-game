@@ -509,7 +509,7 @@ function SpectatorWall({
           registerFrame={registerFrame}
           room={room}
           selfDriven={players.length > 4}
-          wallFps={players.length > 4 ? 30 : 60}
+          wallFps={60}
         />
       ))}
     </div>
