@@ -537,24 +537,14 @@ function SpectatorWall({
     [visiblePlayers],
   );
   const orderedPlayers = useMemo(
-    () => {
-      const lastVisible = visiblePlayers.at(-1);
-      const lastVisibleIndex = lastVisible
-        ? players.findIndex((player) => player.id === lastVisible.id)
-        : -1;
-      const preload = Array.from(
-        { length: players.length },
-        (_, offset) => players[(lastVisibleIndex + 1 + offset) % players.length],
-      ).filter((player): player is PlayerTelemetry => {
-        if (!player) return false;
-        return !visibleIds.has(player.id);
-      });
-      // Wall tiles use the context-safe Canvas renderer. Keep one full demo
-      // room warm (hidden tickers are stopped) so both 4-up and 16-up Tab
-      // changes reuse live frames instead of showing reconnect blanks.
-      return [...visiblePlayers, ...preload].slice(0, Math.min(players.length, 20));
-    },
-    [players, visibleIds, visiblePlayers],
+    // Never reorder mounted iframes. Moving an iframe DOM node can recreate its
+    // browsing context even when React preserves the keyed element, producing
+    // a login/black flash. Visibility alone selects the current Tab page.
+    () => players
+      .slice()
+      .sort((left, right) => left.name.localeCompare(right.name))
+      .slice(0, 20),
+    [players],
   );
 
   return (
