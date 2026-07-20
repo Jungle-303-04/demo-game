@@ -168,6 +168,8 @@ test("admin room projection uses real map dimensions, live player fields, and bo
   assert.equal(room.zone.nextY, 75);
   assert.equal(room.podHealthy, true);
   assert.equal(room.metrics.websocketCount, 1);
+  assert.equal(room.metrics.inputAccepted, 4);
+  assert.equal(room.metrics.inputRejected, 0);
 });
 
 test("a waiting room becomes degraded after its provisioning grace period", async (context) => {

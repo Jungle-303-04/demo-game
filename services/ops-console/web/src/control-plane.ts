@@ -68,6 +68,8 @@ export interface RoomMetrics {
   networkInKbps: number | null;
   networkOutKbps: number | null;
   tickP95Ms: number;
+  inputAccepted: number;
+  inputRejected: number;
   websocketCount: number;
   redisOpsPerSecond: number | null;
   telemetryLagMs: number;
@@ -128,6 +130,49 @@ export interface CreateRoomInput {
 export interface AddBotsInput {
   count: number;
   intervalMs: number;
+}
+
+export type FailureScenarioId =
+  | "admission-lock"
+  | "bot-surge"
+  | "malicious-input"
+  | "admission-storm"
+  | "process-crash"
+  | "pod-failure";
+
+export interface FailureScenarioEvidence {
+  [key: string]: unknown;
+}
+
+export interface ActiveFailureScenario {
+  scenarioId: FailureScenarioId;
+  status: string;
+  startedAt: string;
+  jobId?: string;
+  autoRecoverAt?: string;
+  evidence?: FailureScenarioEvidence;
+}
+
+export interface FailureScenarioResult {
+  at: string;
+  message: string;
+  evidence?: FailureScenarioEvidence;
+}
+
+export interface FailureScenarioRoomState {
+  roomId: string;
+  minimumBotsPerRoom: number;
+  normalBots: number;
+  hackBots: number;
+  active?: ActiveFailureScenario;
+  lastResults: Partial<Record<FailureScenarioId, FailureScenarioResult>>;
+}
+
+export interface FailureScenarioState {
+  rooms: FailureScenarioRoomState[];
+  capabilities: {
+    podFailure: boolean;
+  };
 }
 
 export interface AddBotsResult {

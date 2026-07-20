@@ -13,6 +13,10 @@ import {
   UpstreamError,
 } from "./admin.js";
 import { isPublicControlPlaneRead } from "./public-api.js";
+import {
+  FailureScenarioController,
+  isFailureScenarioId,
+} from "./failure-scenarios.js";
 
 interface TimelineEvent {
   at: string;
@@ -25,6 +29,7 @@ type EventTone = "info" | "success" | "warning" | "danger";
 const port = Number(process.env.PORT ?? 8085);
 const orchestrator = process.env.ORCHESTRATOR_URL ?? "http://room-orchestrator:8082";
 const botRunner = process.env.BOT_RUNNER_URL ?? "http://bot-runner:8084";
+const failureScenarios = new FailureScenarioController(orchestrator, botRunner);
 const webRoot = resolve(process.env.OPS_CONSOLE_WEB_ROOT ?? fileURLToPath(new URL("../web", import.meta.url)));
 const adminToken = process.env.OPS_ADMIN_TOKEN?.trim() ?? "";
 if (process.env.REQUIRE_ADMIN_TOKEN === "true" && !adminToken) {
@@ -79,7 +84,10 @@ const recordEvent = (
 const adminEvents = () => timeline.map((event, index) => ({
   id: `${event.at}-${index}`,
   roomId: String(event.detail.roomId ?? "global"),
-  time: new Date(event.at).toLocaleTimeString("ko-KR", { hour12: false }),
+  time: new Date(event.at).toLocaleTimeString("ko-KR", {
+    hour12: false,
+    timeZone: "Asia/Seoul",
+  }),
   tone: event.detail.tone ?? "info",
   source: String(event.detail.source ?? "opsia"),
   message: String(event.detail.message ?? event.type),
@@ -214,6 +222,20 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/admin/events") {
       return send(response, 200, { events: adminEvents() });
     }
+    if (request.method === "GET" && url.pathname === "/api/admin/scenarios") {
+      const registryState = await getRegistryState(orchestrator);
+      const rooms = await buildAdminRooms(
+        orchestrator,
+        botRunner,
+        registryState.rooms,
+        true,
+      );
+      return send(
+        response,
+        200,
+        await failureScenarios.getState(rooms, registryState.scalingAvailable),
+      );
+    }
     if (request.method === "POST" && url.pathname === "/api/admin/rooms") {
       const input = await readJson(request);
       const created = await jsonRequest<{ room: RegistryRoom }>(`${orchestrator}/rooms/create`, "POST", input);
@@ -253,6 +275,34 @@ const server = createServer(async (request, response) => {
     if (commandMatch && request.method === "POST") {
       const body = await readJson(request);
       return send(response, 202, await commandRoom(commandMatch[1]!, String(body.command ?? "")));
+    }
+
+    const scenarioMatch = url.pathname.match(
+      /^\/api\/admin\/rooms\/(room-\d+)\/scenarios\/([^/]+)\/(start|recover)$/,
+    );
+    if (scenarioMatch && request.method === "POST") {
+      const roomId = scenarioMatch[1]!;
+      const scenarioId = scenarioMatch[2]!;
+      const action = scenarioMatch[3] as "start" | "recover";
+      if (!isFailureScenarioId(scenarioId)) {
+        return send(response, 400, { error: "unsupported_failure_scenario" });
+      }
+      const registryState = await getRegistryState(orchestrator);
+      const record = registryState.rooms.find((candidate) => candidate.roomId === roomId);
+      if (!record) return send(response, 404, { error: "room_not_found" });
+      const room = await adminRoom(roomId);
+      const result = action === "start"
+        ? await failureScenarios.start(record, room, scenarioId, registryState.scalingAvailable)
+        : await failureScenarios.recover(record, room, scenarioId);
+      recordEvent(
+        action === "start" ? "FAILURE_SCENARIO_STARTED" : "FAILURE_SCENARIO_RECOVERED",
+        roomId,
+        "failure-lab",
+        result.message,
+        action === "start" ? "danger" : "success",
+        { scenarioId, action, evidence: result.evidence },
+      );
+      return send(response, action === "start" ? 202 : 200, result);
     }
 
     const botsMatch = url.pathname.match(/^\/api\/admin\/rooms\/(room-\d+)\/bots$/);

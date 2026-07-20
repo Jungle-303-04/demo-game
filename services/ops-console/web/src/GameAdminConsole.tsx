@@ -17,11 +17,13 @@ import {
 import {
   ControlPlaneError,
   controlPlaneClient,
-  setControlPlaneAdminToken,
+  withControlPlaneAdminTokenRetry,
 } from "./control-plane-client.js";
+import { FailureScenarioPage } from "./FailureScenarioPage.js";
 
 type StyleWithVariables = CSSProperties & Record<`--${string}`, string | number>;
 type ConnectionState = "connecting" | "connected" | "degraded";
+type ConsolePage = "spectate" | "scenarios";
 
 const POLL_INTERVAL_MS = 400;
 const BOT_BATCH_SIZE = 10;
@@ -149,11 +151,17 @@ const LiveMapCanvas = memo(function LiveMapCanvas({ map, seed, theme }: {
 
 function errorMessage(error: unknown) {
   if (error instanceof ControlPlaneError && error.status === 401) {
-    return "봇 투입에는 관리자 토큰이 필요합니다.";
+    return "관리자 작업에는 관리자 토큰이 필요합니다.";
   }
   if (error instanceof ControlPlaneError) return error.message;
   if (error instanceof Error) return error.message;
   return "게임 서버 연결에 실패했습니다.";
+}
+
+function consolePageFromLocation(): ConsolePage {
+  return window.location.pathname.replace(/\/+$/, "") === "/scenarios"
+    ? "scenarios"
+    : "spectate";
 }
 
 function playerCounts(room: GameRoom) {
@@ -601,6 +609,7 @@ function RoomViewer({
 /** The UI renders only authoritative control-plane snapshots and live players. */
 export function GameAdminConsole() {
   const [rooms, setRooms] = useState<GameRoom[]>([]);
+  const [activePage, setActivePage] = useState<ConsolePage>(consolePageFromLocation);
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState("");
   const [connection, setConnection] = useState<ConnectionState>("connecting");
@@ -649,6 +658,16 @@ export function GameAdminConsole() {
   }, [refresh]);
 
   useEffect(() => {
+    const handlePopState = () => {
+      setActivePage(consolePageFromLocation());
+      setSelectedRoomId(null);
+      setSelectedPlayerId("");
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
     if (selectedPlayerId && !selectedPlayer) setSelectedPlayerId("");
   }, [selectedPlayer, selectedPlayerId]);
 
@@ -657,53 +676,67 @@ export function GameAdminConsole() {
     setBotPending(true);
     setError("");
     try {
-      await controlPlaneClient.addBots(selectedRoom.id, {
-        count: BOT_BATCH_SIZE,
-        intervalMs: 100,
-      });
+      await withControlPlaneAdminTokenRetry(() =>
+        controlPlaneClient.addBots(selectedRoom.id, {
+          count: BOT_BATCH_SIZE,
+          intervalMs: 100,
+        }),
+      );
       await refresh(true);
     } catch (addError) {
-      if (addError instanceof ControlPlaneError && addError.status === 401) {
-        const token = window.prompt("관리자 토큰을 입력하세요");
-        if (token?.trim()) {
-          setControlPlaneAdminToken(token);
-          try {
-            await controlPlaneClient.addBots(selectedRoom.id, {
-              count: BOT_BATCH_SIZE,
-              intervalMs: 100,
-            });
-            await refresh(true);
-            return;
-          } catch (retryError) {
-            setError(errorMessage(retryError));
-          }
-        } else {
-          setError(errorMessage(addError));
-        }
-      } else {
-        setError(errorMessage(addError));
-      }
+      setError(errorMessage(addError));
     } finally {
       setBotPending(false);
     }
   }
 
+  function navigateTo(page: ConsolePage) {
+    const pathname = page === "scenarios" ? "/scenarios" : "/";
+    if (window.location.pathname !== pathname) {
+      window.history.pushState({ consolePage: page }, "", pathname);
+    }
+    setActivePage(page);
+    setSelectedRoomId(null);
+    setSelectedPlayerId("");
+  }
+
   return (
-    <main className={`console-shell ${selectedRoom ? "is-room-open" : ""}`}>
+    <main className={`console-shell ${activePage === "spectate" && selectedRoom ? "is-room-open" : ""} ${activePage === "scenarios" ? "is-scenario-page" : ""}`}>
       <header className="console-topbar">
         <button
           aria-label="실시간 게임 방 목록"
           className="console-brand"
-          onClick={() => {
-            setSelectedRoomId(null);
-            setSelectedPlayerId("");
-          }}
+          onClick={() => navigateTo("spectate")}
           type="button"
         >
           <span className="brand-mark">O</span>
           <strong>jungle-303</strong>
         </button>
         <span className="server-chip">게임 서버</span>
+        <nav className="console-nav" aria-label="운영 콘솔 화면">
+          <a
+            aria-current={activePage === "spectate" ? "page" : undefined}
+            href="/"
+            onClick={(event) => {
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              navigateTo("spectate");
+            }}
+          >
+            관전
+          </a>
+          <a
+            aria-current={activePage === "scenarios" ? "page" : undefined}
+            href="/scenarios"
+            onClick={(event) => {
+              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+              event.preventDefault();
+              navigateTo("scenarios");
+            }}
+          >
+            장애 시나리오
+          </a>
+        </nav>
         <div className={`live-status is-${connection}`}>
           <i />
           <span>{connection === "connected" ? "LIVE" : connection === "connecting" ? "연결 중" : "연결 오류"}</span>
@@ -718,7 +751,13 @@ export function GameAdminConsole() {
         </div>
       )}
 
-      {selectedRoom ? (
+      {activePage === "scenarios" ? (
+        <FailureScenarioPage
+          connection={connection}
+          onError={setError}
+          rooms={rooms}
+        />
+      ) : selectedRoom ? (
         <RoomViewer
           botPending={botPending}
           onAddBots={() => void addBots()}

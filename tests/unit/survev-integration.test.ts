@@ -23,6 +23,11 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   const loot = await readFile(join(process.cwd(), "upstream-survev/server/src/game/objects/loot.ts"), "utf8");
   const player = await readFile(join(process.cwd(), "upstream-survev/server/src/game/objects/player.ts"), "utf8");
   const adminUi = await readFile(join(process.cwd(), "services/ops-console/web/src/GameAdminConsole.tsx"), "utf8");
+  const failureScenarioUi = await readFile(join(process.cwd(), "services/ops-console/web/src/FailureScenarioPage.tsx"), "utf8");
+  const controlPlaneClient = await readFile(join(process.cwd(), "services/ops-console/web/src/control-plane-client.ts"), "utf8");
+  const failureScenarios = await readFile(join(process.cwd(), "services/ops-console/src/failure-scenarios.ts"), "utf8");
+  const botRunner = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRunner.ts"), "utf8");
+  const gameProcessManager = await readFile(join(process.cwd(), "upstream-survev/server/src/game/gameProcessManager.ts"), "utf8");
   const adminCss = await readFile(join(process.cwd(), "services/ops-console/web/src/globals.css"), "utf8");
   const adminHtml = await readFile(join(process.cwd(), "services/ops-console/web/index.html"), "utf8");
   const docker = await readFile(join(process.cwd(), "services/game-server/Dockerfile"), "utf8");
@@ -86,12 +91,51 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /requestFullscreen\(\)/);
   assert.match(adminUi, /controlPlaneClient\.addBots/);
   assert.match(adminUi, /snapshotCapturedAt > 0/);
-  assert.doesNotMatch(adminUi, /ROOM_FORM_DEFAULTS|ManagementTab|Deployment|Pod|Redis/);
+  assert.doesNotMatch(adminUi, /ROOM_FORM_DEFAULTS|ManagementTab/);
+  assert.match(adminUi, /import \{ FailureScenarioPage \} from "\.\/FailureScenarioPage\.js"/);
+  assert.match(adminUi, /window\.location\.pathname\.replace\(\/\\\/\+\$\/, ""\) === "\/scenarios"/);
+  assert.match(adminUi, /window\.addEventListener\("popstate", handlePopState\)/);
+  assert.match(adminUi, /window\.history\.pushState\(\{ consolePage: page \}, "", pathname\)/);
+  assert.match(adminUi, /href="\/scenarios"/);
+  assert.match(adminUi, /<FailureScenarioPage/);
+  for (const scenarioId of [
+    "admission-lock",
+    "bot-surge",
+    "malicious-input",
+    "admission-storm",
+    "process-crash",
+    "pod-failure",
+  ]) {
+    assert.match(failureScenarioUi, new RegExp(`id: "${scenarioId}"`));
+    assert.match(failureScenarios, new RegExp(`"${scenarioId}"`));
+  }
+  assert.match(failureScenarioUi, /window\.setInterval\([\s\S]*1_000/);
+  assert.match(failureScenarioUi, /className="scenario-confirmation"/);
+  assert.match(failureScenarioUi, /setConfirmation\(\{ roomId: selectedRoom\.id, scenarioId: scenario\.id \}\)/);
+  assert.match(failureScenarioUi, /controlPlaneClient\.startFailureScenario/);
+  assert.match(failureScenarioUi, /controlPlaneClient\.recoverFailureScenario/);
+  assert.match(failureScenarioUi, /scenario\.requiresPodFailure && !podFailureAvailable/);
+  assert.match(failureScenarioUi, /selectedScenarioRoom\?\.lastResults\[scenario\.id\]/);
+  assert.match(failureScenarioUi, /events\.filter\(\(event\) => event\.roomId === selectedRoomId\)/);
+  assert.match(failureScenarioUi, /inputRejected/);
+  assert.match(controlPlaneClient, /getFailureScenarios\(\)/);
+  assert.match(controlPlaneClient, /\/api\/admin\/scenarios/);
+  assert.match(failureScenarios, /const ADMISSION_STORM_REQUESTS = 90/);
+  assert.match(failureScenarios, /pod_failure_requires_kubernetes/);
+  assert.match(failureScenarios, /\/bots\/jobs\/\$\{encodeURIComponent\(run\.jobId\)\}\/cleanup/);
+  assert.match(botRunner, /OPSIA_MIN_BOTS_PER_ROOM/);
+  assert.match(botRunner, /for \(const id of job\.createdBotIds\)/);
+  assert.match(gameServer, /app\.post\("\/ops\/failure\/process-crash"/);
+  assert.match(gameProcessManager, /crashOpsiaRoom\(\): number/);
+  assert.match(gameProcessManager, /this\.killProcess\(proc, "SIGKILL"\)/);
   assert.doesNotMatch(adminUi, /map-previews|<img/);
   assert.doesNotMatch(adminHtml, /survev-control-theme|prefers-color-scheme/);
   assert.match(adminHtml, /name="color-scheme" content="light"/);
   assert.match(adminCss, /--bg: #fafafc/);
   assert.match(adminCss, /--blue: #0a84ff/);
+  assert.match(adminCss, /\.console-nav a\[aria-current="page"\]/);
+  assert.match(adminCss, /\.scenario-grid/);
+  assert.match(adminCss, /\.scenario-card\.is-active/);
   const roomCard = adminUi.slice(adminUi.indexOf("function RoomCard"), adminUi.indexOf("function RoomDirectory"));
   assert.match(roomCard, /<LiveRoomMiniMap room=\{room\}/);
   assert.doesNotMatch(roomCard, /<iframe/);

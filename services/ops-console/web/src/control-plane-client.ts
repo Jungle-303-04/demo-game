@@ -3,6 +3,8 @@ import type {
   AddBotsResult,
   CreateRoomInput,
   ControlPlaneCapabilities,
+  FailureScenarioId,
+  FailureScenarioState,
   GameRoom,
   OpsEvent,
   RoomCommand,
@@ -71,6 +73,22 @@ export function setControlPlaneAdminToken(token: string): void {
   window.sessionStorage.setItem("survev-admin-token", token.trim());
 }
 
+export async function withControlPlaneAdminTokenRetry<T>(
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (!(error instanceof ControlPlaneError) || error.status !== 401) {
+      throw error;
+    }
+    const token = window.prompt("관리자 작업을 계속하려면 관리자 토큰을 입력하세요.");
+    if (!token?.trim()) throw error;
+    setControlPlaneAdminToken(token);
+    return operation();
+  }
+}
+
 const roomPath = (roomId: string, suffix = "") =>
   `/api/admin/rooms/${encodeURIComponent(roomId)}${suffix}`;
 
@@ -81,6 +99,30 @@ export const controlPlaneClient = {
 
   async listEvents(): Promise<OpsEvent[]> {
     return (await request<EventsResponse>("/api/admin/events")).events;
+  },
+
+  async getFailureScenarios(): Promise<FailureScenarioState> {
+    return request<FailureScenarioState>("/api/admin/scenarios");
+  },
+
+  async startFailureScenario(
+    roomId: string,
+    scenarioId: FailureScenarioId,
+  ): Promise<void> {
+    await request(
+      roomPath(roomId, `/scenarios/${encodeURIComponent(scenarioId)}/start`),
+      { method: "POST" },
+    );
+  },
+
+  async recoverFailureScenario(
+    roomId: string,
+    scenarioId: FailureScenarioId,
+  ): Promise<void> {
+    await request(
+      roomPath(roomId, `/scenarios/${encodeURIComponent(scenarioId)}/recover`),
+      { method: "POST" },
+    );
   },
 
   async createRoom(input: CreateRoomInput): Promise<GameRoom> {

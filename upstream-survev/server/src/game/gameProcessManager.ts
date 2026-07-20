@@ -350,6 +350,7 @@ export class GameProcessManager {
     readonly logger = new ServerLogger("Game Process Manager");
 
     private readonly opsiaSnapshotListeners = new Set<(snapshot: OpsiaSnapshotData) => void>();
+    private opsiaCrashInFlight = false;
 
     constructor() {
         process.on("beforeExit", () => {
@@ -443,7 +444,13 @@ export class GameProcessManager {
                 this.killProcess(gameProc!);
                 if (shouldRecover) {
                     setTimeout(() => {
-                        if (!this.processes.some((candidate) => !candidate.gameData.stopped)) this.newGame(config);
+                        if (this.processes.some((candidate) => !candidate.gameData.stopped)) return;
+                        const replacement = this.newGame(config);
+                        if (this.opsiaCrashInFlight) {
+                            replacement.onCreatedCbs.push(() => {
+                                this.opsiaCrashInFlight = false;
+                            });
+                        }
                     }, 1000);
                 }
             });
@@ -477,6 +484,36 @@ export class GameProcessManager {
 
         util.removeFrom(this.processes, gameProc);
         this.processById.delete(gameProc.gameData.id);
+    }
+
+    /**
+     * Schedules an abrupt failure of the active OPSIA child process while the
+     * parent game-server remains alive. The existing child exit handler owns
+     * replacement and starts a fresh child after one second.
+     */
+    crashOpsiaRoom(): number {
+        if (process.env.OPSIA_ROOM !== "true") throw new Error("opsia_room_required");
+        if (this.opsiaCrashInFlight) throw new Error("room_recovery_in_progress");
+        const proc = this.processes.find((candidate) =>
+            candidate.state === ProcState.Running
+            && !candidate.gameData.stopped
+            && !candidate.process.killed
+        );
+        const pid = proc?.process.pid;
+        if (!proc || pid === undefined) throw new Error("room_not_ready");
+
+        this.opsiaCrashInFlight = true;
+        // Let the HTTP handler finish its recovery_requested response before
+        // severing the child sockets. A concurrent request is rejected by the
+        // in-flight guard before this callback can run.
+        setImmediate(() => {
+            if (!this.processes.includes(proc) || proc.process.killed) {
+                this.opsiaCrashInFlight = false;
+                return;
+            }
+            this.killProcess(proc, "SIGKILL");
+        });
+        return pid;
     }
 
     getById(id: string): GameProcess | undefined {

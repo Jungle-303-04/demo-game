@@ -67,6 +67,7 @@ services:
     environment:
       <<: *control-environment
       OPSIA_ROOM_ENDPOINTS: "room-0=http://game-0:8001,room-1=http://game-1:8001,room-2=http://game-2:8001"
+      OPSIA_MIN_BOTS_PER_ROOM: "10"
     ports: ["8084:8084"]
     depends_on: { game-0: { condition: service_started }, game-1: { condition: service_started }, game-2: { condition: service_started } }
   ops-console:

@@ -25,6 +25,7 @@ type BotJob = {
     roomId: string;
     total: number;
     completed: number;
+    createdBotIds: string[];
     intervalMs: number;
     mode: BotMode;
     state: BotJobState;
@@ -327,6 +328,7 @@ const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs
         roomId,
         total: count,
         completed: 0,
+        createdBotIds: [],
         intervalMs,
         mode,
         state: "running",
@@ -342,6 +344,7 @@ const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs
                     for (const bot of created) bots.get(bot.id)?.stop();
                     return;
                 }
+                job.createdBotIds.push(...created.map((bot) => bot.id));
                 job.completed += 1;
                 if (index < count - 1) await new Promise((resolve) => setTimeout(resolve, intervalMs));
             }
@@ -414,10 +417,14 @@ const server = createServer(async (request, response) => {
             return reply(response, 401, { error: "unauthorized" });
         }
         if (request.method === "GET" && pathname === "/bots") {
-            return reply(response, 200, { bots: [...bots.values()].map((bot) => bot.summary()) });
+            return reply(response, 200, {
+                bots: [...bots.values()].map((bot) => bot.summary()),
+                minimumBotsPerRoom,
+            });
         }
         const jobMatch = pathname.match(/^\/bots\/jobs\/([^/]+)$/);
         const cancelMatch = pathname.match(/^\/bots\/jobs\/([^/]+)\/cancel$/);
+        const cleanupMatch = pathname.match(/^\/bots\/jobs\/([^/]+)\/cleanup$/);
         if (request.method === "GET" && jobMatch) {
             const job = jobs.get(jobMatch[1]!);
             return job ? reply(response, 200, job) : reply(response, 404, { error: "bot_job_not_found" });
@@ -427,6 +434,26 @@ const server = createServer(async (request, response) => {
             if (!job) return reply(response, 404, { error: "bot_job_not_found" });
             if (job.state === "running") job.state = "cancelled";
             return reply(response, 200, job);
+        }
+        if (request.method === "POST" && cleanupMatch) {
+            const job = jobs.get(cleanupMatch[1]!);
+            if (!job) return reply(response, 404, { error: "bot_job_not_found" });
+            if (job.state === "running") job.state = "cancelled";
+            let killed = 0;
+            for (const id of job.createdBotIds) {
+                const bot = bots.get(id);
+                if (!bot) continue;
+                bot.stop();
+                bots.delete(id);
+                killed += 1;
+            }
+            const remaining = job.createdBotIds.filter((id) => bots.has(id)).length;
+            return reply(response, 200, {
+                ...job,
+                killed,
+                remaining,
+                cleaned: remaining === 0,
+            });
         }
         if (request.method === "POST" && pathname === "/bots/jobs") {
             const body = await readJson(request);

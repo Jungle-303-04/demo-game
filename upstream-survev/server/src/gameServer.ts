@@ -393,6 +393,8 @@ app.get("/summary", (res) => {
         cpuPercent: snapshot?.cpuPercent,
         memoryMb: snapshot?.memoryMb,
         uptimeSeconds: snapshot?.uptimeSeconds,
+        inputAccepted: snapshot?.inputAccepted,
+        inputRejected: snapshot?.inputRejected,
         qrUrl: `${process.env.PUBLIC_BASE_URL ?? "http://localhost:8090"}/play/${process.env.ROOM_ID ?? "room-0"}/`,
     });
 });
@@ -451,6 +453,43 @@ app.post("/ops/snapshot/save", (res, req) => {
                 uwsHelpers.returnJson(res, { status: "saved", roomId: process.env.ROOM_ID ?? "room-0", savedAt })
             );
         }
+    }).catch((error) => {
+        if (!res.aborted) {
+            res.cork(() =>
+                res.writeStatus("503 Service Unavailable").end(
+                    JSON.stringify({ error: error instanceof Error ? error.message : "snapshot_save_failed" }),
+                )
+            );
+        }
+    });
+});
+
+app.post("/ops/failure/process-crash", (res, req) => {
+    if (!authorizeOpsRequest(res, req)) return;
+    res.onAborted(() => {
+        res.aborted = true;
+    });
+    void server.manager.saveOpsiaRoom().then((savedAt) => {
+        if (res.aborted) return;
+        let pid: number;
+        try {
+            pid = server.manager.crashOpsiaRoom();
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "room_crash_failed";
+            const status = message === "room_recovery_in_progress"
+                ? "409 Conflict"
+                : "503 Service Unavailable";
+            res.cork(() => res.writeStatus(status).end(JSON.stringify({ error: message })));
+            return;
+        }
+        res.cork(() =>
+            uwsHelpers.returnJson(res, {
+                status: "recovery_requested",
+                roomId: process.env.ROOM_ID ?? "room-0",
+                savedAt,
+                pid,
+            })
+        );
     }).catch((error) => {
         if (!res.aborted) {
             res.cork(() =>

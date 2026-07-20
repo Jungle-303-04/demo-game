@@ -54,6 +54,8 @@ interface GameSummary {
   cpuPercent?: number;
   memoryMb?: number;
   uptimeSeconds?: number;
+  inputAccepted?: number;
+  inputRejected?: number;
 }
 
 interface SnapshotPlayer {
@@ -209,6 +211,8 @@ export interface AdminRoom {
     websocketCount: number;
     redisOpsPerSecond: number | null;
     telemetryLagMs: number;
+    inputAccepted: number;
+    inputRejected: number;
   };
 }
 
@@ -434,6 +438,8 @@ export async function buildAdminRooms(
         websocketCount: players.length,
         redisOpsPerSecond: null,
         telemetryLagMs,
+        inputAccepted: snapshot?.inputAccepted ?? summary?.inputAccepted ?? 0,
+        inputRejected: snapshot?.inputRejected ?? summary?.inputRejected ?? 0,
       },
     };
   }));
