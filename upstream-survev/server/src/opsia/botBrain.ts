@@ -23,6 +23,8 @@ export interface BotBrainSnapshot {
     map: {
         width: number;
         height: number;
+        objects?: BotBrainMapObstacle[];
+        navigation?: BotBrainMapObstacle[];
     };
     zone: {
         x: number;
@@ -34,6 +36,15 @@ export interface BotBrainSnapshot {
     };
     loot?: BotBrainLoot[];
     players: BotBrainPlayer[];
+}
+
+export interface BotBrainMapObstacle {
+    id: number;
+    kind?: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
 }
 
 export interface BotBrainLoot {
@@ -74,6 +85,8 @@ export interface BotBrainState {
     nextWeaponSwapAt: number;
     healingUntil: number;
     nextHealAt: number;
+    avoidanceSign: -1 | 1;
+    avoidanceUntil: number;
 }
 
 export interface BotIntent {
@@ -113,6 +126,112 @@ const distance = (ax: number, ay: number, bx: number, by: number): number => Mat
 
 const angleTo = (ax: number, ay: number, bx: number, by: number): number => Math.atan2(by - ay, bx - ax);
 
+const navigationObstacles = (snapshot: BotBrainSnapshot): BotBrainMapObstacle[] => [
+    ...(snapshot.map.navigation ?? []),
+    ...(snapshot.map.objects ?? []).filter(
+        (object) => object.kind === "building" || object.kind === "structure",
+    ),
+];
+
+const insideObstacle = (
+    x: number,
+    y: number,
+    obstacle: BotBrainMapObstacle,
+    padding = 0,
+): boolean => x >= obstacle.x - obstacle.width / 2 - padding
+    && x <= obstacle.x + obstacle.width / 2 + padding
+    && y >= obstacle.y - obstacle.height / 2 - padding
+    && y <= obstacle.y + obstacle.height / 2 + padding;
+
+const rayClearance = (
+    snapshot: BotBrainSnapshot,
+    self: BotBrainPlayer,
+    angle: number,
+    maxDistance = 52,
+): number => {
+    const obstacles = navigationObstacles(snapshot);
+    for (let travelled = 4; travelled <= maxDistance; travelled += 4) {
+        const x = self.x + Math.cos(angle) * travelled;
+        const y = self.y + Math.sin(angle) * travelled;
+        for (const obstacle of obstacles) {
+            // Root building bounds contain rooms and doors. Once inside one,
+            // only its real wall colliders should steer the bot.
+            if (insideObstacle(self.x, self.y, obstacle)) continue;
+            if (insideObstacle(x, y, obstacle, 2.4)) return travelled;
+        }
+    }
+    return maxDistance;
+};
+
+const steerAroundWalls = (
+    snapshot: BotBrainSnapshot,
+    self: BotBrainPlayer,
+    state: BotBrainState,
+    desiredAngle: number,
+    now: number,
+): number => {
+    const lookAhead = 52;
+    if (rayClearance(snapshot, self, desiredAngle, lookAhead) >= lookAhead) {
+        if (now >= state.avoidanceUntil) return desiredAngle;
+        return desiredAngle + state.avoidanceSign * Math.PI * 0.18;
+    }
+
+    if (now >= state.avoidanceUntil) {
+        const left = Math.max(
+            rayClearance(snapshot, self, desiredAngle - Math.PI / 3, lookAhead),
+            rayClearance(snapshot, self, desiredAngle - Math.PI / 2, lookAhead),
+        );
+        const right = Math.max(
+            rayClearance(snapshot, self, desiredAngle + Math.PI / 3, lookAhead),
+            rayClearance(snapshot, self, desiredAngle + Math.PI / 2, lookAhead),
+        );
+        state.avoidanceSign = left > right ? -1 : right > left ? 1 : state.avoidanceSign;
+    }
+    state.avoidanceUntil = now + 850;
+    return desiredAngle + state.avoidanceSign * Math.PI / 2;
+};
+
+const segmentHitsObstacle = (
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+    obstacle: BotBrainMapObstacle,
+): boolean => {
+    if (insideObstacle(ax, ay, obstacle)) return false;
+    const minX = obstacle.x - obstacle.width / 2 - 0.35;
+    const maxX = obstacle.x + obstacle.width / 2 + 0.35;
+    const minY = obstacle.y - obstacle.height / 2 - 0.35;
+    const maxY = obstacle.y + obstacle.height / 2 + 0.35;
+    const dx = bx - ax;
+    const dy = by - ay;
+    let low = 0;
+    let high = 1;
+    for (const [origin, delta, min, max] of [
+        [ax, dx, minX, maxX],
+        [ay, dy, minY, maxY],
+    ] as const) {
+        if (Math.abs(delta) < 1e-6) {
+            if (origin < min || origin > max) return false;
+            continue;
+        }
+        const first = (min - origin) / delta;
+        const second = (max - origin) / delta;
+        low = Math.max(low, Math.min(first, second));
+        high = Math.min(high, Math.max(first, second));
+        if (low > high) return false;
+    }
+    return high >= 0 && low <= 1;
+};
+
+const hasClearShot = (
+    snapshot: BotBrainSnapshot,
+    self: BotBrainPlayer,
+    target: BotBrainPlayer,
+): boolean => !navigationObstacles(snapshot).some(
+    (obstacle) => segmentHitsObstacle(self.x, self.y, target.x, target.y, obstacle),
+);
+
 const aimDistance = (target: Target | undefined, fallback = 48): number =>
     target ? Math.min(64, Math.max(30, target.distance)) : fallback;
 
@@ -135,6 +254,8 @@ export const createBotBrainState = (random: () => number = Math.random): BotBrai
     nextWeaponSwapAt: 0,
     healingUntil: 0,
     nextHealAt: 0,
+    avoidanceSign: random() < 0.5 ? -1 : 1,
+    avoidanceUntil: 0,
 });
 
 const periodicActions = (
@@ -527,7 +648,8 @@ export const decideBotIntent = (
         )
         : state.wanderAngle;
     const combatActions = { ...actions, ...weaponActions(state, self, target?.distance, now) };
-    const shoot = canShootTarget(self, target);
+    const shoot = canShootTarget(self, target)
+        && Boolean(target && hasClearShot(snapshot, self, target.player));
 
     if (now < state.unstuckUntil) {
         state.healingUntil = 0;
@@ -568,7 +690,7 @@ export const decideBotIntent = (
             state,
             {
                 mode: "edge",
-                moveAngle: centerAngle,
+                moveAngle: steerAroundWalls(snapshot, self, state, centerAngle, now),
                 aimAngle: targetAngle,
                 aimDistance: aimDistance(target, 60),
                 shoot,
@@ -597,7 +719,7 @@ export const decideBotIntent = (
             state,
             {
                 mode: "zone",
-                moveAngle: safeAngle,
+                moveAngle: steerAroundWalls(snapshot, self, state, safeAngle, now),
                 aimAngle: targetAngle,
                 aimDistance: aimDistance(target, 60),
                 shoot,
@@ -721,7 +843,7 @@ export const decideBotIntent = (
             state,
             {
                 mode,
-                moveAngle,
+                moveAngle: steerAroundWalls(snapshot, self, state, moveAngle, now),
                 aimAngle: targetAngle,
                 aimDistance: aimDistance(target),
                 shoot,
@@ -746,7 +868,7 @@ export const decideBotIntent = (
         state,
         {
             mode: "wander",
-            moveAngle: wanderAngle,
+            moveAngle: steerAroundWalls(snapshot, self, state, wanderAngle, now),
             aimAngle: targetAngle,
             aimDistance: aimDistance(target),
             shoot: false,

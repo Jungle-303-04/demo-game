@@ -83,6 +83,13 @@ export interface OpsiaMapSnapshot {
         width: number;
         height: number;
     }>;
+    navigation: Array<{
+        id: number;
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    }>;
 }
 
 export interface OpsiaSnapshot {
@@ -171,6 +178,32 @@ const makeOpsMapSnapshot = (game: Game): OpsiaMapSnapshot => {
             y: structure.pos.y,
             ...mapObjectSize(structure.bounds),
         }));
+    const mapObstacles: OpsiaMapSnapshot["objects"] = game.map.obstacles
+        .filter((obstacle) => {
+            if (obstacle.layer !== 0 || obstacle.dead || obstacle.isDoor) return false;
+            const size = mapObjectSize(obstacle.bounds);
+            return obstacle.isWall || obstacle.isTree || size.width >= 2.5 || size.height >= 2.5;
+        })
+        .map((obstacle) => {
+            const kind: OpsiaMapObjectKind = obstacle.isWall
+                ? "wall"
+                : obstacle.isTree
+                ? "tree"
+                : /rock|stone|boulder/i.test(obstacle.type)
+                ? "rock"
+                : "obstacle";
+            return {
+                id: obstacle.__id,
+                type: obstacle.type,
+                kind,
+                x: obstacle.pos.x + (obstacle.bounds.min.x + obstacle.bounds.max.x) / 2,
+                y: obstacle.pos.y + (obstacle.bounds.min.y + obstacle.bounds.max.y) / 2,
+                ...mapObjectSize(obstacle.bounds),
+            };
+        });
+    const navigation: OpsiaMapSnapshot["navigation"] = mapObstacles
+        .filter((obstacle) => obstacle.kind === "wall")
+        .map(({ id, x, y, width, height }) => ({ id, x, y, width, height }));
     const snapshot: OpsiaMapSnapshot = {
         name: game.mapName,
         factionMode: game.map.factionMode,
@@ -190,9 +223,11 @@ const makeOpsMapSnapshot = (game: Game): OpsiaMapSnapshot => {
             x: place.pos.x,
             y: place.pos.y,
         })),
-        // The admin tactical LOD keeps real navigational geometry while
-        // omitting thousands of tiny decorative props from every 1s poll.
-        objects: [...structures, ...buildings],
+        // This immutable layout is sent in full only for the first admin
+        // render. Subsequent telemetry and bot-brain polls use the compact
+        // projection in gameServer.ts.
+        objects: [...mapObstacles, ...structures, ...buildings],
+        navigation,
     };
     mapSnapshots.set(game, snapshot);
     return snapshot;

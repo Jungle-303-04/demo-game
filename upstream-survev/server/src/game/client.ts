@@ -775,6 +775,11 @@ export class Client {
     }
 
     getSpectablePlayers(includeCurrent = false): Player[] {
+        if (this.spectatorOnly) {
+            return this.game.playerBarn.livingPlayers
+                .slice()
+                .sort((a, b) => a.name.localeCompare(b.name));
+        }
         // we want to include the player we are currently spectating
         // even if they are dead, we only switch to a new player after 2 seconds
         // and not including it in the list will mess up the index for prev/next keybinds

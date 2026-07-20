@@ -47,7 +47,7 @@ const requestRoomAwareness = (roomId: string, endpoint: string): void => {
     awareness.requestedAt = now;
     awareness.pending = (async () => {
         try {
-            const response = await fetch(`${endpoint}/ops/snapshot`, {
+            const response = await fetch(`${endpoint}/ops/snapshot?brain=1`, {
                 headers: controlToken ? { authorization: `Bearer ${controlToken}` } : undefined,
                 signal: AbortSignal.timeout(900),
             });

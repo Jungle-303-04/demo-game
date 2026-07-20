@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  memo,
   type CSSProperties,
   useCallback,
   useEffect,
@@ -10,6 +11,7 @@ import {
 } from "react";
 import {
   type GameRoom,
+  type MapLayoutTelemetry,
   type PlayerTelemetry,
 } from "./control-plane.js";
 import {
@@ -21,8 +23,129 @@ import {
 type StyleWithVariables = CSSProperties & Record<`--${string}`, string | number>;
 type ConnectionState = "connecting" | "connected" | "degraded";
 
-const POLL_INTERVAL_MS = 1_000;
+const POLL_INTERVAL_MS = 400;
 const BOT_BATCH_SIZE = 10;
+
+const OBJECT_COLORS: Record<MapLayoutTelemetry["objects"][number]["kind"], string> = {
+  building: "#73563f",
+  structure: "#96775d",
+  tree: "#42663e",
+  rock: "#747b7d",
+  wall: "#574a41",
+  obstacle: "#916b3e",
+};
+
+function mapLayoutKey(map: MapLayoutTelemetry, seed: number) {
+  return `${seed}:${map.width}:${map.height}:${map.rivers.length}:${map.places.length}:${map.objects.length}`;
+}
+
+function mapPalette(theme: string) {
+  const normalized = theme.toLowerCase();
+  if (normalized.includes("desert")) {
+    return { water: "#317e9f", shore: "#c88e48", ground: "#dca653", grid: "rgba(87,58,33,.18)" };
+  }
+  if (normalized.includes("snow")) {
+    return { water: "#0c515a", shore: "#d6bb61", ground: "#c7c9c8", grid: "rgba(55,64,67,.16)" };
+  }
+  return { water: "#2f789a", shore: "#c79a5f", ground: "#6f9d43", grid: "rgba(40,74,35,.16)" };
+}
+
+function drawLiveMap(canvas: HTMLCanvasElement, map: MapLayoutTelemetry, theme: string) {
+  const bounds = canvas.getBoundingClientRect();
+  if (bounds.width <= 0 || bounds.height <= 0) return;
+  const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
+  const width = Math.max(1, Math.round(bounds.width * pixelRatio));
+  const height = Math.max(1, Math.round(bounds.height * pixelRatio));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const context = canvas.getContext("2d", { alpha: false });
+  if (!context) return;
+  const palette = mapPalette(theme);
+  context.setTransform(width / map.width, 0, 0, height / map.height, 0, 0);
+  context.imageSmoothingEnabled = false;
+  context.fillStyle = palette.water;
+  context.fillRect(0, 0, map.width, map.height);
+  const shore = Math.max(0, map.shoreInset);
+  context.fillStyle = palette.shore;
+  context.fillRect(shore, shore, Math.max(0, map.width - shore * 2), Math.max(0, map.height - shore * 2));
+  const grass = shore + Math.max(0, map.grassInset);
+  context.fillStyle = palette.ground;
+  context.fillRect(grass, grass, Math.max(0, map.width - grass * 2), Math.max(0, map.height - grass * 2));
+
+  context.strokeStyle = palette.grid;
+  context.lineWidth = 0.6;
+  for (let x = grass; x <= map.width - grass; x += 32) {
+    context.beginPath(); context.moveTo(x, grass); context.lineTo(x, map.height - grass); context.stroke();
+  }
+  for (let y = grass; y <= map.height - grass; y += 32) {
+    context.beginPath(); context.moveTo(grass, y); context.lineTo(map.width - grass, y); context.stroke();
+  }
+
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  for (const river of map.rivers) {
+    if (river.points.length < 2) continue;
+    context.beginPath();
+    context.moveTo(river.points[0]!.x, river.points[0]!.y);
+    for (const point of river.points.slice(1)) context.lineTo(point.x, point.y);
+    if (river.looped) context.closePath();
+    context.strokeStyle = palette.shore;
+    context.lineWidth = Math.max(4, river.width * 2 + 9);
+    context.stroke();
+    context.strokeStyle = palette.water;
+    context.lineWidth = Math.max(2, river.width * 2);
+    context.stroke();
+  }
+
+  for (const object of map.objects) {
+    const objectWidth = Math.max(1, object.width);
+    const objectHeight = Math.max(1, object.height);
+    context.fillStyle = OBJECT_COLORS[object.kind];
+    if (object.kind === "tree" || object.kind === "rock") {
+      context.beginPath();
+      context.ellipse(object.x, object.y, Math.max(1.5, objectWidth / 2), Math.max(1.5, objectHeight / 2), 0, 0, Math.PI * 2);
+      context.fill();
+    } else {
+      context.fillRect(object.x - objectWidth / 2, object.y - objectHeight / 2, objectWidth, objectHeight);
+    }
+  }
+
+  const fontSize = Math.max(12, Math.min(24, map.width / 42));
+  context.font = `700 ${fontSize}px system-ui, sans-serif`;
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.lineJoin = "round";
+  for (const place of map.places) {
+    context.strokeStyle = "rgba(0,0,0,.48)";
+    context.lineWidth = Math.max(2, fontSize / 5);
+    context.strokeText(place.name, place.x, place.y);
+    context.fillStyle = "rgba(255,255,255,.9)";
+    context.fillText(place.name, place.x, place.y);
+  }
+}
+
+const LiveMapCanvas = memo(function LiveMapCanvas({ map, seed, theme }: {
+  map: MapLayoutTelemetry;
+  seed: number;
+  theme: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const layoutKey = mapLayoutKey(map, seed);
+  const latestRef = useRef({ map, theme });
+  latestRef.current = { map, theme };
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const redraw = () => drawLiveMap(canvas, latestRef.current.map, latestRef.current.theme);
+    redraw();
+    const observer = new ResizeObserver(redraw);
+    observer.observe(canvas);
+    return () => observer.disconnect();
+  }, [layoutKey, theme]);
+  return <canvas aria-hidden="true" className="live-map-canvas" ref={canvasRef} />;
+});
 
 function errorMessage(error: unknown) {
   if (error instanceof ControlPlaneError && error.status === 401) {
@@ -110,14 +233,6 @@ function roomServiceUrl(room: GameRoom) {
   return new URL(room.serviceUrl, configuredOrigin || window.location.origin);
 }
 
-function roomMapUrl(room: GameRoom) {
-  const url = roomServiceUrl(room);
-  url.pathname = url.pathname.replace(/\/play\/(room-\d+)\/?$/, "/watch/$1/");
-  url.search = "";
-  url.searchParams.set("view", "map");
-  return url.toString();
-}
-
 function ActualGameMap({
   room,
   interactive = false,
@@ -131,13 +246,7 @@ function ActualGameMap({
 }) {
   return (
     <div className="actual-game-map">
-      <iframe
-        aria-hidden="true"
-        key={room.id}
-        src={roomMapUrl(room)}
-        tabIndex={-1}
-        title={`${room.name} 실제 게임 맵`}
-      />
+      <LiveMapCanvas map={room.mapLayout} seed={room.seed} theme={room.map} />
       <PlayerMarkers
         interactive={interactive}
         onSelectPlayer={onSelectPlayer}
@@ -264,6 +373,7 @@ function PlayerSpectatorView({
   player: PlayerTelemetry;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const initialUrlRef = useRef(roomWatchUrl(room, player));
 
   useEffect(() => {
     let animationFrame = 0;
@@ -280,15 +390,14 @@ function PlayerSpectatorView({
     };
     animationFrame = window.requestAnimationFrame(driveSpectatorFrame);
     return () => window.cancelAnimationFrame(animationFrame);
-  }, [player.id, room.id]);
+  }, []);
 
   return (
     <div className="player-spectator">
       <iframe
         allow="fullscreen"
-        key={`${room.id}:${player.id}`}
         ref={iframeRef}
-        src={roomWatchUrl(room, player)}
+        src={initialUrlRef.current}
         tabIndex={-1}
         title={`${player.name} 실시간 관전`}
       />
@@ -369,16 +478,26 @@ function RoomViewer({
 
   const selectAdjacentPlayer = useCallback((reverse = false) => {
     if (alivePlayers.length === 0) return;
+    const spectatorFrame = stageRef.current?.querySelector<HTMLIFrameElement>(
+      ".player-spectator iframe",
+    );
+    if (selectedPlayer && spectatorFrame?.contentWindow) {
+      spectatorFrame.contentWindow.postMessage({
+        type: "opsia-spectator-command",
+        action: reverse ? "prev" : "next",
+      }, roomServiceUrl(room).origin);
+      return;
+    }
     const currentIndex = alivePlayers.findIndex(
       (player) => player.id === selectedPlayer?.id,
     );
     const direction = reverse ? -1 : 1;
-    const startIndex = currentIndex < 0 && reverse ? 0 : currentIndex;
+    const startIndex = currentIndex < 0 ? (reverse ? 0 : -1) : currentIndex;
     const nextIndex =
       (startIndex + direction + alivePlayers.length) % alivePlayers.length;
     const nextPlayer = alivePlayers[nextIndex];
     if (nextPlayer) onSelectPlayer(nextPlayer.id);
-  }, [alivePlayers, onSelectPlayer, selectedPlayer?.id]);
+  }, [alivePlayers, onSelectPlayer, room, selectedPlayer]);
 
   useEffect(() => {
     const handleKeys = (event: KeyboardEvent) => {
@@ -404,8 +523,15 @@ function RoomViewer({
         type?: unknown;
         key?: unknown;
         shiftKey?: unknown;
+        name?: unknown;
       } | null;
-      if (!data || data.type !== "opsia-spectator-key") return;
+      if (!data) return;
+      if (data.type === "opsia-spectator-target" && typeof data.name === "string") {
+        const player = alivePlayers.find((candidate) => candidate.name === data.name);
+        if (player) onSelectPlayer(player.id);
+        return;
+      }
+      if (data.type !== "opsia-spectator-key") return;
       if (data.key === "Tab") {
         selectAdjacentPlayer(data.shiftKey === true);
       } else if (data.key === "m") {
@@ -414,7 +540,7 @@ function RoomViewer({
     };
     window.addEventListener("message", handleSpectatorMessage);
     return () => window.removeEventListener("message", handleSpectatorMessage);
-  }, [onClearPlayer, room, selectAdjacentPlayer]);
+  }, [alivePlayers, onClearPlayer, onSelectPlayer, room, selectAdjacentPlayer]);
 
   useEffect(() => {
     const syncFullscreen = () =>
@@ -481,6 +607,7 @@ export function GameAdminConsole() {
   const [error, setError] = useState("");
   const [botPending, setBotPending] = useState(false);
   const requestPendingRef = useRef(false);
+  const hasMapLayoutsRef = useRef(false);
 
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId);
   const selectedPlayer = selectedRoom?.players.find(
@@ -492,8 +619,19 @@ export function GameAdminConsole() {
     if (requestPendingRef.current) return;
     requestPendingRef.current = true;
     try {
-      const state = await controlPlaneClient.getState();
-      setRooms(state.rooms.slice().sort((left, right) => left.id.localeCompare(right.id)));
+      const state = await controlPlaneClient.getState(hasMapLayoutsRef.current);
+      setRooms((currentRooms) => {
+        const currentById = new Map(currentRooms.map((room) => [room.id, room]));
+        const merged = state.rooms.flatMap((room) => {
+          if (room.mapLayout) return [room];
+          const current = currentById.get(room.id);
+          return current ? [{ ...room, mapLayout: current.mapLayout }] : [];
+        });
+        if (merged.length === state.rooms.length && merged.every(isSnapshotReady)) {
+          hasMapLayoutsRef.current = true;
+        }
+        return merged.sort((left, right) => left.id.localeCompare(right.id));
+      });
       setConnection("connected");
       if (!quiet) setError("");
     } catch (refreshError) {

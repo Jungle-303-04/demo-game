@@ -404,7 +404,18 @@ app.get("/ops/snapshot", (res, req) => {
         res.writeStatus("503 Service Unavailable").end(JSON.stringify({ error: "ops_snapshot_pending" }));
         return;
     }
-    uwsHelpers.returnJson(res, snapshot as unknown as Record<string, unknown>);
+    const responseSnapshot = req.getQuery("brain") === "1"
+        ? {
+            ...snapshot,
+            map: {
+                ...snapshot.map,
+                objects: snapshot.map.objects.filter(
+                    (object) => object.kind === "building" || object.kind === "structure",
+                ),
+            },
+        }
+        : snapshot;
+    uwsHelpers.returnJson(res, responseSnapshot as unknown as Record<string, unknown>);
 });
 
 app.post("/ops/end", (res, req) => {

@@ -75,8 +75,8 @@ const roomPath = (roomId: string, suffix = "") =>
   `/api/admin/rooms/${encodeURIComponent(roomId)}${suffix}`;
 
 export const controlPlaneClient = {
-  async getState(): Promise<RoomsResponse> {
-    return request<RoomsResponse>("/api/admin/rooms");
+  async getState(compact = false): Promise<RoomsResponse> {
+    return request<RoomsResponse>(`/api/admin/rooms${compact ? "?compact=1" : ""}`);
   },
 
   async listEvents(): Promise<OpsEvent[]> {

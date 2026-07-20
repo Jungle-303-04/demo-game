@@ -301,6 +301,7 @@ export async function buildAdminRooms(
   orchestrator: string,
   botRunner: string,
   records?: RegistryRoom[],
+  compactMaps = false,
 ): Promise<AdminRoom[]> {
   const registryRooms = records ?? await listRegistryRooms(orchestrator);
   const botResponse = await optionalJson<{ bots: BotSummary[] }>(`${botRunner}/bots`);
@@ -312,7 +313,7 @@ export async function buildAdminRooms(
     const [summary, snapshot] = active
       ? await Promise.all([
         optionalJson<GameSummary>(`${record.endpoint}/summary`),
-        optionalJson<GameSnapshot>(`${record.endpoint}/ops/snapshot`),
+        optionalJson<GameSnapshot>(`${record.endpoint}/ops/snapshot${compactMaps ? "?brain=1" : ""}`),
       ])
       : [undefined, undefined];
     const capturedAt = snapshot?.capturedAt ?? summary?.capturedAt ?? 0;

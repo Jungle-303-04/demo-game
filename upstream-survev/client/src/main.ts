@@ -2,6 +2,7 @@ import $ from "jquery";
 import * as PIXI from "pixi.js-legacy";
 import { GameConfig } from "../../shared/gameConfig.ts";
 import * as net from "../../shared/net/net.ts";
+import { SpectateAction } from "../../shared/net/spectateMsg.ts";
 import type { FindGameBody, FindGameError, FindGameMatchData, FindGameResponse } from "../../shared/types/api.ts";
 import { math } from "../../shared/utils/math.ts";
 import { Account } from "./account.ts";
@@ -137,6 +138,21 @@ export class Application {
                     shiftKey: event.shiftKey,
                 }, "*");
             }, { capture: true });
+            if (this.opsiaWatchView === "player") {
+                window.addEventListener("message", (event) => {
+                    if (event.source !== window.parent) return;
+                    const data = event.data as { type?: unknown; action?: unknown } | null;
+                    if (data?.type !== "opsia-spectator-command") return;
+                    const action = data.action === "prev"
+                        ? SpectateAction.Prev
+                        : data.action === "next"
+                        ? SpectateAction.Next
+                        : SpectateAction.None;
+                    if (action !== SpectateAction.None && this.game?.m_uiManager) {
+                        this.game.m_uiManager.specAction = action;
+                    }
+                });
+            }
             document.title = this.opsiaWatchView === "map"
                 ? "Survev live map"
                 : "Survev player spectator";

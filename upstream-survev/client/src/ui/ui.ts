@@ -1762,6 +1762,12 @@ export class UiManager {
             const name = playerBarn.getPlayerName(targetId, localId, false);
             this.spectatedPlayerId = targetId;
             this.spectatedPlayerName = helpers.htmlEscape(name);
+            if (window.parent !== window) {
+                window.parent.postMessage({
+                    type: "opsia-spectator-target",
+                    name,
+                }, "*");
+            }
             this.spectatedPlayerText
                 .find("#spectate-player")
                 .html(this.spectatedPlayerName);

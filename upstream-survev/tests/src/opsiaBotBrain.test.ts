@@ -601,4 +601,72 @@ describe("Opsia protocol bot brain", () => {
         expect(intent.shoot).toBe(false);
         expect(state.targetSessionId).toBeUndefined();
     });
+
+    test("does not shoot through an authoritative wall and steers around it", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                map: {
+                    width: 1_000,
+                    height: 1_000,
+                    navigation: [{ id: 90, kind: "wall", x: 535, y: 500, width: 6, height: 120 }],
+                },
+                players: [
+                    player(),
+                    player({ sessionId: "enemy", team: "blue", x: 600, y: 500 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("combat");
+        expect(intent.shoot).toBe(false);
+        expect(Math.abs(intent.moveAngle)).toBeGreaterThan(1);
+        expect(state.avoidanceUntil).toBeGreaterThan(1_000);
+    });
+
+    test("keeps a stable wall-following side instead of oscillating", () => {
+        const state = createBotBrainState(() => 0.5);
+        const blocked = snapshot({
+            capturedAt: 900,
+            map: {
+                width: 1_000,
+                height: 1_000,
+                navigation: [{ id: 91, kind: "wall", x: 535, y: 500, width: 6, height: 120 }],
+            },
+        });
+        const first = decideBotIntent(blocked, "self", state, 1_000, () => 0.5);
+        const second = decideBotIntent({ ...blocked, capturedAt: 1_100 }, "self", state, 1_200, () => 0.1);
+
+        expect(Math.sign(first.moveAngle)).toBe(Math.sign(second.moveAngle));
+        expect(state.avoidanceUntil).toBeGreaterThan(1_200);
+    });
+
+    test("preserves direct loot entry so bots can use building doors", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideBotIntent(
+            snapshot({
+                map: {
+                    width: 1_000,
+                    height: 1_000,
+                    objects: [{ id: 92, kind: "building", x: 535, y: 500, width: 30, height: 80 }],
+                },
+                loot: [{ id: 93, type: "m9", kind: "gun", x: 560, y: 500, count: 1 }],
+                players: [
+                    player({ weapon: "fists", ammo: 0 }),
+                    player({ sessionId: "enemy", team: "blue", x: 900 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("loot");
+        expect(intent.moveAngle).toBeCloseTo(0);
+    });
 });

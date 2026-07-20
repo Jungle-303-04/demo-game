@@ -199,8 +199,12 @@ const server = createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/admin/rooms") {
       const registryState = await getRegistryState(orchestrator);
+      const compact = url.searchParams.get("compact") === "1";
+      const rooms = await buildAdminRooms(orchestrator, botRunner, registryState.rooms, compact);
       return send(response, 200, {
-        rooms: await buildAdminRooms(orchestrator, botRunner, registryState.rooms),
+        rooms: compact
+          ? rooms.map(({ mapLayout: _mapLayout, ...room }) => room)
+          : rooms,
         capabilities: {
           scalingAvailable: registryState.scalingAvailable,
           maxRooms: registryState.maxRooms,

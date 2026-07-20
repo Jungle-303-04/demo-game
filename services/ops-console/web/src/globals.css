@@ -253,7 +253,7 @@ button {
 .tactical-map,
 .map-viewport,
 .actual-game-map,
-.actual-game-map iframe,
+.live-map-canvas,
 .map-player-layer {
   position: absolute;
   inset: 0;
@@ -261,12 +261,9 @@ button {
   height: 100%;
 }
 
-.actual-game-map iframe {
+.live-map-canvas {
   display: block;
   z-index: 1;
-  border: 0;
-  background: #020403;
-  pointer-events: none;
 }
 
 .room-live-map {
@@ -323,7 +320,7 @@ button {
       0
     )
     translate(-50%, -50%);
-  transition: transform 900ms linear;
+  transition: transform 360ms linear;
   will-change: transform;
 }
 

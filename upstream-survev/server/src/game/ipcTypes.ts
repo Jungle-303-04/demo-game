@@ -37,6 +37,13 @@ export interface OpsiaSnapshotData {
             width: number;
             height: number;
         }>;
+        navigation: Array<{
+            id: number;
+            x: number;
+            y: number;
+            width: number;
+            height: number;
+        }>;
     };
     zone: { x: number; y: number; radius: number; nextX: number; nextY: number; nextRadius: number };
     loot: Array<{
