@@ -392,6 +392,78 @@ export class Game {
         );
     }
 
+    updateOpsiaWall(dt: number) {
+        const debug = {} as DebugRenderOpts;
+        if (this.m_playing) this.m_playingTicker += dt;
+        this.m_playerBarn.m_update(
+            dt,
+            this.m_activeId,
+            this.m_renderer,
+            this.m_particleBarn,
+            this.m_camera,
+            this.m_map,
+            this.m_inputBinds,
+            this.m_audioManager,
+            this.m_ui2Manager,
+            false,
+            false,
+            this.m_spectating,
+        );
+        this.m_camera.m_pos = v2.copy(this.m_activePlayer.m_visualPos);
+        const zoom = this.m_activePlayer.m_getZoom();
+        const minDim = math.min(this.m_camera.m_screenWidth, this.m_camera.m_screenHeight);
+        const maxDim = math.max(this.m_camera.m_screenWidth, this.m_camera.m_screenHeight);
+        const maxScreenDim = math.max(minDim * (16 / 9), maxDim);
+        this.m_camera.m_targetZoom = (maxScreenDim * 0.5) / (zoom * this.m_camera.m_ppu);
+        this.m_camera.m_zoom = math.lerp(dt * 2, this.m_camera.m_zoom, this.m_camera.m_targetZoom);
+        this.m_bulletBarn.m_update(
+            dt,
+            this.m_playerBarn,
+            this.m_map,
+            this.m_camera,
+            this.m_activePlayer,
+            this.m_renderer,
+            this.m_particleBarn,
+            this.m_audioManager,
+        );
+        this.m_projectileBarn.m_update(
+            dt,
+            this.m_particleBarn,
+            this.m_audioManager,
+            this.m_activePlayer,
+            this.m_map,
+            this.m_renderer,
+            this.m_camera,
+        );
+        this.m_explosionBarn.m_update(
+            dt,
+            this.m_map,
+            this.m_playerBarn,
+            this.m_camera,
+            this.m_particleBarn,
+            this.m_audioManager,
+            debug,
+        );
+        this.m_shotBarn.m_update(
+            dt,
+            this.m_activeId,
+            this.m_playerBarn,
+            this.m_particleBarn,
+            this.m_audioManager,
+        );
+        this.m_particleBarn.m_update(dt, this.m_camera);
+        this.m_deadBodyBarn.m_update(
+            dt,
+            this.m_playerBarn,
+            this.m_activePlayer,
+            this.m_map,
+            this.m_camera,
+            this.m_renderer,
+        );
+        this.m_decalBarn.m_update(dt, this.m_camera, this.m_renderer);
+        this.m_renderer.m_update(dt, this.m_camera, this.m_map, undefined);
+    }
+
     update(dt: number) {
         this.debugHUD.m_update(dt, this);
 

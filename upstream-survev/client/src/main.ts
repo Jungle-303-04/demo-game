@@ -406,13 +406,26 @@ export class Application {
             this.pixi.ticker.add(this.update, this);
             if (this.opsiaWatch && this.opsiaWatchView === "player") {
                 let externallyDriven = false;
+                let lastWallFrameAt = performance.now();
                 window.__opsiaDrivenSpectatorFrames = 0;
                 window.__opsiaDriveSpectatorFrame = () => {
                     if (!externallyDriven) {
                         this.pixi?.ticker.stop();
                         externallyDriven = true;
                     }
-                    this.pixi?.ticker.update(performance.now());
+                    const frameAt = performance.now();
+                    const lightweightWall = this.opsiaWallFps > 0
+                        && this.opsiaWallFps <= 15
+                        && this.game?.initialized
+                        && this.game.m_playing;
+                    if (lightweightWall && this.pixi && this.game) {
+                        const dt = math.clamp((frameAt - lastWallFrameAt) / 1_000, 0.001, 1 / 8);
+                        this.game.updateOpsiaWall(dt);
+                        this.pixi.renderer.render(this.pixi.stage);
+                    } else {
+                        this.pixi?.ticker.update(frameAt);
+                    }
+                    lastWallFrameAt = frameAt;
                     window.__opsiaDrivenSpectatorFrames =
                         (window.__opsiaDrivenSpectatorFrames ?? 0) + 1;
                 };
