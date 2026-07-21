@@ -238,6 +238,9 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   const policy = await readFile(join(process.cwd(), "deploy/k8s/base/configmap.yaml"), "utf8");
   const management = await readFile(join(process.cwd(), "deploy/k8s/base/management-server.yaml"), "utf8");
   const sessionGateway = await readFile(join(process.cwd(), "deploy/k8s/base/session-gateway.yaml"), "utf8");
+  const sandboxOverlay = await readFile(join(process.cwd(), "deploy/k8s/overlays/sandbox/kustomization.yaml"), "utf8");
+  const gameServerOverlay = await readFile(join(process.cwd(), "deploy/k8s/overlays/game-server/kustomization.yaml"), "utf8");
+  const publishImagesWorkflow = await readFile(join(process.cwd(), ".github/workflows/publish-images.yml"), "utf8");
   const botRunner = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRunner.ts"), "utf8");
   const botRouting = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRouting.ts"), "utf8");
 
@@ -290,4 +293,12 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.match(botRouting, /session_gateway_url_required_for_live_bots/);
   assert.match(botRunner, /room\.status === "inactive"/);
   assert.doesNotMatch(botRunner, /room-0=http:\/\/game-0/);
+  for (const image of ["game-server", "api-server", "bot-runner", "ops-console", "room-orchestrator", "session-gateway"]) {
+    assert.match(publishImagesWorkflow, new RegExp(`image: ${image}`));
+    assert.match(sandboxOverlay, new RegExp(`name: ghcr\\.io/jungle-303-04/demo-game/${image}`));
+    assert.match(gameServerOverlay, new RegExp(`name: ghcr\\.io/jungle-303-04/demo-game/${image}`));
+  }
+  assert.match(publishImagesWorkflow, /ghcr\.io\/jungle-303-04\/demo-game\/\$\{\{ matrix\.image \}\}:\$\{\{ inputs\.tag \}\}/);
+  assert.doesNotMatch(gameServerOverlay, /v20260720-/);
+  assert.equal((gameServerOverlay.match(/newTag: stable/g) ?? []).length, 6);
 });

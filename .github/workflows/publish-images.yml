@@ -2,6 +2,11 @@ name: Publish demo images
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Image tag to publish and deploy
+        required: true
+        default: stable
 
 permissions:
   contents: read
@@ -25,6 +30,8 @@ jobs:
             dockerfile: services/ops-console/Dockerfile
           - image: room-orchestrator
             dockerfile: services/room-orchestrator/Dockerfile
+          - image: session-gateway
+            dockerfile: services/session-gateway/Dockerfile
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -38,7 +45,9 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           push: true
-          tags: ghcr.io/jungle-303-04/demo-game/${{ matrix.image }}:v20260720-battle-wall-17
+          tags: |
+            ghcr.io/jungle-303-04/demo-game/${{ matrix.image }}:${{ inputs.tag }}
+            ghcr.io/jungle-303-04/demo-game/${{ matrix.image }}:${{ github.sha }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
