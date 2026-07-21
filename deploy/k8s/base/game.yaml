@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: game-room-0
   namespace: sandbox
-  labels: &room0Labels
+  labels:
     app: game-server
     app.kubernetes.io/part-of: demo-game
     opsia.dev/fleet: live
@@ -18,7 +18,17 @@ spec:
   strategy: { type: RollingUpdate, rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } }
   selector: { matchLabels: { app: game-server, opsia.dev/room-id: room-0 } }
   template:
-    metadata: { labels: *room0Labels, annotations: { opsia.dev/room-epoch: "1" } }
+    metadata:
+      labels:
+        app: game-server
+        app.kubernetes.io/part-of: demo-game
+        opsia.dev/fleet: live
+        opsia.dev/room-id: room-0
+        game.opsia.dev/room-id: room-0
+        opsia.dev/room-profile: faction
+        opsia.dev/rollout-role: active-candidate
+        opsia.dev/game-role: active
+      annotations: { opsia.dev/room-epoch: "1" }
     spec:
       terminationGracePeriodSeconds: 30
       containers:
@@ -59,7 +69,7 @@ kind: Deployment
 metadata:
   name: game-room-1
   namespace: sandbox
-  labels: &room1Labels
+  labels:
     app: game-server
     app.kubernetes.io/part-of: demo-game
     opsia.dev/fleet: live
@@ -74,7 +84,17 @@ spec:
   strategy: { type: RollingUpdate, rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } }
   selector: { matchLabels: { app: game-server, opsia.dev/room-id: room-1 } }
   template:
-    metadata: { labels: *room1Labels, annotations: { opsia.dev/room-epoch: "1" } }
+    metadata:
+      labels:
+        app: game-server
+        app.kubernetes.io/part-of: demo-game
+        opsia.dev/fleet: live
+        opsia.dev/room-id: room-1
+        game.opsia.dev/room-id: room-1
+        opsia.dev/room-profile: desert
+        opsia.dev/rollout-role: active-candidate
+        opsia.dev/game-role: active
+      annotations: { opsia.dev/room-epoch: "1" }
     spec:
       terminationGracePeriodSeconds: 30
       containers:
@@ -114,7 +134,7 @@ kind: Deployment
 metadata:
   name: game-room-2
   namespace: sandbox
-  labels: &room2Labels
+  labels:
     app: game-server
     app.kubernetes.io/part-of: demo-game
     opsia.dev/fleet: live
@@ -129,7 +149,17 @@ spec:
   strategy: { type: RollingUpdate, rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } }
   selector: { matchLabels: { app: game-server, opsia.dev/room-id: room-2 } }
   template:
-    metadata: { labels: *room2Labels, annotations: { opsia.dev/room-epoch: "1" } }
+    metadata:
+      labels:
+        app: game-server
+        app.kubernetes.io/part-of: demo-game
+        opsia.dev/fleet: live
+        opsia.dev/room-id: room-2
+        game.opsia.dev/room-id: room-2
+        opsia.dev/room-profile: snow
+        opsia.dev/rollout-role: active-candidate
+        opsia.dev/game-role: active
+      annotations: { opsia.dev/room-epoch: "1" }
     spec:
       terminationGracePeriodSeconds: 30
       containers:
@@ -169,7 +199,7 @@ kind: Deployment
 metadata:
   name: game-room-3
   namespace: sandbox
-  labels: &room3Labels
+  labels:
     app: game-server
     app.kubernetes.io/part-of: demo-game
     opsia.dev/fleet: live
@@ -184,7 +214,17 @@ spec:
   strategy: { type: RollingUpdate, rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } }
   selector: { matchLabels: { app: game-server, opsia.dev/room-id: room-3 } }
   template:
-    metadata: { labels: *room3Labels, annotations: { opsia.dev/room-epoch: "1" } }
+    metadata:
+      labels:
+        app: game-server
+        app.kubernetes.io/part-of: demo-game
+        opsia.dev/fleet: live
+        opsia.dev/room-id: room-3
+        game.opsia.dev/room-id: room-3
+        opsia.dev/room-profile: main
+        opsia.dev/rollout-role: active-candidate
+        opsia.dev/game-role: active
+      annotations: { opsia.dev/room-epoch: "1" }
     spec:
       terminationGracePeriodSeconds: 30
       containers:
@@ -224,7 +264,7 @@ kind: Deployment
 metadata:
   name: game-room-4
   namespace: sandbox
-  labels: &room4Labels
+  labels:
     app: game-server
     app.kubernetes.io/part-of: demo-game
     opsia.dev/fleet: live
@@ -239,7 +279,17 @@ spec:
   strategy: { type: RollingUpdate, rollingUpdate: { maxSurge: 1, maxUnavailable: 0 } }
   selector: { matchLabels: { app: game-server, opsia.dev/room-id: room-4 } }
   template:
-    metadata: { labels: *room4Labels, annotations: { opsia.dev/room-epoch: "1" } }
+    metadata:
+      labels:
+        app: game-server
+        app.kubernetes.io/part-of: demo-game
+        opsia.dev/fleet: live
+        opsia.dev/room-id: room-4
+        game.opsia.dev/room-id: room-4
+        opsia.dev/room-profile: woods
+        opsia.dev/rollout-role: active-candidate
+        opsia.dev/game-role: active
+      annotations: { opsia.dev/room-epoch: "1" }
     spec:
       terminationGracePeriodSeconds: 30
       containers:
