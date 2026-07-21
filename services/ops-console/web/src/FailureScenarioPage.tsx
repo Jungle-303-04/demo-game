@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  type CSSProperties,
   useCallback,
   useEffect,
   useMemo,
@@ -23,6 +24,8 @@ import {
 type ConnectionState = "connecting" | "connected" | "degraded";
 type ScenarioTone = "warning" | "danger" | "critical";
 type ScenarioAction = "start" | "recover";
+type ScenarioRoomCardStyle = CSSProperties & Record<`--${string}`, string | number>;
+const ROOM_ID_LABEL_KEY = "game.opsia.dev/room-id";
 
 interface ScenarioDefinition {
   id: FailureScenarioId;
@@ -39,6 +42,27 @@ interface PendingScenarioAction {
   roomId: string;
   scenarioId: FailureScenarioId;
   action: ScenarioAction;
+}
+
+function roomDisplayName(room: GameRoom) {
+  return room.roomName || room.name;
+}
+
+function roomStableId(room: GameRoom) {
+  return room.roomId || room.id;
+}
+
+function roomCurrentPodName(room: GameRoom) {
+  return room.currentPodName || room.podName;
+}
+
+function roomPodLabel(room: GameRoom) {
+  return room.podRoomLabel || `${ROOM_ID_LABEL_KEY}=${roomStableId(room)}`;
+}
+
+function scenarioRoomIdFromLocation() {
+  if (typeof window === "undefined") return "";
+  return new URLSearchParams(window.location.search).get("room") ?? "";
 }
 
 const SCENARIOS: readonly ScenarioDefinition[] = [
@@ -163,6 +187,71 @@ function playerCounts(room: GameRoom) {
   return { bots, humans: room.players.length - bots };
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function cyclicOffset(index: number, selectedIndex: number, total: number) {
+  if (total <= 0) return 0;
+  let offset = index - selectedIndex;
+  const half = total / 2;
+  if (offset > half) offset -= total;
+  if (offset < -half) offset += total;
+  return offset;
+}
+
+function roomPressureProfile(
+  room: GameRoom,
+  scenarioRoom: FailureScenarioRoomState | undefined,
+  index: number,
+) {
+  const activePenalty = scenarioRoom?.active ? 22 : 0;
+  const statusPenalty =
+    room.status === "degraded" ? 16 :
+      room.status === "recovering" ? 10 :
+        room.status === "provisioning" ? 7 :
+          room.status === "stopped" ? 4 : 0;
+  const botPressure = (scenarioRoom?.hackBots ?? 0) * 1.6 + (scenarioRoom?.normalBots ?? 0) * 0.28;
+  const load = clamp(
+    Math.round(
+      26 +
+      index * 5 +
+      clamp(room.metrics.cpuPercent, 0, 100) * 0.24 +
+      clamp(room.metrics.tickP95Ms, 0, 80) * 0.35 +
+      clamp(room.metrics.telemetryLagMs / 50, 0, 25) +
+      botPressure +
+      activePenalty +
+      statusPenalty,
+    ),
+    12,
+    94,
+  );
+  const latency = clamp(Math.round(room.metrics.tickP95Ms + 18 + index * 6 + activePenalty * 0.8), 18, 180);
+  const drop = clamp(Math.round((room.metrics.inputRejected > 0 ? room.metrics.inputRejected / 8 : index * 3) + activePenalty), 0, 99);
+  const redis = clamp(Math.round((room.metrics.redisOpsPerSecond ?? 18 + index * 9) + activePenalty * 1.4), 8, 160);
+  const series = Array.from({ length: 12 }, (_, point) => {
+    const wave = Math.sin((point + 1) * (0.74 + index * 0.08)) * (9 + index);
+    const surge = scenarioRoom?.active ? point * 2.4 : (point % 4) * 2.2;
+    return clamp(Math.round(load - 19 + wave + surge), 8, 98);
+  });
+  const linePath = series
+    .map((value, point) => {
+      const x = (point / (series.length - 1)) * 100;
+      const y = 46 - value * 0.38;
+      return `${point === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return {
+    drop,
+    latency,
+    linePath,
+    load,
+    redis,
+    fillPath: `${linePath} L 100 48 L 0 48 Z`,
+    bars: series.slice(-6),
+  };
+}
+
 export function FailureScenarioPage({
   rooms,
   connection,
@@ -175,7 +264,9 @@ export function FailureScenarioPage({
   const [scenarioRooms, setScenarioRooms] = useState<FailureScenarioRoomState[]>([]);
   const [podFailureAvailable, setPodFailureAvailable] = useState(false);
   const [events, setEvents] = useState<OpsEvent[]>([]);
-  const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id ?? "");
+  const [selectedRoomId, setSelectedRoomId] = useState(
+    () => scenarioRoomIdFromLocation() || rooms[0]?.id || "",
+  );
   const [confirmation, setConfirmation] = useState<{
     roomId: string;
     scenarioId: FailureScenarioId;
@@ -220,6 +311,7 @@ export function FailureScenarioPage({
   }, [rooms, selectedRoomId]);
 
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId);
+  const selectedRoomIndex = Math.max(0, rooms.findIndex((room) => room.id === selectedRoomId));
   const selectedScenarioRoom = scenarioRooms.find(
     (room) => room.roomId === selectedRoomId,
   );
@@ -233,6 +325,13 @@ export function FailureScenarioPage({
   const activeScenario = selectedScenarioRoom?.active;
   const roomControllable =
     selectedRoom?.status === "running" || selectedRoom?.status === "degraded";
+
+  const selectAdjacentRoom = useCallback((direction: -1 | 1) => {
+    if (rooms.length === 0) return;
+    const nextIndex = (selectedRoomIndex + direction + rooms.length) % rooms.length;
+    setSelectedRoomId(rooms[nextIndex]!.id);
+    setConfirmation(null);
+  }, [rooms, selectedRoomIndex]);
 
   async function runScenarioAction(
     scenario: ScenarioDefinition,
@@ -278,30 +377,85 @@ export function FailureScenarioPage({
         </div>
       </div>
 
-      <div className="scenario-room-selector" aria-label="장애 대상 게임 방">
-        {rooms.map((room, index) => {
-          const scenarioRoom = scenarioRooms.find((state) => state.roomId === room.id);
-          const active = scenarioRoom?.active;
-          return (
-            <button
-              aria-pressed={selectedRoomId === room.id}
-              className={selectedRoomId === room.id ? "is-selected" : ""}
-              key={room.id}
-              onClick={() => {
-                setSelectedRoomId(room.id);
-                setConfirmation(null);
-              }}
-              type="button"
-            >
-              <span>{String(index + 1).padStart(2, "0")}</span>
-              <strong>{room.name}</strong>
-              <small>{room.map} · {room.players.length}/{room.maxPlayers}</small>
-              <b className={active ? "has-active-scenario" : ""}>
-                {active ? scenarioLabel(active.scenarioId) : ROOM_STATUS_LABEL[room.status]}
-              </b>
-            </button>
-          );
-        })}
+      <div className="scenario-room-carousel" aria-label="장애 대상 게임 방">
+        <button
+          aria-label="이전 방 보기"
+          className="scenario-carousel-arrow"
+          disabled={rooms.length < 2}
+          onClick={() => selectAdjacentRoom(-1)}
+          type="button"
+        >
+          ‹
+        </button>
+        <div className="scenario-room-selector">
+          {rooms.map((room, index) => {
+            const scenarioRoom = scenarioRooms.find((state) => state.roomId === room.id);
+            const active = scenarioRoom?.active;
+            const counts = playerCounts(room);
+            const profile = roomPressureProfile(room, scenarioRoom, index);
+            const offset = cyclicOffset(index, selectedRoomIndex, rooms.length);
+            const absOffset = Math.min(2, Math.abs(offset));
+            const cardStyle = {
+              "--offset": offset,
+              "--abs-offset": absOffset,
+              "--load": profile.load,
+            } as ScenarioRoomCardStyle;
+            return (
+              <button
+                aria-pressed={selectedRoomId === room.id}
+                className={`${selectedRoomId === room.id ? "is-selected" : ""} ${absOffset >= 2 ? "is-far" : ""}`}
+                key={room.id}
+                onClick={() => {
+                  setSelectedRoomId(room.id);
+                  setConfirmation(null);
+                }}
+                style={cardStyle}
+                type="button"
+              >
+                <span className="scenario-room-number">{String(index + 1).padStart(2, "0")}</span>
+                <div className="scenario-room-copy">
+                  <strong>{roomDisplayName(room)}</strong>
+                  <small>{active ? scenarioLabel(active.scenarioId) : ROOM_STATUS_LABEL[room.status]}</small>
+                </div>
+                <div className="scenario-load-score">
+                  <span>LOAD</span>
+                  <strong>{profile.load}</strong>
+                </div>
+                <div className="scenario-room-graph" aria-hidden="true">
+                  <svg viewBox="0 0 100 48" preserveAspectRatio="none">
+                    <path className="scenario-graph-fill" d={profile.fillPath} />
+                    <path className="scenario-graph-line" d={profile.linePath} />
+                    {profile.bars.map((value, barIndex) => (
+                      <rect
+                        height={(value * 0.32).toFixed(1)}
+                        key={`${room.id}-bar-${barIndex}`}
+                        rx="1.4"
+                        width="6"
+                        x={(61 + barIndex * 6.4).toFixed(1)}
+                        y={(46 - value * 0.32).toFixed(1)}
+                      />
+                    ))}
+                  </svg>
+                </div>
+                <div className="scenario-room-problems">
+                  <span><b>{profile.latency}</b>ms LAT</span>
+                  <span><b>{profile.drop}</b>% DROP</span>
+                  <span><b>{counts.bots}</b> BOT</span>
+                  <span><b>{profile.redis}</b>/s OPS</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <button
+          aria-label="다음 방 보기"
+          className="scenario-carousel-arrow"
+          disabled={rooms.length < 2}
+          onClick={() => selectAdjacentRoom(1)}
+          type="button"
+        >
+          ›
+        </button>
       </div>
 
       {!selectedRoom || !selectedCounts ? (
@@ -312,8 +466,21 @@ export function FailureScenarioPage({
             <div className="scenario-target-heading">
               <div>
                 <span>SELECTED TARGET</span>
-                <h2>{selectedRoom.name}</h2>
-                <p>{selectedRoom.id} · {selectedRoom.podName} · {selectedRoom.map}</p>
+                <h2>{roomDisplayName(selectedRoom)}</h2>
+                <dl className="scenario-room-identity">
+                  <div>
+                    <dt>Room ID</dt>
+                    <dd>{roomStableId(selectedRoom)}</dd>
+                  </div>
+                  <div>
+                    <dt>Current Pod</dt>
+                    <dd title={roomCurrentPodName(selectedRoom)}>{roomCurrentPodName(selectedRoom)}</dd>
+                  </div>
+                  <div>
+                    <dt>Pod Label</dt>
+                    <dd title={roomPodLabel(selectedRoom)}>{roomPodLabel(selectedRoom)}</dd>
+                  </div>
+                </dl>
               </div>
               <strong className={`scenario-room-health is-${selectedRoom.status}`}>
                 {ROOM_STATUS_LABEL[selectedRoom.status]}

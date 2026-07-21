@@ -27,7 +27,7 @@ test("admin room projection uses real map dimensions, live player fields, and bo
     if (url === "http://orchestrator/rooms") return json({ rooms: [{
       roomId: "room-0",
       ordinal: 0,
-      podName: "game-0",
+      podName: "game-room-0",
       endpoint: "http://game-0",
       status: "waiting",
       players: 0,
@@ -57,7 +57,7 @@ test("admin room projection uses real map dimensions, live player fields, and bo
       status: "running",
       players: 1,
       alive: 1,
-      podName: "game-0",
+      podName: "suroi-room-0-7f8c9d-abc12",
       strictMode: false,
       joinLocked: true,
       capturedAt,
@@ -137,6 +137,13 @@ test("admin room projection uses real map dimensions, live player fields, and bo
 
   const [room] = await buildAdminRooms("http://orchestrator", "http://bots");
   assert.ok(room);
+  assert.equal(room.id, "room-0");
+  assert.equal(room.roomId, "room-0");
+  assert.equal(room.name, "Live Faction");
+  assert.equal(room.roomName, "Live Faction");
+  assert.equal(room.currentPodName, "suroi-room-0-7f8c9d-abc12");
+  assert.equal(room.podName, "suroi-room-0-7f8c9d-abc12");
+  assert.equal(room.podRoomLabel, "game.opsia.dev/room-id=room-0");
   assert.equal(room.status, "running");
   assert.equal(room.mode, "Faction 50v50");
   assert.equal(room.map, "Faction Island");

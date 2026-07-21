@@ -77,7 +77,9 @@ export interface RoomMetrics {
 
 export interface GameRoom {
   id: string;
+  roomId: string;
   name: string;
+  roomName: string;
   description: string;
   region: string;
   map: string;
@@ -86,6 +88,8 @@ export interface GameRoom {
   status: RoomStatus;
   matchPhase: MatchPhase;
   players: PlayerTelemetry[];
+  currentPodName: string;
+  podRoomLabel: string;
   podName: string;
   podIp: string;
   node: string;

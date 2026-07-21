@@ -15,6 +15,7 @@ import {
   type GameRoom,
   type MapLayoutTelemetry,
   type PlayerTelemetry,
+  ROOM_STATUS_LABEL,
 } from "./control-plane.js";
 import {
   ControlPlaneError,
@@ -43,7 +44,11 @@ type SpectatorFrameWindow = Window & {
 };
 
 const POLL_INTERVAL_MS = 400;
+const UI_ANIMATION_FRAME_MS = 1000 / 60;
 const BOT_BATCH_SIZE = 10;
+const ROOM_ID_LABEL_KEY = "game.opsia.dev/room-id";
+const DEMO_TICK_ROOM_ID = "room-0";
+const DEMO_TICK_CYCLE_MS = 24_000;
 
 const OBJECT_COLORS: Record<MapLayoutTelemetry["objects"][number]["kind"], string> = {
   building: "#73563f",
@@ -53,6 +58,22 @@ const OBJECT_COLORS: Record<MapLayoutTelemetry["objects"][number]["kind"], strin
   wall: "#574a41",
   obstacle: "#916b3e",
 };
+
+function roomDisplayName(room: GameRoom) {
+  return room.roomName || room.name;
+}
+
+function roomStableId(room: GameRoom) {
+  return room.roomId || room.id;
+}
+
+function roomCurrentPodName(room: GameRoom) {
+  return room.currentPodName || room.podName;
+}
+
+function roomPodLabel(room: GameRoom) {
+  return room.podRoomLabel || `${ROOM_ID_LABEL_KEY}=${roomStableId(room)}`;
+}
 
 function mapLayoutKey(map: MapLayoutTelemetry, seed: number) {
   return `${seed}:${map.width}:${map.height}:${map.rivers.length}:${map.places.length}:${map.objects.length}`;
@@ -186,12 +207,144 @@ function playerCounts(room: GameRoom) {
   return { bots, humans: room.players.length - bots };
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function cyclicOffset(index: number, selectedIndex: number, total: number) {
+  if (total <= 0) return 0;
+  let offset = index - selectedIndex;
+  const half = total / 2;
+  if (offset > half) offset -= total;
+  if (offset < -half) offset += total;
+  return offset;
+}
+
+type TickTone = "healthy" | "warning" | "danger";
+
+function smoothStep(progress: number) {
+  const clamped = clamp(progress, 0, 1);
+  return clamped * clamped * (3 - 2 * clamped);
+}
+
+function demoTickP95ForRoom(room: GameRoom, nowMs = Date.now()) {
+  const observedTick = clamp(Math.round(room.metrics.tickP95Ms), 0, 999);
+  if (roomStableId(room) !== DEMO_TICK_ROOM_ID) return observedTick;
+
+  const cyclePosition = nowMs % DEMO_TICK_CYCLE_MS;
+  const low = Math.max(34, Math.min(observedTick, 46));
+  const high = Math.max(116, observedTick);
+
+  if (cyclePosition < 5_000) return low;
+  if (cyclePosition < 10_000) {
+    return Math.round(low + (high - low) * smoothStep((cyclePosition - 5_000) / 5_000));
+  }
+  if (cyclePosition < 15_000) return high;
+  if (cyclePosition < 20_000) {
+    return Math.round(high - (high - low) * smoothStep((cyclePosition - 15_000) / 5_000));
+  }
+  return low;
+}
+
+function roomTickTone(room: GameRoom, nowMs = Date.now()): TickTone {
+  const tickP95 = demoTickP95ForRoom(room, nowMs);
+  if (tickP95 >= 90 || room.status === "degraded") return "danger";
+  if (tickP95 >= 55 || room.status === "recovering") return "warning";
+  return "healthy";
+}
+
+function tickBarTone(tickMs: number): TickTone {
+  if (tickMs >= 120) return "danger";
+  if (tickMs >= 60) return "warning";
+  return "healthy";
+}
+
+function tickSeriesPointAge(point: number, totalPoints: number) {
+  const newestPoint = Math.max(0, totalPoints - 1);
+  return (newestPoint - point) * 760;
+}
+
+function tickToneLabel(tone: TickTone) {
+  return tone === "danger" ? "위험 · TICK P95" :
+    tone === "warning" ? "주의 · TICK P95" :
+      "정상 · TICK P95";
+}
+
+function roomLoadProfile(room: GameRoom, index: number, nowMs = Date.now()) {
+  const tickP95 = demoTickP95ForRoom(room, nowMs);
+  const rejected = Math.max(0, Math.round(room.metrics.inputRejected));
+  const telemetryLag = clamp(Math.round(room.metrics.telemetryLagMs), 0, 9_999);
+  const cpu = clamp(Math.round(room.metrics.cpuPercent), 0, 100);
+  const redisOps = clamp(Math.round(room.metrics.redisOpsPerSecond ?? room.players.length * 2 + index * 9), 0, 999);
+  const statusPenalty =
+    room.status === "degraded" ? 20 :
+      room.status === "recovering" ? 14 :
+        room.status === "provisioning" ? 8 :
+          room.status === "stopped" ? 4 : 0;
+  const tickPressure = clamp(Math.round(tickP95 / 1.6 + statusPenalty), 8, 96);
+  const tickTone = roomTickTone(room, nowMs);
+  const tickLabel = tickToneLabel(tickTone);
+  const tickSeries = Array.from({ length: 14 }, (_, point) => {
+    const age = tickSeriesPointAge(point, 14);
+    const localNow = nowMs - age;
+    const baseTick = roomStableId(room) === DEMO_TICK_ROOM_ID
+      ? demoTickP95ForRoom(room, localNow)
+      : tickP95;
+    const wave = Math.sin((point + 1) * (0.58 + index * 0.06)) * (5 + index * 0.4);
+    const statusDrift = room.status === "degraded" ? 18 : room.status === "recovering" ? 8 : 0;
+    const rejectSpike = rejected > 0 && point % 4 === 3 ? 18 : 0;
+    return clamp(Math.round(baseTick + wave + statusDrift + rejectSpike), 18, 160);
+  });
+  const pathFor = (series: number[]) => series
+    .map((value, point) => {
+      const x = (point / (series.length - 1)) * 100;
+      const y = 50 - clamp(value / 160, 0, 1) * 44;
+      return `${point === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
+    })
+    .join(" ");
+  const linePath = pathFor(tickSeries);
+  return {
+    bars: tickSeries,
+    cpu,
+    fillPath: `${linePath} L 100 52 L 0 52 Z`,
+    linePath,
+    redisOps,
+    rejected,
+    telemetryLag,
+    tickLabel,
+    tickP95,
+    tickPressure,
+    tickTone,
+  };
+}
+
 function isSnapshotReady(room: GameRoom) {
   return (
     room.snapshotCapturedAt > 0 &&
     room.mapLayout.width > 0 &&
     room.mapLayout.height > 0
   );
+}
+
+function useAnimationFrameNow(enabled: boolean) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const lastFrameRef = useRef(0);
+
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let animationFrame = 0;
+    const update = (timestamp: number) => {
+      if (timestamp - lastFrameRef.current >= UI_ANIMATION_FRAME_MS) {
+        lastFrameRef.current = timestamp;
+        setNowMs(Date.now());
+      }
+      animationFrame = window.requestAnimationFrame(update);
+    };
+    animationFrame = window.requestAnimationFrame(update);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [enabled]);
+
+  return nowMs;
 }
 
 function PlayerMarkers({
@@ -257,10 +410,22 @@ function roomServiceUrl(room: GameRoom) {
   const configuredOrigin = import.meta.env.VITE_GAME_ORIGIN?.trim();
   const url = new URL(room.serviceUrl, configuredOrigin || window.location.origin);
   const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
+  const isPrivateIpv4 = (hostname: string) => (
+    /^10\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[0-1])\./.test(hostname) ||
+    /^192\.168\./.test(hostname)
+  );
   if (
     !configuredOrigin &&
     loopbackHosts.has(url.hostname) &&
     !loopbackHosts.has(window.location.hostname)
+  ) {
+    url.hostname = window.location.hostname;
+  }
+  if (
+    !configuredOrigin &&
+    isPrivateIpv4(url.hostname) &&
+    url.hostname !== window.location.hostname
   ) {
     url.hostname = window.location.hostname;
   }
@@ -302,61 +467,126 @@ function LiveRoomMiniMap({ room }: { room: GameRoom }) {
   }
 
   return (
-    <div className="room-live-map" aria-label={`${room.name} 실시간 미니맵`}>
+    <div className="room-live-map" aria-label={`${roomDisplayName(room)} 실시간 미니맵`}>
       <ActualGameMap room={room} />
     </div>
   );
 }
 
 function RoomCard({
+  animationNow,
+  isSelected,
+  offset,
   room,
   ordinal,
   onJoin,
-  onOpen,
+  onSelect,
+  onSpectate,
+  onScenario,
 }: {
+  animationNow: number;
+  isSelected: boolean;
+  offset: number;
   room: GameRoom;
   ordinal: number;
   onJoin: () => void;
-  onOpen: () => void;
+  onSelect: () => void;
+  onSpectate: () => void;
+  onScenario: () => void;
 }) {
   const { bots, humans } = playerCounts(room);
+  const profile = roomLoadProfile(room, ordinal - 1, animationNow);
+  const displayName = roomDisplayName(room);
+  const currentPodName = roomCurrentPodName(room);
+  const absOffset = Math.min(2, Math.abs(offset));
+  const style = {
+    "--offset": offset,
+    "--abs-offset": absOffset,
+    "--load": profile.tickPressure,
+  } as StyleWithVariables;
   return (
     <article
-      className="room-card"
-      onClick={onOpen}
+      aria-current={isSelected ? "true" : undefined}
+      className={`room-card ${isSelected ? "is-selected" : ""} ${absOffset >= 2 ? "is-far" : ""}`}
+      onClick={onSelect}
+      style={style}
     >
       <span className="room-number">{String(ordinal).padStart(2, "0")}</span>
       <div className="room-preview">
-        <LiveRoomMiniMap room={room} />
-        {isSnapshotReady(room) && (
-          <span className="live-badge"><i />LIVE</span>
-        )}
-      </div>
-      <div className="room-card-copy">
-        <div>
-          <span>{room.map}</span>
-          <h2>{room.name}</h2>
+        <div className="room-graph-stack" aria-hidden="true">
+          <div className={`room-signal-graph is-${profile.tickTone}`}>
+            <div>
+              <div className="room-tick-heading">
+                <span>{profile.tickLabel}</span>
+                <b>{bots} BOTS</b>
+              </div>
+              <strong>{profile.tickP95}ms</strong>
+              <small>server frame latency</small>
+            </div>
+            <svg viewBox="0 0 100 54" preserveAspectRatio="none">
+              <path className="room-load-fill" d={profile.fillPath} />
+              <path className="room-load-line" d={profile.linePath} />
+              {profile.bars.map((value, index) => (
+                <rect
+                  height={(clamp(value / 160, 0, 1) * 44).toFixed(1)}
+                  key={`${room.id}-load-bar-${index}`}
+                  className={`is-${tickBarTone(value)}-bar`}
+                  rx="1.4"
+                  width="5.4"
+                  x={(6 + index * (88 / Math.max(1, profile.bars.length - 1))).toFixed(1)}
+                  y={(50 - clamp(value / 160, 0, 1) * 44).toFixed(1)}
+                />
+              ))}
+            </svg>
+          </div>
         </div>
-        <strong>{room.players.length}</strong>
+        <span className={`live-badge ${room.status === "running" ? "" : "is-warning"}`}>
+          <i />{ROOM_STATUS_LABEL[room.status]}
+        </span>
       </div>
+      <div className={`room-card-details is-${profile.tickTone}`}>
+        <div className="room-card-copy">
+          <div>
+            <span>ROOM</span>
+            <h2>{displayName}</h2>
+          </div>
+          <strong>{room.players.length}</strong>
+        </div>
+      <dl className="room-identity room-pod-identity" aria-label={`${displayName} Kubernetes pod identity`}>
+        <div>
+          <dt>Current Pod</dt>
+          <dd title={currentPodName}>{currentPodName}</dd>
+        </div>
+      </dl>
       <div className="room-card-counts">
         <span>사용자 <strong>{humans}</strong></span>
         <span>봇 <strong>{bots}</strong></span>
+      </div>
       </div>
       <div className="room-card-actions">
         <button
           className="room-card-spectate"
           onClick={(event) => {
             event.stopPropagation();
-            onOpen();
+            onSpectate();
           }}
           type="button"
         >
           관전하기
         </button>
         <button
+          className="room-card-scenario"
+          onClick={(event) => {
+            event.stopPropagation();
+            onScenario();
+          }}
+          type="button"
+        >
+          장애 실행
+        </button>
+        <button
           aria-haspopup="dialog"
-          aria-label={`${room.name} 참여하기`}
+          aria-label={`${displayName} 참여하기`}
           className="room-card-join"
           onClick={(event) => {
             event.stopPropagation();
@@ -382,6 +612,7 @@ function JoinRoomDialog({
   const joinUrl = roomServiceUrl(room).toString();
   const titleId = `join-room-title-${room.id}`;
   const descriptionId = `join-room-description-${room.id}`;
+  const displayName = roomDisplayName(room);
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -415,7 +646,7 @@ function JoinRoomDialog({
           <span aria-hidden="true">×</span>
         </button>
         <span className="join-dialog-eyebrow">게임 참여</span>
-        <h2 id={titleId}>{room.name}</h2>
+        <h2 id={titleId}>{displayName}</h2>
         <p id={descriptionId}>QR 코드를 스캔하면 이 방의 게임 화면으로 이동합니다.</p>
         <div className="join-dialog-qr">
           <QRCodeSVG
@@ -424,7 +655,7 @@ function JoinRoomDialog({
             level="M"
             marginSize={4}
             size={220}
-            title={`${room.name} 참여 QR 코드`}
+            title={`${displayName} 참여 QR 코드`}
             value={joinUrl}
           />
         </div>
@@ -442,17 +673,67 @@ function JoinRoomDialog({
   );
 }
 
+function RoomMapPreviewStrip({
+  animationNow,
+  onSelectRoom,
+  rooms,
+  selectedRoomId,
+}: {
+  animationNow: number;
+  onSelectRoom: (roomId: string) => void;
+  rooms: GameRoom[];
+  selectedRoomId: string;
+}) {
+  return (
+    <section className="room-map-strip" aria-label="Live room map previews">
+      {rooms.map((room) => {
+        const displayName = roomDisplayName(room);
+        const tickTone = roomTickTone(room, animationNow);
+        return (
+          <button
+            aria-label={`${displayName} 그래프 보기`}
+            aria-pressed={room.id === selectedRoomId}
+            className={`room-map-tile is-${tickTone} ${room.id === selectedRoomId ? "is-selected" : ""}`}
+            key={room.id}
+            onClick={() => onSelectRoom(room.id)}
+            title={displayName}
+            type="button"
+          >
+            {isSnapshotReady(room) ? (
+              <LiveMapCanvas map={room.mapLayout} seed={room.seed} theme={room.map} />
+            ) : (
+              <div className="room-map-tile-pending" aria-hidden="true" />
+            )}
+          </button>
+        );
+      })}
+    </section>
+  );
+}
+
 function RoomDirectory({
   rooms,
   connection,
   onJoinRoom,
   onOpenRoom,
+  onOpenScenario,
 }: {
   rooms: GameRoom[];
   connection: ConnectionState;
   onJoinRoom: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
+  onOpenScenario: (roomId: string) => void;
 }) {
+  const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id ?? "");
+  const animationNow = useAnimationFrameNow(rooms.length > 0);
+
+  useEffect(() => {
+    if (rooms.length === 0) return;
+    if (!rooms.some((room) => room.id === selectedRoomId)) {
+      setSelectedRoomId(rooms[0]!.id);
+    }
+  }, [rooms, selectedRoomId]);
+
   if (rooms.length === 0) {
     return (
       <section className="empty-state" role="status">
@@ -462,22 +743,62 @@ function RoomDirectory({
     );
   }
 
+  const selectedIndex = Math.max(0, rooms.findIndex((room) => room.id === selectedRoomId));
+  const selectAdjacentRoom = (direction: -1 | 1) => {
+    const nextIndex = (selectedIndex + direction + rooms.length) % rooms.length;
+    setSelectedRoomId(rooms[nextIndex]!.id);
+  };
+
   return (
     <section className="room-directory">
       <div className="directory-heading">
         <h1>실시간 게임</h1>
         <span>{rooms.length}개 방</span>
       </div>
-      <div className="room-grid" aria-label="실시간 게임 방">
-        {rooms.map((room, index) => (
-          <RoomCard
-            key={room.id}
-            onJoin={() => onJoinRoom(room.id)}
-            onOpen={() => onOpenRoom(room.id)}
-            ordinal={index + 1}
-            room={room}
-          />
-        ))}
+      <RoomMapPreviewStrip
+        animationNow={animationNow}
+        onSelectRoom={setSelectedRoomId}
+        rooms={rooms}
+        selectedRoomId={selectedRoomId}
+      />
+      <div className="room-carousel" aria-label="실시간 게임 방">
+        <button
+          aria-label="이전 방 보기"
+          className="room-carousel-arrow"
+          disabled={rooms.length < 2}
+          onClick={() => selectAdjacentRoom(-1)}
+          type="button"
+        >
+          ‹
+        </button>
+        <div className="room-grid">
+          {rooms.map((room, index) => {
+            const offset = cyclicOffset(index, selectedIndex, rooms.length);
+            return (
+              <RoomCard
+                animationNow={animationNow}
+                isSelected={room.id === selectedRoomId}
+                key={room.id}
+                offset={offset}
+                onJoin={() => onJoinRoom(room.id)}
+                onSelect={() => setSelectedRoomId(room.id)}
+                onSpectate={() => onOpenRoom(room.id)}
+                onScenario={() => onOpenScenario(room.id)}
+                ordinal={index + 1}
+                room={room}
+              />
+            );
+          })}
+        </div>
+        <button
+          aria-label="다음 방 보기"
+          className="room-carousel-arrow"
+          disabled={rooms.length < 2}
+          onClick={() => selectAdjacentRoom(1)}
+          type="button"
+        >
+          ›
+        </button>
       </div>
     </section>
   );
@@ -785,7 +1106,7 @@ function TacticalMap({
   }
 
   return (
-    <div className="tactical-map" aria-label={`${room.name} 실시간 미니맵`}>
+    <div className="tactical-map" aria-label={`${roomDisplayName(room)} 실시간 미니맵`}>
       <div
         className="map-viewport"
         style={{ aspectRatio: `${room.mapLayout.width} / ${room.mapLayout.height}` }}
@@ -827,6 +1148,10 @@ function RoomViewer({
   const [isInlinePip, setIsInlinePip] = useState(false);
   const [spectatorViewCount, setSpectatorViewCount] = useState<SpectatorViewCount>(4);
   const { bots, humans } = playerCounts(room);
+  const displayName = roomDisplayName(room);
+  const stableRoomId = roomStableId(room);
+  const currentPodName = roomCurrentPodName(room);
+  const podRoomLabel = roomPodLabel(room);
   const alivePlayers = useMemo(
     () =>
       room.players
@@ -974,7 +1299,7 @@ function RoomViewer({
 
     try {
       const pipWindow = await controller.requestWindow({ width: 560, height: 420 });
-      pipWindow.document.title = `${room.name} PIP`;
+      pipWindow.document.title = `${displayName} PIP`;
       document.head
         .querySelectorAll<HTMLLinkElement | HTMLStyleElement>('link[rel="stylesheet"], style')
         .forEach((node) => pipWindow.document.head.append(node.cloneNode(true)));
@@ -1033,8 +1358,22 @@ function RoomViewer({
         </button>
         <div className="room-title">
           <span>{room.map}</span>
-          <strong>{selectedPlayer ? `${visibleSpectators.length}명 관전` : room.name}</strong>
+          <strong>{selectedPlayer ? `${visibleSpectators.length}명 관전` : displayName}</strong>
         </div>
+        <dl className="room-toolbar-identity" aria-label={`${displayName} room identity`}>
+          <div>
+            <dt>Room ID</dt>
+            <dd>{stableRoomId}</dd>
+          </div>
+          <div>
+            <dt>Current Pod</dt>
+            <dd title={currentPodName}>{currentPodName}</dd>
+          </div>
+          <div>
+            <dt>Pod Label</dt>
+            <dd title={podRoomLabel}>{podRoomLabel}</dd>
+          </div>
+        </dl>
         <div className="room-actions">
           <span>사용자 <strong>{humans}</strong></span>
           <span>봇 <strong>{bots}</strong></span>
@@ -1164,10 +1503,13 @@ export function GameAdminConsole() {
     }
   }
 
-  function navigateTo(page: ConsolePage) {
+  function navigateTo(page: ConsolePage, roomId?: string) {
     const pathname = page === "scenarios" ? "/scenarios" : "/";
-    if (window.location.pathname !== pathname) {
-      window.history.pushState({ consolePage: page }, "", pathname);
+    const nextUrl = roomId && page === "scenarios"
+      ? `${pathname}?room=${encodeURIComponent(roomId)}`
+      : pathname;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      window.history.pushState({ consolePage: page, roomId }, "", nextUrl);
     }
     setActivePage(page);
     setSelectedRoomId(null);
@@ -1250,6 +1592,7 @@ export function GameAdminConsole() {
         <RoomDirectory
           connection={connection}
           onJoinRoom={setJoiningRoomId}
+          onOpenScenario={(roomId) => navigateTo("scenarios", roomId)}
           onOpenRoom={(roomId) => {
             setSelectedRoomId(roomId);
             setSelectedPlayerId("");

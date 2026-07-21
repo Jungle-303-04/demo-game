@@ -804,13 +804,14 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "POST" && room && path === `/rooms/${room.roomId}/failure`) {
-      await serializeMutation(async () => {
+      const currentPodName = await serializeMutation(async () => {
         const current = await registry.get(room.roomId);
         if (!current || current.status === "inactive") throw new Error("room_not_running");
-        await scaler.deletePod(current.podName);
+        const deletedPodName = await scaler.deletePod(current.roomId);
         await registry.put({ ...current, status: "waiting", statusChangedAt: new Date().toISOString() });
+        return deletedPodName;
       });
-      return send(response, 202, { roomId: room.roomId, podName: room.podName, status: "recovery_requested" });
+      return send(response, 202, { roomId: room.roomId, currentPodName, status: "recovery_requested" });
     }
 
     return send(response, 404, { error: "not_found" });

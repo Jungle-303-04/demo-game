@@ -8,6 +8,7 @@ metadata:
     app.kubernetes.io/part-of: demo-game
     opsia.dev/fleet: live
     opsia.dev/room-id: room-0
+    game.opsia.dev/room-id: room-0
     opsia.dev/room-profile: faction
     opsia.dev/rollout-role: active-candidate
     opsia.dev/game-role: active
@@ -63,6 +64,7 @@ metadata:
     app.kubernetes.io/part-of: demo-game
     opsia.dev/fleet: live
     opsia.dev/room-id: room-1
+    game.opsia.dev/room-id: room-1
     opsia.dev/room-profile: desert
     opsia.dev/rollout-role: active-candidate
     opsia.dev/game-role: active
@@ -117,6 +119,7 @@ metadata:
     app.kubernetes.io/part-of: demo-game
     opsia.dev/fleet: live
     opsia.dev/room-id: room-2
+    game.opsia.dev/room-id: room-2
     opsia.dev/room-profile: snow
     opsia.dev/rollout-role: active-candidate
     opsia.dev/game-role: active
@@ -171,6 +174,7 @@ metadata:
     app.kubernetes.io/part-of: demo-game
     opsia.dev/fleet: live
     opsia.dev/room-id: room-3
+    game.opsia.dev/room-id: room-3
     opsia.dev/room-profile: main
     opsia.dev/rollout-role: active-candidate
     opsia.dev/game-role: active
@@ -225,6 +229,7 @@ metadata:
     app.kubernetes.io/part-of: demo-game
     opsia.dev/fleet: live
     opsia.dev/room-id: room-4
+    game.opsia.dev/room-id: room-4
     opsia.dev/room-profile: woods
     opsia.dev/rollout-role: active-candidate
     opsia.dev/game-role: active

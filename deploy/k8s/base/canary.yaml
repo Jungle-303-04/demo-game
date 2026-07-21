@@ -8,6 +8,7 @@ metadata:
     app.kubernetes.io/part-of: demo-game
     opsia.dev/fleet: canary
     opsia.dev/room-id: canary-room
+    game.opsia.dev/room-id: canary-room
     opsia.dev/room-profile: faction
     opsia.dev/public: disabled
     opsia.dev/matchmaking: disabled
@@ -24,6 +25,7 @@ spec:
         app.kubernetes.io/part-of: demo-game
         opsia.dev/fleet: canary
         opsia.dev/room-id: canary-room
+        game.opsia.dev/room-id: canary-room
         opsia.dev/room-profile: faction
         opsia.dev/public: disabled
         opsia.dev/matchmaking: disabled

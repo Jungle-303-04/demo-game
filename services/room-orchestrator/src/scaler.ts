@@ -2,14 +2,14 @@ export interface ReplicaScaler {
   readonly managed: boolean;
   currentReplicas(): Promise<number | undefined>;
   scale(replicas: number): Promise<void>;
-  deletePod(podName: string): Promise<void>;
+  deletePod(roomId: string): Promise<string>;
 }
 
 export class NoopScaler implements ReplicaScaler {
   readonly managed = false;
   async currentReplicas(): Promise<number | undefined> { return undefined; }
   async scale(_replicas: number): Promise<void> { throw new Error("room_scaling_requires_kubernetes"); }
-  async deletePod(_podName: string): Promise<void> { throw new Error("pod_failure_injection_requires_kubernetes"); }
+  async deletePod(_roomId: string): Promise<string> { throw new Error("pod_failure_injection_requires_kubernetes"); }
 }
 
 interface KubernetesDeployment {
@@ -123,14 +123,13 @@ export class KubernetesRoomDeploymentScaler implements ReplicaScaler {
     }));
   }
 
-  async deletePod(workloadName: string): Promise<void> {
-    const match = workloadName.match(new RegExp(`^${this.deploymentPrefix}-(\\d+)$`));
+  async deletePod(roomId: string): Promise<string> {
+    const match = roomId.match(/^room-(\d+)$/);
     const ordinal = Number(match?.[1]);
     if (!match || !Number.isInteger(ordinal) || ordinal < 0 || ordinal >= this.roomCount) {
-      throw new Error("invalid_game_deployment");
+      throw new Error("invalid_room_id");
     }
-    const roomId = `room-${ordinal}`;
-    const selector = encodeURIComponent(`opsia.dev/fleet=live,opsia.dev/room-id=${roomId}`);
+    const selector = encodeURIComponent(`opsia.dev/fleet=live,game.opsia.dev/room-id=${roomId}`);
     const listResponse = await this.request(
       `/api/v1/namespaces/${this.namespace}/pods?labelSelector=${selector}`,
     );
@@ -146,5 +145,6 @@ export class KubernetesRoomDeploymentScaler implements ReplicaScaler {
       method: "DELETE",
     });
     if (!response.ok) throw new Error(`pod_delete_failed:${response.status}`);
+    return podName;
   }
 }

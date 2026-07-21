@@ -227,7 +227,8 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
     const epoch = selected.status.roomEpoch;
     if (!Number.isSafeInteger(epoch) || Number(epoch) < 0) throw new Error("active_room_epoch_unavailable");
     const expectedDeployment = `${this.options.deploymentPrefix}-${ordinal}`;
-    if (selected.pod.metadata?.labels?.["opsia.dev/room-id"] !== input.roomId) {
+    const labels = selected.pod.metadata?.labels ?? {};
+    if ((labels["game.opsia.dev/room-id"] ?? labels["opsia.dev/room-id"]) !== input.roomId) {
       throw new Error("active_room_pod_label_mismatch");
     }
     // A rollout target is derived from the room id rather than a caller-owned
@@ -866,7 +867,7 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
   }
 
   private async listRoomPods(roomId: string): Promise<KubernetesPod[]> {
-    const selector = encodeURIComponent(`opsia.dev/fleet=live,opsia.dev/room-id=${roomId}`);
+    const selector = encodeURIComponent(`opsia.dev/fleet=live,game.opsia.dev/room-id=${roomId}`);
     const body = await this.kubeJson<{ items?: KubernetesPod[] }>(
       `/api/v1/namespaces/${this.options.namespace}/pods?labelSelector=${selector}`,
     );

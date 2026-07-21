@@ -56,7 +56,9 @@ const registryRoom = (overrides: Partial<RegistryRoom> = {}): RegistryRoom => ({
 
 const adminRoom = (overrides: Partial<AdminRoom> = {}): AdminRoom => ({
   id: "room-0",
+  roomId: "room-0",
   name: "Faction Front",
+  roomName: "Faction Front",
   description: "test room",
   region: "Seoul / ap-northeast-2",
   map: "Faction Island",
@@ -65,7 +67,9 @@ const adminRoom = (overrides: Partial<AdminRoom> = {}): AdminRoom => ({
   status: "running",
   matchPhase: "in_match",
   players: [],
-  podName: "game-0",
+  currentPodName: "game-room-0-7f8c9d-abc12",
+  podRoomLabel: "game.opsia.dev/room-id=room-0",
+  podName: "game-room-0-7f8c9d-abc12",
   podIp: "not exposed",
   node: "cluster managed",
   serviceUrl: "/play/room-0/",
@@ -267,7 +271,7 @@ test("pod failure is capability-gated before mutation and verifies runtime recov
   installFetch(context, (url, init) => {
     calls.push(`${init?.method ?? "GET"} ${url}`);
     if (url === "http://orchestrator/rooms/room-0/failure") {
-      return json({ roomId: "room-0", podName: "game-0", status: "recovery_requested" }, 202);
+      return json({ roomId: "room-0", currentPodName: "game-room-0-7f8c9d-abc12", status: "recovery_requested" }, 202);
     }
     if (url === "http://game-0/healthz") return json({ status: "ok" });
     if (url === "http://game-0/ops/snapshot") return json({ roomId: "room-0", capturedAt: Date.now() });

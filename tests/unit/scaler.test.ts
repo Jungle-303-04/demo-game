@@ -51,7 +51,8 @@ test("Kubernetes room scaler reconciles per-room Deployments and resolves the ac
   token = "projected-token-b";
   await scaler.scale(2);
   token = "projected-token-c";
-  await scaler.deletePod("game-room-1");
+  const deletedPodName = await scaler.deletePod("room-1");
+  assert.equal(deletedPodName, "game-room-1-active");
 
   assert.deepEqual(authorizations, [
     "Bearer projected-token-a",
@@ -66,6 +67,8 @@ test("Kubernetes room scaler reconciles per-room Deployments and resolves the ac
     && request.body === JSON.stringify({ spec: { replicas: 0 } })));
   assert.ok(requests.some((request) => request.url.endsWith("/pods/game-room-1-active")
     && request.method === "DELETE"));
+  const podListRequest = requests.find((request) => request.url.includes("/pods?"));
+  assert.ok(podListRequest?.url.includes("game.opsia.dev%2Froom-id%3Droom-1"));
 });
 
 test("Kubernetes room scaler rejects non-contiguous active Deployments", async (context) => {

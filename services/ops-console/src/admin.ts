@@ -173,7 +173,9 @@ export interface AdminMapLayout {
 
 export interface AdminRoom {
   id: string;
+  roomId: string;
   name: string;
+  roomName: string;
   description: string;
   region: string;
   map: string;
@@ -182,6 +184,8 @@ export interface AdminRoom {
   status: "running" | "provisioning" | "stopped" | "recovering" | "degraded";
   matchPhase: "lobby" | "in_match" | "finished";
   players: AdminPlayer[];
+  currentPodName: string;
+  podRoomLabel: string;
   podName: string;
   podIp: string;
   node: string;
@@ -367,9 +371,13 @@ export async function buildAdminRooms(
             ? "recovering"
             : "degraded";
     const zone = snapshot?.zone;
+    const currentPodName = summary?.podName ?? record.podName;
+    const podRoomLabel = `game.opsia.dev/room-id=${record.roomId}`;
     return {
       id: record.roomId,
+      roomId: record.roomId,
       name: spec.name,
+      roomName: spec.name,
       description: spec.description,
       region: spec.region,
       map: runtimeProfile.map,
@@ -378,7 +386,9 @@ export async function buildAdminRooms(
       status,
       matchPhase: players.length > 0 ? "in_match" : status === "stopped" ? "finished" : "lobby",
       players,
-      podName: summary?.podName ?? record.podName,
+      currentPodName,
+      podRoomLabel,
+      podName: currentPodName,
       podIp: "not exposed",
       node: "cluster managed",
       serviceUrl: publicRoomUrl(record),
