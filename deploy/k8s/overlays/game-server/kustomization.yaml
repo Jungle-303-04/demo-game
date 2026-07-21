@@ -19,7 +19,8 @@ images:
   - name: ghcr.io/jungle-303-04/demo-game/room-orchestrator
     newTag: stable
   - name: ghcr.io/jungle-303-04/demo-game/session-gateway
-    newTag: stable
+    newName: 183548421506.dkr.ecr.ap-northeast-2.amazonaws.com/demo-game-session-gateway
+    newTag: f6ee1a672ce1e7549c8fc844dcbd7d37215c2677
 patches:
   # sandbox의 모든 애플리케이션 Deployment는 기본적으로 인프라 노드에 둔다.
   # 바로 아래 game-server 패치만 게임 노드로 다시 지정된다.
