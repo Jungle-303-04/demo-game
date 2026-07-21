@@ -21,6 +21,18 @@ images:
   - name: ghcr.io/jungle-303-04/demo-game/session-gateway
     newTag: stable
 patches:
+  # sandbox의 모든 애플리케이션 Deployment는 기본적으로 인프라 노드에 둔다.
+  # 바로 아래 game-server 패치만 게임 노드로 다시 지정된다.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      namespace: sandbox
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kyro.io/workload-role: infra
   - target:
       group: apps
       version: v1
@@ -28,21 +40,28 @@ patches:
       labelSelector: app=game-server
       namespace: sandbox
     patch: |-
-      - op: add
+      - op: replace
         path: /spec/template/spec/nodeSelector
         value:
+          kyro.io/workload-role: game
           opsia.dev/game-pool: high-capacity
+      - op: add
+        path: /spec/template/spec/tolerations
+        value:
+          - key: kyro.io/workload-role
+            operator: Equal
+            value: game
+            effect: NoSchedule
   - target:
       group: apps
       version: v1
-      kind: Deployment
-      name: management-server
+      kind: StatefulSet
       namespace: sandbox
     patch: |-
       - op: add
         path: /spec/template/spec/nodeSelector
         value:
-          opsia.dev/game-pool: high-capacity
+          kyro.io/workload-role: infra
   - target:
       version: v1
       kind: ConfigMap
