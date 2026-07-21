@@ -3,6 +3,8 @@ kind: StatefulSet
 metadata:
   name: redis
   namespace: sandbox
+  annotations:
+    opsia.io/demo-validated: "2026-07-21"
 spec:
   serviceName: redis
   replicas: 1
