@@ -49,6 +49,8 @@ const BOT_BATCH_SIZE = 10;
 const ROOM_ID_LABEL_KEY = "game.opsia.dev/room-id";
 const DEMO_TICK_ROOM_ID = "room-0";
 const DEMO_TICK_CYCLE_MS = 24_000;
+const MAP_BACKGROUND_OPACITY_KEY = "opsia.map-background-opacity";
+const MAP_BACKGROUND_BLUR_KEY = "opsia.map-background-blur";
 
 const OBJECT_COLORS: Record<MapLayoutTelemetry["objects"][number]["kind"], string> = {
   building: "#73563f",
@@ -90,7 +92,12 @@ function mapPalette(theme: string) {
   return { water: "#2f789a", shore: "#c79a5f", ground: "#6f9d43", grid: "rgba(40,74,35,.16)" };
 }
 
-function drawLiveMap(canvas: HTMLCanvasElement, map: MapLayoutTelemetry, theme: string) {
+function drawLiveMap(
+  canvas: HTMLCanvasElement,
+  map: MapLayoutTelemetry,
+  theme: string,
+  { showLabels = true, fit = "stretch" }: { showLabels?: boolean; fit?: "stretch" | "contain" } = {},
+) {
   const bounds = canvas.getBoundingClientRect();
   if (bounds.width <= 0 || bounds.height <= 0) return;
   const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5);
@@ -100,10 +107,17 @@ function drawLiveMap(canvas: HTMLCanvasElement, map: MapLayoutTelemetry, theme: 
     canvas.width = width;
     canvas.height = height;
   }
-  const context = canvas.getContext("2d", { alpha: false });
+  const context = canvas.getContext("2d");
   if (!context) return;
   const palette = mapPalette(theme);
-  context.setTransform(width / map.width, 0, 0, height / map.height, 0, 0);
+  context.setTransform(1, 0, 0, 1, 0, 0);
+  context.clearRect(0, 0, width, height);
+  const scale = fit === "contain" ? Math.min(width / map.width, height / map.height) : 1;
+  const scaleX = fit === "contain" ? scale : width / map.width;
+  const scaleY = fit === "contain" ? scale : height / map.height;
+  const offsetX = fit === "contain" ? (width - map.width * scale) / 2 : 0;
+  const offsetY = fit === "contain" ? (height - map.height * scale) / 2 : 0;
+  context.setTransform(scaleX, 0, 0, scaleY, offsetX, offsetY);
   context.imageSmoothingEnabled = false;
   context.fillStyle = palette.water;
   context.fillRect(0, 0, map.width, map.height);
@@ -152,38 +166,45 @@ function drawLiveMap(canvas: HTMLCanvasElement, map: MapLayoutTelemetry, theme: 
     }
   }
 
-  const fontSize = Math.max(12, Math.min(24, map.width / 42));
-  context.font = `700 ${fontSize}px system-ui, sans-serif`;
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.lineJoin = "round";
-  for (const place of map.places) {
-    context.strokeStyle = "rgba(0,0,0,.48)";
-    context.lineWidth = Math.max(2, fontSize / 5);
-    context.strokeText(place.name, place.x, place.y);
-    context.fillStyle = "rgba(255,255,255,.9)";
-    context.fillText(place.name, place.x, place.y);
+  if (showLabels) {
+    const fontSize = Math.max(12, Math.min(24, map.width / 42));
+    context.font = `700 ${fontSize}px system-ui, sans-serif`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.lineJoin = "round";
+    for (const place of map.places) {
+      context.strokeStyle = "rgba(0,0,0,.48)";
+      context.lineWidth = Math.max(2, fontSize / 5);
+      context.strokeText(place.name, place.x, place.y);
+      context.fillStyle = "rgba(255,255,255,.9)";
+      context.fillText(place.name, place.x, place.y);
+    }
   }
 }
 
-const LiveMapCanvas = memo(function LiveMapCanvas({ map, seed, theme }: {
+const LiveMapCanvas = memo(function LiveMapCanvas({ map, seed, theme, showLabels = true, fit = "stretch" }: {
   map: MapLayoutTelemetry;
   seed: number;
   theme: string;
+  showLabels?: boolean;
+  fit?: "stretch" | "contain";
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const layoutKey = mapLayoutKey(map, seed);
-  const latestRef = useRef({ map, theme });
-  latestRef.current = { map, theme };
+  const latestRef = useRef({ map, theme, showLabels, fit });
+  latestRef.current = { map, theme, showLabels, fit };
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const redraw = () => drawLiveMap(canvas, latestRef.current.map, latestRef.current.theme);
+    const redraw = () => drawLiveMap(canvas, latestRef.current.map, latestRef.current.theme, {
+      showLabels: latestRef.current.showLabels,
+      fit: latestRef.current.fit,
+    });
     redraw();
     const observer = new ResizeObserver(redraw);
     observer.observe(canvas);
     return () => observer.disconnect();
-  }, [layoutKey, theme]);
+  }, [layoutKey, theme, showLabels, fit]);
   return <canvas aria-hidden="true" className="live-map-canvas" ref={canvasRef} />;
 });
 
@@ -222,6 +243,16 @@ function cyclicOffset(index: number, selectedIndex: number, total: number) {
 
 type TickTone = "healthy" | "warning" | "danger";
 
+const TICK_HEALTHY_MS = 45;
+const TICK_WARNING_MS = 60;
+const TICK_DANGER_MS = 120;
+const TICK_CHART_MAX_MS = 160;
+const TICK_CHART_BAR_BASE_Y = 50;
+const TICK_CHART_BAR_HEIGHT = 44;
+const TICK_HEALTHY_HUE = 145;
+const TICK_WARNING_HUE = 45;
+const TICK_DANGER_HUE = 6;
+
 function smoothStep(progress: number) {
   const clamped = clamp(progress, 0, 1);
   return clamped * clamped * (3 - 2 * clamped);
@@ -246,22 +277,70 @@ function demoTickP95ForRoom(room: GameRoom, nowMs = Date.now()) {
   return low;
 }
 
-function roomTickTone(room: GameRoom, nowMs = Date.now()): TickTone {
+function roomRiskTickMs(room: GameRoom, nowMs = Date.now()) {
   const tickP95 = demoTickP95ForRoom(room, nowMs);
-  if (tickP95 >= 90 || room.status === "degraded") return "danger";
-  if (tickP95 >= 55 || room.status === "recovering") return "warning";
+  if (room.status === "degraded") return Math.max(tickP95, TICK_DANGER_MS);
+  if (room.status === "recovering") return Math.max(tickP95, TICK_WARNING_MS);
+  return tickP95;
+}
+
+function tickRiskProgress(tickMs: number) {
+  return smoothStep((tickMs - TICK_HEALTHY_MS) / (TICK_DANGER_MS - TICK_HEALTHY_MS));
+}
+
+function tickHueFor(tickMs: number) {
+  if (tickMs < TICK_WARNING_MS) return TICK_HEALTHY_HUE;
+
+  const progress = smoothStep((tickMs - TICK_WARNING_MS) / (TICK_DANGER_MS - TICK_WARNING_MS));
+  return Math.round(TICK_WARNING_HUE - progress * (TICK_WARNING_HUE - TICK_DANGER_HUE));
+}
+
+function tickBarFillFor(tickMs: number) {
+  const progress = tickRiskProgress(tickMs);
+  const alpha = (0.58 + progress * 0.18).toFixed(2);
+  return `hsl(${tickHueFor(tickMs)} 60% 48% / ${alpha})`;
+}
+
+function tickVisualStyleVars(tickMs: number): StyleWithVariables {
+  const progress = tickRiskProgress(tickMs);
+  return {
+    "--bar-alpha": (0.58 + progress * 0.26).toFixed(2),
+    "--bar-hue": tickHueFor(tickMs),
+    "--bar-shadow-alpha": (0.08 + progress * 0.16).toFixed(2),
+    fill: tickBarFillFor(tickMs),
+  };
+}
+
+function tickSurfaceStyleVars(tickHue: number, tickRisk: number): StyleWithVariables {
+  return {
+    "--tick-border-alpha": (0.2 + tickRisk * 0.0032).toFixed(2),
+    "--tick-glow-alpha": (0.08 + tickRisk * 0.0027).toFixed(2),
+    "--tick-hue": tickHue,
+    "--tick-risk": tickRisk,
+    "--tick-soft-alpha": (0.08 + tickRisk * 0.0021).toFixed(2),
+  };
+}
+
+function roomTickTone(room: GameRoom, nowMs = Date.now()): TickTone {
+  const tickP95 = roomRiskTickMs(room, nowMs);
+  if (tickP95 >= TICK_DANGER_MS) return "danger";
+  if (tickP95 >= TICK_WARNING_MS) return "warning";
   return "healthy";
 }
 
 function tickBarTone(tickMs: number): TickTone {
-  if (tickMs >= 120) return "danger";
-  if (tickMs >= 60) return "warning";
+  if (tickMs >= TICK_DANGER_MS) return "danger";
+  if (tickMs >= TICK_WARNING_MS) return "warning";
   return "healthy";
 }
 
 function tickSeriesPointAge(point: number, totalPoints: number) {
   const newestPoint = Math.max(0, totalPoints - 1);
   return (newestPoint - point) * 760;
+}
+
+function tickChartBarTopY(tickMs: number) {
+  return TICK_CHART_BAR_BASE_Y - clamp(tickMs / TICK_CHART_MAX_MS, 0, 1) * TICK_CHART_BAR_HEIGHT;
 }
 
 function tickToneLabel(tone: TickTone) {
@@ -272,18 +351,16 @@ function tickToneLabel(tone: TickTone) {
 
 function roomLoadProfile(room: GameRoom, index: number, nowMs = Date.now()) {
   const tickP95 = demoTickP95ForRoom(room, nowMs);
+  const riskTickMs = roomRiskTickMs(room, nowMs);
   const rejected = Math.max(0, Math.round(room.metrics.inputRejected));
   const telemetryLag = clamp(Math.round(room.metrics.telemetryLagMs), 0, 9_999);
   const cpu = clamp(Math.round(room.metrics.cpuPercent), 0, 100);
   const redisOps = clamp(Math.round(room.metrics.redisOpsPerSecond ?? room.players.length * 2 + index * 9), 0, 999);
-  const statusPenalty =
-    room.status === "degraded" ? 20 :
-      room.status === "recovering" ? 14 :
-        room.status === "provisioning" ? 8 :
-          room.status === "stopped" ? 4 : 0;
-  const tickPressure = clamp(Math.round(tickP95 / 1.6 + statusPenalty), 8, 96);
+  const tickRisk = Math.round(tickRiskProgress(riskTickMs) * 100);
+  const tickPressure = clamp(tickRisk, 0, 100);
   const tickTone = roomTickTone(room, nowMs);
   const tickLabel = tickToneLabel(tickTone);
+  const tickHue = tickHueFor(riskTickMs);
   const tickSeries = Array.from({ length: 14 }, (_, point) => {
     const age = tickSeriesPointAge(point, 14);
     const localNow = nowMs - age;
@@ -293,12 +370,12 @@ function roomLoadProfile(room: GameRoom, index: number, nowMs = Date.now()) {
     const wave = Math.sin((point + 1) * (0.58 + index * 0.06)) * (5 + index * 0.4);
     const statusDrift = room.status === "degraded" ? 18 : room.status === "recovering" ? 8 : 0;
     const rejectSpike = rejected > 0 && point % 4 === 3 ? 18 : 0;
-    return clamp(Math.round(baseTick + wave + statusDrift + rejectSpike), 18, 160);
+    return clamp(Math.round(baseTick + wave + statusDrift + rejectSpike), 18, TICK_CHART_MAX_MS);
   });
   const pathFor = (series: number[]) => series
     .map((value, point) => {
       const x = (point / (series.length - 1)) * 100;
-      const y = 50 - clamp(value / 160, 0, 1) * 44;
+      const y = tickChartBarTopY(value);
       return `${point === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
     })
     .join(" ");
@@ -312,8 +389,10 @@ function roomLoadProfile(room: GameRoom, index: number, nowMs = Date.now()) {
     rejected,
     telemetryLag,
     tickLabel,
+    tickHue,
     tickP95,
     tickPressure,
+    tickRisk,
     tickTone,
   };
 }
@@ -503,6 +582,7 @@ function RoomCard({
     "--offset": offset,
     "--abs-offset": absOffset,
     "--load": profile.tickPressure,
+    ...tickSurfaceStyleVars(profile.tickHue, profile.tickRisk),
   } as StyleWithVariables;
   return (
     <article
@@ -515,28 +595,62 @@ function RoomCard({
       <div className="room-preview">
         <div className="room-graph-stack" aria-hidden="true">
           <div className={`room-signal-graph is-${profile.tickTone}`}>
-            <div>
+            <div className="room-metrics" aria-label={`${profile.tickP95}ms tick p95, ${bots} bots`}>
               <div className="room-tick-heading">
                 <span>{profile.tickLabel}</span>
-                <b>{bots} BOTS</b>
               </div>
-              <strong>{profile.tickP95}ms</strong>
-              <small>server frame latency</small>
+              <div className="room-metric-duo">
+                <strong className="room-metric-panel room-tick-metric">
+                  <span className="room-metric-label">
+                    TICK P95
+                  </span>
+                  <span className="room-metric-value">
+                    <span
+                      aria-hidden="true"
+                      className="room-metric-value-emoji"
+                      style={{ fontSize: "clamp(72px, 8.65vw, 134px)" }}
+                    >
+                      ⏱️
+                    </span>
+                    {profile.tickP95}
+                  </span>
+                  <small>ms</small>
+                </strong>
+                <strong className="room-metric-panel room-bot-metric">
+                  <span className="room-metric-label">
+                    ACTIVE BOTS
+                  </span>
+                  <span className="room-metric-value">
+                    <span
+                      aria-hidden="true"
+                      className="room-metric-value-emoji"
+                      style={{ fontSize: "clamp(72px, 8.65vw, 134px)" }}
+                    >
+                      🤖
+                    </span>
+                    {bots}
+                  </span>
+                  <small>BOTS</small>
+                </strong>
+              </div>
+              <p>server frame latency · active bots</p>
             </div>
             <svg viewBox="0 0 100 54" preserveAspectRatio="none">
               <path className="room-load-fill" d={profile.fillPath} />
-              <path className="room-load-line" d={profile.linePath} />
               {profile.bars.map((value, index) => (
                 <rect
-                  height={(clamp(value / 160, 0, 1) * 44).toFixed(1)}
+                  height={(TICK_CHART_BAR_BASE_Y - tickChartBarTopY(value)).toFixed(1)}
                   key={`${room.id}-load-bar-${index}`}
                   className={`is-${tickBarTone(value)}-bar`}
                   rx="1.4"
+                  style={tickVisualStyleVars(value)}
                   width="5.4"
                   x={(6 + index * (88 / Math.max(1, profile.bars.length - 1))).toFixed(1)}
-                  y={(50 - clamp(value / 160, 0, 1) * 44).toFixed(1)}
+                  y={tickChartBarTopY(value).toFixed(1)}
                 />
               ))}
+              <path className="room-load-line-halo" d={profile.linePath} />
+              <path className="room-load-line" d={profile.linePath} />
             </svg>
           </div>
         </div>
@@ -685,25 +799,26 @@ function RoomMapPreviewStrip({
   selectedRoomId: string;
 }) {
   return (
-    <section className="room-map-strip" aria-label="Live room map previews">
-      {rooms.map((room) => {
+    <section className="room-map-strip" aria-label="Kubernetes pod tick risk overview">
+      {rooms.map((room, index) => {
         const displayName = roomDisplayName(room);
-        const tickTone = roomTickTone(room, animationNow);
+        const currentPodName = roomCurrentPodName(room);
+        const profile = roomLoadProfile(room, index, animationNow);
+        const tickTone = profile.tickTone;
         return (
           <button
-            aria-label={`${displayName} 그래프 보기`}
+            aria-label={`${displayName} Pod ${currentPodName}, tick ${profile.tickP95}ms`}
             aria-pressed={room.id === selectedRoomId}
             className={`room-map-tile is-${tickTone} ${room.id === selectedRoomId ? "is-selected" : ""}`}
             key={room.id}
             onClick={() => onSelectRoom(room.id)}
+            style={tickSurfaceStyleVars(profile.tickHue, profile.tickRisk)}
             title={displayName}
             type="button"
           >
-            {isSnapshotReady(room) ? (
-              <LiveMapCanvas map={room.mapLayout} seed={room.seed} theme={room.map} />
-            ) : (
-              <div className="room-map-tile-pending" aria-hidden="true" />
-            )}
+            <span className="room-map-tile-identity">
+              <strong title={currentPodName}>{currentPodName}</strong>
+            </span>
           </button>
         );
       })}
@@ -725,6 +840,19 @@ function RoomDirectory({
   onOpenScenario: (roomId: string) => void;
 }) {
   const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id ?? "");
+  const [backgroundSettingsOpen, setBackgroundSettingsOpen] = useState(false);
+  const [backgroundOpacity, setBackgroundOpacity] = useState(() => {
+    const raw = window.localStorage.getItem(MAP_BACKGROUND_OPACITY_KEY);
+    if (raw === null) return 30;
+    const stored = Number(raw);
+    return Number.isFinite(stored) && stored >= 0 ? clamp(stored, 0, 100) : 30;
+  });
+  const [backgroundBlur, setBackgroundBlur] = useState(() => {
+    const raw = window.localStorage.getItem(MAP_BACKGROUND_BLUR_KEY);
+    if (raw === null) return 0;
+    const stored = Number(raw);
+    return Number.isFinite(stored) && stored >= 0 ? clamp(stored, 0, 12) : 0;
+  });
   const animationNow = useAnimationFrameNow(rooms.length > 0);
 
   useEffect(() => {
@@ -733,6 +861,14 @@ function RoomDirectory({
       setSelectedRoomId(rooms[0]!.id);
     }
   }, [rooms, selectedRoomId]);
+
+  useEffect(() => {
+    window.localStorage.setItem(MAP_BACKGROUND_OPACITY_KEY, String(backgroundOpacity));
+  }, [backgroundOpacity]);
+
+  useEffect(() => {
+    window.localStorage.setItem(MAP_BACKGROUND_BLUR_KEY, String(backgroundBlur));
+  }, [backgroundBlur]);
 
   if (rooms.length === 0) {
     return (
@@ -744,6 +880,7 @@ function RoomDirectory({
   }
 
   const selectedIndex = Math.max(0, rooms.findIndex((room) => room.id === selectedRoomId));
+  const selectedRoom = rooms[selectedIndex]!;
   const selectAdjacentRoom = (direction: -1 | 1) => {
     const nextIndex = (selectedIndex + direction + rooms.length) % rooms.length;
     setSelectedRoomId(rooms[nextIndex]!.id);
@@ -751,6 +888,66 @@ function RoomDirectory({
 
   return (
     <section className="room-directory">
+      <div
+        className="room-directory-map-background"
+        key={selectedRoom.id}
+        style={{
+          "--map-background-blur": `${backgroundBlur}px`,
+          "--map-background-opacity": backgroundOpacity / 100,
+        } as StyleWithVariables}
+      >
+        <LiveMapCanvas
+          fit="contain"
+          map={selectedRoom.mapLayout}
+          seed={selectedRoom.seed}
+          showLabels={false}
+          theme={selectedRoom.map}
+        />
+      </div>
+      <div className="room-background-controls">
+        <button
+          aria-controls="room-background-settings"
+          aria-expanded={backgroundSettingsOpen}
+          className="room-background-settings-trigger"
+          onClick={() => setBackgroundSettingsOpen((open) => !open)}
+          type="button"
+        >
+          배경
+        </button>
+        {backgroundSettingsOpen ? (
+          <div
+            aria-label="배경 표시 설정"
+            className="room-background-settings"
+            id="room-background-settings"
+            role="group"
+          >
+            <label>
+              <span>배경 농도 <output>{backgroundOpacity}%</output></span>
+              <input
+                aria-label="배경 농도"
+                max="100"
+                min="0"
+                onInput={(event) => setBackgroundOpacity(Number(event.currentTarget.value))}
+                step="1"
+                type="range"
+                value={backgroundOpacity}
+              />
+            </label>
+            <label>
+              <span>배경 흐림 <output>{backgroundBlur}px</output></span>
+              <input
+                aria-label="배경 흐림"
+                max="12"
+                min="0"
+                onInput={(event) => setBackgroundBlur(Number(event.currentTarget.value))}
+                step="1"
+                type="range"
+                value={backgroundBlur}
+              />
+            </label>
+          </div>
+        ) : null}
+      </div>
       <div className="directory-heading">
         <h1>실시간 게임</h1>
         <span>{rooms.length}개 방</span>
