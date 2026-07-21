@@ -18,7 +18,6 @@ import {
 import {
   ControlPlaneError,
   controlPlaneClient,
-  withControlPlaneAdminTokenRetry,
 } from "./control-plane-client.js";
 
 type ConnectionState = "connecting" | "connected" | "degraded";
@@ -115,7 +114,7 @@ function scenarioLabel(scenarioId: FailureScenarioId): string {
 
 function actionErrorMessage(error: unknown): string {
   if (error instanceof ControlPlaneError && error.status === 401) {
-    return "관리자 토큰이 없거나 올바르지 않습니다.";
+    return "운영 서버 인증 설정을 확인해야 합니다.";
   }
   if (error instanceof ControlPlaneError) return error.message;
   if (error instanceof Error) return error.message;
@@ -189,13 +188,8 @@ export function FailureScenarioPage({
     if (refreshPendingRef.current) return;
     refreshPendingRef.current = true;
     try {
-      const scenarioStateRequest = quiet
-        ? controlPlaneClient.getFailureScenarios()
-        : withControlPlaneAdminTokenRetry(() =>
-            controlPlaneClient.getFailureScenarios(),
-          );
       const [state, nextEvents] = await Promise.all([
-        scenarioStateRequest,
+        controlPlaneClient.getFailureScenarios(),
         controlPlaneClient.listEvents(),
       ]);
       setScenarioRooms(state.rooms);
@@ -254,11 +248,9 @@ export function FailureScenarioPage({
     setConfirmation(null);
     onError("");
     try {
-      await withControlPlaneAdminTokenRetry(() =>
-        action === "start"
-          ? controlPlaneClient.startFailureScenario(selectedRoom.id, scenario.id)
-          : controlPlaneClient.recoverFailureScenario(selectedRoom.id, scenario.id),
-      );
+      await (action === "start"
+        ? controlPlaneClient.startFailureScenario(selectedRoom.id, scenario.id)
+        : controlPlaneClient.recoverFailureScenario(selectedRoom.id, scenario.id));
       setAnnouncement(
         `${selectedRoom.name} ${scenario.title} ${action === "start" ? "실행" : "복구"} 요청이 접수되었습니다.`,
       );

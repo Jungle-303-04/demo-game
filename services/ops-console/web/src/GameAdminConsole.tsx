@@ -19,7 +19,6 @@ import {
 import {
   ControlPlaneError,
   controlPlaneClient,
-  withControlPlaneAdminTokenRetry,
 } from "./control-plane-client.js";
 import { FailureScenarioPage } from "./FailureScenarioPage.js";
 
@@ -169,7 +168,7 @@ const LiveMapCanvas = memo(function LiveMapCanvas({ map, seed, theme }: {
 
 function errorMessage(error: unknown) {
   if (error instanceof ControlPlaneError && error.status === 401) {
-    return "관리자 작업에는 관리자 토큰이 필요합니다.";
+    return "운영 서버 인증 설정을 확인해야 합니다.";
   }
   if (error instanceof ControlPlaneError) return error.message;
   if (error instanceof Error) return error.message;
@@ -1153,12 +1152,10 @@ export function GameAdminConsole() {
     setBotPending(true);
     setError("");
     try {
-      await withControlPlaneAdminTokenRetry(() =>
-        controlPlaneClient.addBots(selectedRoom.id, {
-          count: BOT_BATCH_SIZE,
-          intervalMs: 100,
-        }),
-      );
+      await controlPlaneClient.addBots(selectedRoom.id, {
+        count: BOT_BATCH_SIZE,
+        intervalMs: 100,
+      });
       await refresh(true);
     } catch (addError) {
       setError(errorMessage(addError));

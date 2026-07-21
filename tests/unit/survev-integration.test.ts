@@ -26,6 +26,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   const adminUi = await readFile(join(process.cwd(), "services/ops-console/web/src/GameAdminConsole.tsx"), "utf8");
   const failureScenarioUi = await readFile(join(process.cwd(), "services/ops-console/web/src/FailureScenarioPage.tsx"), "utf8");
   const controlPlaneClient = await readFile(join(process.cwd(), "services/ops-console/web/src/control-plane-client.ts"), "utf8");
+  const opsConsoleServer = await readFile(join(process.cwd(), "services/ops-console/src/main.ts"), "utf8");
   const failureScenarios = await readFile(join(process.cwd(), "services/ops-console/src/failure-scenarios.ts"), "utf8");
   const botRunner = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRunner.ts"), "utf8");
   const botRouting = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRouting.ts"), "utf8");
@@ -160,6 +161,10 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(failureScenarioUi, /inputRejected/);
   assert.match(controlPlaneClient, /getFailureScenarios\(\)/);
   assert.match(controlPlaneClient, /\/api\/admin\/scenarios/);
+  assert.doesNotMatch(controlPlaneClient, /survev-admin-token|window\.prompt|authorization: `Bearer/);
+  assert.doesNotMatch(adminUi, /withControlPlaneAdminTokenRetry|관리자 토큰/);
+  assert.doesNotMatch(failureScenarioUi, /withControlPlaneAdminTokenRetry|관리자 토큰/);
+  assert.doesNotMatch(opsConsoleServer, /OPS_ADMIN_TOKEN|REQUIRE_ADMIN_TOKEN|admin_token_required|timingSafeEqual/);
   assert.match(failureScenarios, /const ADMISSION_STORM_REQUESTS = 90/);
   assert.match(failureScenarios, /pod_failure_requires_kubernetes/);
   assert.match(failureScenarios, /\/bots\/jobs\/\$\{encodeURIComponent\(run\.jobId\)\}\/cleanup/);
@@ -240,6 +245,7 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   const sessionGateway = await readFile(join(process.cwd(), "deploy/k8s/base/session-gateway.yaml"), "utf8");
   const sandboxOverlay = await readFile(join(process.cwd(), "deploy/k8s/overlays/sandbox/kustomization.yaml"), "utf8");
   const gameServerOverlay = await readFile(join(process.cwd(), "deploy/k8s/overlays/game-server/kustomization.yaml"), "utf8");
+  const bootstrapSecrets = await readFile(join(process.cwd(), "deploy/k8s/overlays/game-server/bootstrap-secrets.yaml"), "utf8");
   const publishImagesWorkflow = await readFile(join(process.cwd(), ".github/workflows/publish-images.yml"), "utf8");
   const botRunner = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRunner.ts"), "utf8");
   const botRouting = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRouting.ts"), "utf8");
@@ -273,6 +279,8 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.match(policy, /maxConcurrentRooms: 1/);
   assert.match(management, /OPSIA_ROOM_DIRECTORY_URL/);
   assert.match(management, /GAME_DEPLOYMENT_PREFIX, value: game-room/);
+  assert.doesNotMatch(management, /OPS_ADMIN_TOKEN|REQUIRE_ADMIN_TOKEN|demo-game-admin/);
+  assert.doesNotMatch(bootstrapSecrets, /demo-game-admin/);
   assert.match(sessionGateway, /room-4=http:\/\/game-room-4:8001/);
   assert.match(sessionGateway, /SESSION_GATEWAY_SHARED_SECRET/);
   assert.equal((liveDeployments.match(/REQUIRE_SESSION_GATEWAY, value: "true"/g) ?? []).length, 5);

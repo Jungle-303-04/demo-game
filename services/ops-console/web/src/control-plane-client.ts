@@ -49,12 +49,10 @@ export class ControlPlaneError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = window.sessionStorage.getItem("survev-admin-token")?.trim();
   const response = await fetch(path, {
     ...init,
     headers: {
       ...(init?.body ? { "content-type": "application/json" } : {}),
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
   });
@@ -67,26 +65,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     );
   }
   return body;
-}
-
-export function setControlPlaneAdminToken(token: string): void {
-  window.sessionStorage.setItem("survev-admin-token", token.trim());
-}
-
-export async function withControlPlaneAdminTokenRetry<T>(
-  operation: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await operation();
-  } catch (error) {
-    if (!(error instanceof ControlPlaneError) || error.status !== 401) {
-      throw error;
-    }
-    const token = window.prompt("관리자 작업을 계속하려면 관리자 토큰을 입력하세요.");
-    if (!token?.trim()) throw error;
-    setControlPlaneAdminToken(token);
-    return operation();
-  }
 }
 
 const roomPath = (roomId: string, suffix = "") =>

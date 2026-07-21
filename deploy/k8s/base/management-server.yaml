@@ -83,10 +83,7 @@ spec:
           env:
             - { name: ORCHESTRATOR_URL, value: http://127.0.0.1:8082 }
             - { name: BOT_RUNNER_URL, value: http://127.0.0.1:8084 }
-            - { name: REQUIRE_ADMIN_TOKEN, value: "true" }
             - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
-            - name: OPS_ADMIN_TOKEN
-              valueFrom: { secretKeyRef: { name: demo-game-admin, key: token } }
             - name: OPS_CONTROL_TOKEN
               valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
           ports: [{ name: console, containerPort: 8085 }]

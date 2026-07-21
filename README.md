@@ -94,7 +94,6 @@ kubectl --context game-server -n sandbox create secret generic demo-game-opsia-a
 
 ```bash
 kubectl --context game-server apply -f deploy/k8s/base/namespace.yaml
-kubectl --context game-server -n sandbox create secret generic demo-game-admin --from-literal=token='<admin token>'
 kubectl --context game-server -n sandbox create secret generic demo-game-control --from-literal=token='<service token>'
 kubectl --context game-server -n sandbox create secret generic demo-game-session-gateway --from-literal=shared-secret='<gateway HMAC secret>'
 kubectl --context game-server -n sandbox create secret tls demo-game-tls --cert=/absolute/path/to/tls.crt --key=/absolute/path/to/tls.key
@@ -116,7 +115,6 @@ Canary와 live Deployment에는 같은 resource request/limit을 적용한다. 5
 | `OPSIA_AGENT_TOKEN` | 비어 있음 | Opsia cluster-agent 인증 토큰 |
 | `OPSIA_WORKSPACE_ID` / `OPSIA_CLUSTER_ID` | `demo-game` / `game-server` | 인증된 Opsia producer identity |
 | `REQUIRE_CANARY_APPROVAL` | Kubernetes에서 `true` | live wave 전 같은 artifact의 Canary 승인 요구 |
-| `OPS_ADMIN_TOKEN` | 비어 있음 | 관리자 브라우저 API 인증 |
 | `OPS_CONTROL_TOKEN` | 비어 있음 | 내부 제어 API 인증 |
 
 ## 라이선스

@@ -1,5 +1,4 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -12,7 +11,6 @@ import {
   type RegistryRoom,
   UpstreamError,
 } from "./admin.js";
-import { isPublicControlPlaneRead } from "./public-api.js";
 import {
   FailureScenarioController,
   isFailureScenarioId,
@@ -31,19 +29,7 @@ const orchestrator = process.env.ORCHESTRATOR_URL ?? "http://room-orchestrator:8
 const botRunner = process.env.BOT_RUNNER_URL ?? "http://bot-runner:8084";
 const failureScenarios = new FailureScenarioController(orchestrator, botRunner);
 const webRoot = resolve(process.env.OPS_CONSOLE_WEB_ROOT ?? fileURLToPath(new URL("../web", import.meta.url)));
-const adminToken = process.env.OPS_ADMIN_TOKEN?.trim() ?? "";
-if (process.env.REQUIRE_ADMIN_TOKEN === "true" && !adminToken) {
-  throw new Error("OPS_ADMIN_TOKEN is required when REQUIRE_ADMIN_TOKEN=true");
-}
 const timeline: TimelineEvent[] = [];
-
-const tokenMatches = (request: IncomingMessage): boolean => {
-  if (!adminToken) return true;
-  const supplied = String(request.headers.authorization ?? "").replace(/^Bearer\s+/i, "");
-  const expectedBytes = Buffer.from(adminToken);
-  const suppliedBytes = Buffer.from(supplied);
-  return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
-};
 
 const readJson = async (request: IncomingMessage): Promise<Record<string, unknown>> => {
   const chunks: Buffer[] = [];
@@ -194,16 +180,8 @@ const server = createServer(async (request, response) => {
   try {
     if (request.method === "GET" && url.pathname === "/healthz") return send(response, 200, { status: "ok", ui: "react", data: "live" });
 
-    // The demo's live room directory and event stream are public read-only
-    // telemetry. Every mutation and deeper operational endpoint remains
-    // protected by the administrator token.
-    const requiresAdmin =
-      url.pathname.startsWith("/api/") &&
-      !isPublicControlPlaneRead(request.method, url.pathname);
-    if (requiresAdmin && !tokenMatches(request)) {
-      response.setHeader("www-authenticate", 'Bearer realm="Survev Control Room"');
-      return send(response, 401, { error: "admin_token_required" });
-    }
+    // The demo control room is intentionally open for showcase operation.
+    // Internal service-to-service control APIs still require OPS_CONTROL_TOKEN.
 
     if (request.method === "GET" && url.pathname === "/api/admin/rooms") {
       const registryState = await getRegistryState(orchestrator);
