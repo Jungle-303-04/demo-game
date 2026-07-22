@@ -1031,8 +1031,8 @@ function SpectatorWall({
           player={player}
           room={room}
           selfDriven
-          targetFps={30}
-          wallFps={30}
+          targetFps={60}
+          wallFps={60}
         />
       ))}
     </div>

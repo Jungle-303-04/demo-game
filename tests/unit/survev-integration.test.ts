@@ -114,7 +114,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /tile\.dataset\.wallFrames/);
   assert.match(adminUi, /visiblePlayers\.map\(\(player, index\) =>/);
   assert.match(adminUi, /loadDelayMs=\{index \* 40\}/);
-  assert.match(adminUi, /targetFps=\{30\}/);
+  assert.match(adminUi, /targetFps=\{60\}/);
+  assert.match(adminUi, /wallFps=\{60\}/);
   assert.doesNotMatch(adminUi, /selectedOutsideBase|prewarm budget|is-hidden/);
   assert.match(adminUi, /requestAnimationFrame\(driveSpectatorFrame\)/);
   assert.match(gameClient, /m_opsiaPlayerView/);
