@@ -82,11 +82,23 @@ interface BotJob {
 
 interface MutableRun extends FailureScenarioRun {
   autoRecoverAtMs?: number;
+  jobIds?: string[];
+  surgeBotsRequested?: number;
+  surgeMaxBots?: number;
+  surgeNextRampAtMs?: number;
+  surgeHoldUntilMs?: number;
+  surgePeakTickP95Ms?: number;
 }
 
 const ADMISSION_STORM_REQUESTS = 90;
 const ADMISSION_STORM_RECOVERY_MS = 16_000;
-const BOT_SURGE_SIZE = 25;
+const BOT_SURGE_INITIAL_SIZE = 25;
+const BOT_SURGE_RAMP_SIZE = 10;
+const BOT_SURGE_MAX_ADDITIONAL_BOTS = 60;
+const BOT_SURGE_RESERVED_PLAYER_SLOTS = 10;
+const BOT_SURGE_TARGET_TICK_P95_MS = 60;
+const BOT_SURGE_RAMP_INTERVAL_MS = 3_000;
+const BOT_SURGE_HOLD_MS = 10_000;
 const MALICIOUS_BOT_COUNT = 3;
 const SURVEV_PROTOCOL_VERSION = 1021;
 
@@ -101,6 +113,8 @@ const scenarioConflict = (active: MutableRun): UpstreamError => new UpstreamErro
 
 export class FailureScenarioController {
   private readonly activeRuns = new Map<string, MutableRun>();
+  private readonly advancingBotSurges = new Set<string>();
+  private lastBotInventory: BotInventory = { bots: [] };
   private readonly lastResults = new Map<
     string,
     Partial<Record<FailureScenarioId, FailureScenarioResult>>
@@ -117,8 +131,12 @@ export class FailureScenarioController {
     scalingAvailable: boolean,
   ): Promise<FailureScenarioState> {
     this.expireAutomaticRuns();
-    const inventory = await this.botInventory();
+    const roomsById = new Map(rooms.map((room) => [room.id, room]));
     await Promise.all([...this.activeRuns.entries()].map(async ([roomId, run]) => {
+      if (run.scenarioId === "bot-surge") {
+        await this.advanceBotSurge(roomId, run, roomsById.get(roomId));
+        return;
+      }
       if (!run.jobId) return;
       const job = await fetchJson<BotJob>(
         `${this.botRunner}/bots/jobs/${encodeURIComponent(run.jobId)}`,
@@ -134,6 +152,7 @@ export class FailureScenarioController {
       };
       this.activeRuns.set(roomId, run);
     }));
+    const inventory = await this.botInventory();
 
     const minimumBotsPerRoom = Math.max(0, Number(inventory.minimumBotsPerRoom ?? 0));
     return {
@@ -179,15 +198,31 @@ export class FailureScenarioController {
           return this.started(room.id, run, "신규 플레이어 입장을 차단했습니다.");
         }
         case "bot-surge": {
-          const available = Math.max(0, room.maxPlayers - room.players.length - 2);
-          const count = Math.min(BOT_SURGE_SIZE, available);
+          const available = Math.max(
+            0,
+            room.maxPlayers - room.players.length - BOT_SURGE_RESERVED_PLAYER_SLOTS,
+          );
+          const maxBots = Math.min(BOT_SURGE_MAX_ADDITIONAL_BOTS, available);
+          const count = Math.min(BOT_SURGE_INITIAL_SIZE, maxBots);
           if (count < 1) {
             throw new UpstreamError(409, { error: "room_has_no_bot_capacity" }, "room_has_no_bot_capacity");
           }
           const job = await this.startBotJob(room.id, count, "surge");
           run.jobId = job.jobId;
+          run.jobIds = [job.jobId];
+          run.surgeBotsRequested = count;
+          run.surgeMaxBots = maxBots;
+          run.surgeNextRampAtMs = this.now() + BOT_SURGE_RAMP_INTERVAL_MS;
+          run.surgePeakTickP95Ms = room.metrics.tickP95Ms;
           run.status = "starting";
-          run.evidence = { requestedBots: count, jobState: job.state };
+          run.evidence = {
+            phase: "ramping",
+            requestedBots: count,
+            maximumBots: maxBots,
+            targetTickP95Ms: BOT_SURGE_TARGET_TICK_P95_MS,
+            currentTickP95Ms: room.metrics.tickP95Ms,
+            jobState: job.state,
+          };
           return this.started(room.id, run, `실접속 부하 봇 ${count}명을 빠르게 투입하고 있습니다.`);
         }
         case "malicious-input": {
@@ -266,12 +301,8 @@ export class FailureScenarioController {
         return this.completeRun(room.id, run, "신규 플레이어 입장을 다시 허용했습니다.", { joinLocked: false });
       case "bot-surge":
       case "malicious-input": {
-        if (run.jobId) {
-          const cleanup = await fetchJson<Record<string, unknown>>(
-            `${this.botRunner}/bots/jobs/${encodeURIComponent(run.jobId)}/cleanup`,
-            { method: "POST" },
-            10_000,
-          );
+        if (run.jobId || run.jobIds?.length) {
+          const cleanup = await this.cleanupBotJobs(run);
           return this.completeRun(room.id, run, "시나리오가 만든 봇만 제거했습니다.", cleanup);
         }
         return this.completeRun(room.id, run, "정리할 시나리오 봇이 없습니다.", { killed: 0 });
@@ -306,8 +337,149 @@ export class FailureScenarioController {
   }
 
   private publicRun(run: MutableRun): FailureScenarioRun {
-    const { autoRecoverAtMs: _autoRecoverAtMs, ...publicRun } = run;
+    const {
+      autoRecoverAtMs: _autoRecoverAtMs,
+      jobIds: _jobIds,
+      surgeBotsRequested: _surgeBotsRequested,
+      surgeMaxBots: _surgeMaxBots,
+      surgeNextRampAtMs: _surgeNextRampAtMs,
+      surgeHoldUntilMs: _surgeHoldUntilMs,
+      surgePeakTickP95Ms: _surgePeakTickP95Ms,
+      ...publicRun
+    } = run;
     return { ...publicRun, evidence: publicRun.evidence ? { ...publicRun.evidence } : undefined };
+  }
+
+  private async advanceBotSurge(
+    roomId: string,
+    run: MutableRun,
+    room: AdminRoom | undefined,
+  ): Promise<void> {
+    if (!room || this.advancingBotSurges.has(roomId)) return;
+    this.advancingBotSurges.add(roomId);
+    try {
+      const jobIds = run.jobIds?.length ? run.jobIds : run.jobId ? [run.jobId] : [];
+      const currentJobId = jobIds.at(-1);
+      if (currentJobId) {
+        const job = await fetchJson<BotJob>(
+          `${this.botRunner}/bots/jobs/${encodeURIComponent(currentJobId)}`,
+        ).catch(() => undefined);
+        if (!job) return;
+        if (job.state === "failed") {
+          run.status = "failed";
+          run.evidence = { ...run.evidence, jobState: job.state, error: job.error };
+          return;
+        }
+        const requestedBots = run.surgeBotsRequested ?? job.total;
+        run.status = job.state === "running" ? "starting" : "active";
+        run.evidence = {
+          ...run.evidence,
+          connected: Math.max(0, requestedBots - job.total) + job.completed,
+          requested: requestedBots,
+          jobState: job.state,
+        };
+        if (job.state === "running") return;
+      }
+
+      const tickP95Ms = room.metrics.tickP95Ms;
+      run.surgePeakTickP95Ms = Math.max(run.surgePeakTickP95Ms ?? 0, tickP95Ms);
+      run.evidence = {
+        ...run.evidence,
+        currentTickP95Ms: tickP95Ms,
+        peakTickP95Ms: run.surgePeakTickP95Ms,
+      };
+
+      const now = this.now();
+      if (run.surgeHoldUntilMs !== undefined) {
+        if (now < run.surgeHoldUntilMs) {
+          run.status = "active";
+          return;
+        }
+        try {
+          const cleanup = await this.cleanupBotJobs(run);
+          this.completeRun(roomId, run, "Tick 부하 유지가 끝나 장애 봇을 자동으로 정리했습니다.", {
+            ...run.evidence,
+            ...cleanup,
+            automaticRecovery: true,
+          });
+        } catch (error) {
+          run.status = "recovering";
+          run.evidence = {
+            ...run.evidence,
+            cleanupError: error instanceof Error ? error.message : "bot_cleanup_failed",
+          };
+        }
+        return;
+      }
+
+      const requestedBots = run.surgeBotsRequested ?? 0;
+      const maximumBots = run.surgeMaxBots ?? requestedBots;
+      const targetReached = tickP95Ms >= BOT_SURGE_TARGET_TICK_P95_MS;
+      if (targetReached || requestedBots >= maximumBots) {
+        run.surgeHoldUntilMs = now + BOT_SURGE_HOLD_MS;
+        run.autoRecoverAtMs = run.surgeHoldUntilMs;
+        run.autoRecoverAt = new Date(run.surgeHoldUntilMs).toISOString();
+        run.status = "active";
+        run.evidence = {
+          ...run.evidence,
+          phase: "holding",
+          targetReached,
+          holdSeconds: BOT_SURGE_HOLD_MS / 1_000,
+        };
+        return;
+      }
+
+      if (now < (run.surgeNextRampAtMs ?? 0)) return;
+      const count = Math.min(BOT_SURGE_RAMP_SIZE, maximumBots - requestedBots);
+      if (count < 1) return;
+      const job = await this.startBotJob(roomId, count, "surge");
+      run.jobId = job.jobId;
+      run.jobIds = [...jobIds, job.jobId];
+      run.surgeBotsRequested = requestedBots + count;
+      run.surgeNextRampAtMs = now + BOT_SURGE_RAMP_INTERVAL_MS;
+      run.status = "starting";
+      run.evidence = {
+        ...run.evidence,
+        phase: "ramping",
+        requestedBots: run.surgeBotsRequested,
+        jobState: job.state,
+      };
+    } catch (error) {
+      run.status = "failed";
+      run.evidence = {
+        ...run.evidence,
+        error: error instanceof Error ? error.message : "bot_surge_advance_failed",
+      };
+    } finally {
+      if (this.activeRuns.has(roomId)) this.activeRuns.set(roomId, run);
+      this.advancingBotSurges.delete(roomId);
+    }
+  }
+
+  private async cleanupBotJobs(run: MutableRun): Promise<Record<string, unknown>> {
+    const jobIds = run.jobIds?.length ? run.jobIds : run.jobId ? [run.jobId] : [];
+    const cleanups: Record<string, unknown>[] = [];
+    // Keep the primary job explicit: it is the stable cleanup key for the
+    // original scenario run, while later ramp jobs are cleaned separately.
+    if (run.jobId) {
+      cleanups.push(await fetchJson<Record<string, unknown>>(
+        `${this.botRunner}/bots/jobs/${encodeURIComponent(run.jobId)}/cleanup`,
+        { method: "POST" },
+        10_000,
+      ));
+    }
+    const extraJobIds = jobIds.filter((jobId) => jobId !== run.jobId);
+    cleanups.push(...await Promise.all(extraJobIds.map((jobId) => fetchJson<Record<string, unknown>>(
+      `${this.botRunner}/bots/jobs/${encodeURIComponent(jobId)}/cleanup`,
+      { method: "POST" },
+      10_000,
+    ))));
+    return {
+      killed: cleanups.reduce((total, cleanup) => total + Number(cleanup.killed ?? 0), 0),
+      remaining: cleanups.reduce((total, cleanup) => total + Number(cleanup.remaining ?? 0), 0),
+      cleanedJobs: jobIds.length,
+      jobIds,
+    };
   }
 
   private started(
@@ -363,6 +535,7 @@ export class FailureScenarioController {
 
   private expireAutomaticRuns(): void {
     for (const [roomId, run] of this.activeRuns) {
+      if (run.scenarioId === "bot-surge") continue;
       if (!run.autoRecoverAtMs || this.now() < run.autoRecoverAtMs) continue;
       this.activeRuns.delete(roomId);
       this.remember(
@@ -375,7 +548,16 @@ export class FailureScenarioController {
   }
 
   private async botInventory(): Promise<BotInventory> {
-    return fetchJson<BotInventory>(`${this.botRunner}/bots`);
+    try {
+      const inventory = await fetchJson<BotInventory>(`${this.botRunner}/bots`, undefined, 4_000);
+      this.lastBotInventory = inventory;
+      return inventory;
+    } catch {
+      // A surge can briefly saturate the bot runner while game telemetry is
+      // still valid. Keep the last known inventory so the scenario control
+      // loop continues ramping and can still perform automatic cleanup.
+      return this.lastBotInventory;
+    }
   }
 
   private async startBotJob(

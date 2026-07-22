@@ -1346,6 +1346,7 @@ export function GameAdminConsole() {
   const [scenarioPendingRoomId, setScenarioPendingRoomId] = useState<string | null>(null);
   const requestPendingRef = useRef(false);
   const hasMapLayoutsRef = useRef(false);
+  const scenarioTrackingRef = useRef(false);
 
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId);
   const joiningRoom = rooms.find((room) => room.id === joiningRoomId);
@@ -1359,6 +1360,12 @@ export function GameAdminConsole() {
     requestPendingRef.current = true;
     try {
       const state = await controlPlaneClient.getState(hasMapLayoutsRef.current);
+      if (scenarioTrackingRef.current) {
+        const scenarioState = await controlPlaneClient.getFailureScenarios();
+        scenarioTrackingRef.current = scenarioState.rooms.some(
+          (room) => room.active?.scenarioId === "bot-surge",
+        );
+      }
       setRooms((currentRooms) => {
         const currentById = new Map(currentRooms.map((room) => [room.id, room]));
         const merged = state.rooms.flatMap((room) => {
@@ -1431,6 +1438,7 @@ export function GameAdminConsole() {
     setError("");
     try {
       await controlPlaneClient.startFailureScenario(roomId, "bot-surge");
+      scenarioTrackingRef.current = true;
       await refresh(true);
     } catch (scenarioError) {
       setError(errorMessage(scenarioError));

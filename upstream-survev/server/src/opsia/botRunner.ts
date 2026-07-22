@@ -87,6 +87,7 @@ class SurvevProtocolBot {
     private inputLoopStarted = false;
     private inputSeq = 0;
     private readySettled = false;
+    private readyError: Error | undefined;
     private readonly readyPromise: Promise<void>;
     private resolveReady!: () => void;
     private rejectReady!: (error: Error) => void;
@@ -162,11 +163,11 @@ class SurvevProtocolBot {
                     wasClean: event.wasClean,
                 },
             }));
-            this.settleReady(new Error("bot_connection_closed"));
+            this.settleReady();
             this.stop();
         });
         this.ws.addEventListener("error", () => {
-            this.settleReady(new Error("bot_connection_failed"));
+            this.settleReady();
             this.stop();
         });
     }
@@ -191,6 +192,7 @@ class SurvevProtocolBot {
                     timeout = setTimeout(() => reject(new Error("bot_connection_timeout")), timeoutMs);
                 }),
             ]);
+            if (!this.connected) throw this.readyError ?? new Error("bot_connection_closed");
         } finally {
             if (timeout) clearTimeout(timeout);
         }
@@ -203,7 +205,7 @@ class SurvevProtocolBot {
         if (this.stopped) return;
         this.stopped = true;
         this.connected = false;
-        this.settleReady(new Error("bot_stopped"));
+        this.settleReady();
         if (this.readyGraceTimer) clearTimeout(this.readyGraceTimer);
         this.readyGraceTimer = undefined;
         if (this.timer) clearInterval(this.timer);
@@ -217,8 +219,12 @@ class SurvevProtocolBot {
     private settleReady(error?: Error): void {
         if (this.readySettled) return;
         this.readySettled = true;
-        if (error) this.rejectReady(error);
-        else this.resolveReady();
+        this.readyError = error;
+        // Keep the readiness promise fulfilled. Connection failures are
+        // surfaced by waitUntilConnected() after the promise settles, which
+        // prevents late WebSocket close events from becoming unhandled
+        // rejections that terminate the bot runner.
+        this.resolveReady();
     }
 
     private markConnected(): void {
@@ -509,7 +515,13 @@ const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs
                     job.createdBotIds.push(...created.map((bot) => bot.id));
                     job.completed += 1;
                 })());
-                if (index < count - 1) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+                // Surge bots must reach the same lobby before the game flips
+                // canJoin=false. Keep normal jobs paced, but launch the
+                // pressure cohort together so it becomes real connected
+                // players instead of a stream of rejected late joins.
+                if (mode !== "surge" && index < count - 1) {
+                    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+                }
             }
             await Promise.all(spawnTasks);
             if (job.state === "running") job.state = "completed";
