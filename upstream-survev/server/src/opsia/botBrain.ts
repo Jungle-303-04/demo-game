@@ -494,7 +494,7 @@ export const createBotBrainState = (random: () => number = Math.random): BotBrai
     wanderAngle: random() * Math.PI * 2,
     decisionUntil: 0,
     strafeSign: random() < 0.5 ? -1 : 1,
-    movementPhase: random() < 0.2 ? "rest" : "travel",
+    movementPhase: "travel",
     movementPhaseUntil: 0,
     lastMovementCommanded: false,
     lastSnapshotAt: 0,
@@ -556,13 +556,14 @@ const rhythmicMovement = (
     now: number,
     random: () => number,
 ): boolean => {
-    if (state.movementPhaseUntil <= 0) {
-        state.movementPhaseUntil = now + movementPhaseDuration(mode, state.movementPhase, random);
-    } else if (now >= state.movementPhaseUntil) {
-        state.movementPhase = state.movementPhase === "travel" ? "rest" : "travel";
-        state.movementPhaseUntil = now + movementPhaseDuration(mode, state.movementPhase, random);
+    // Keep normal bots in motion like active players. Tactical stop policies
+    // still pause for healing, reviving, pickups, grenade cooking, and downed
+    // states, but roaming and combat no longer inject artificial idle periods.
+    if (state.movementPhase !== "travel" || now >= state.movementPhaseUntil) {
+        state.movementPhase = "travel";
+        state.movementPhaseUntil = now + movementPhaseDuration(mode, "travel", random);
     }
-    return state.movementPhase === "travel";
+    return true;
 };
 
 const finishIntent = (

@@ -312,7 +312,7 @@ describe("Opsia protocol bot brain", () => {
         expect(Math.max(...angles) - Math.min(...angles)).toBeGreaterThan(0.2);
     });
 
-    test("alternates travel and rest without dropping combat aim", () => {
+    test("keeps travelling through combat decisions without dropping aim", () => {
         const state = createBotBrainState(() => 0.5);
         state.movementPhase = "travel";
         state.movementPhaseUntil = 1_200;
@@ -324,8 +324,8 @@ describe("Opsia protocol bot brain", () => {
         const travellingAgain = decideBotIntent(stateSnapshot, "self", state, 2_001, () => 0.5);
 
         expect(travelling.moving).toBe(true);
-        expect(resting.moving).toBe(false);
-        expect(stillResting.moving).toBe(false);
+        expect(resting.moving).toBe(true);
+        expect(stillResting.moving).toBe(true);
         expect(travellingAgain.moving).toBe(true);
         for (const intent of [travelling, resting, stillResting, travellingAgain]) {
             expect(intent.mode).toBe("combat");
@@ -334,22 +334,15 @@ describe("Opsia protocol bot brain", () => {
         }
     });
 
-    test("does not treat an intentional rest as being stuck", () => {
+    test("immediately resumes travel from a legacy rest state", () => {
         const state = createBotBrainState(() => 0.5);
         state.movementPhase = "rest";
         state.movementPhaseUntil = 5_000;
 
-        for (let index = 0; index < 6; index++) {
-            const intent = decideBotIntent(
-                snapshot({ capturedAt: 1_000 + index }),
-                "self",
-                state,
-                1_100 + index * 200,
-                () => 0.5,
-            );
-            expect(intent.mode).not.toBe("unstuck");
-            expect(intent.moving).toBe(false);
-        }
+        const intent = decideBotIntent(snapshot(), "self", state, 1_100, () => 0.5);
+
+        expect(intent.moving).toBe(true);
+        expect(state.movementPhase).toBe("travel");
         expect(state.stuckSamples).toBe(0);
     });
 
