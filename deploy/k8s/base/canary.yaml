@@ -43,7 +43,7 @@ spec:
       terminationGracePeriodSeconds: 30
       containers:
         - name: game-server
-          image: ghcr.io/jungle-303-04/demo-game/game-server:stable
+          image: ghcr.io/jungle-303-04/demo-game/game-server:0000000000000000000000000000000000000820
           imagePullPolicy: Always
           env:
             - { name: ROOM_ID, value: canary-room }
