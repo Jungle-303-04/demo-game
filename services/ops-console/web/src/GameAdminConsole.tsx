@@ -608,7 +608,7 @@ function RoomCard({
                     <span
                       aria-hidden="true"
                       className="room-metric-value-emoji"
-                      style={{ fontSize: "clamp(72px, 8.65vw, 134px)" }}
+                      style={{ fontSize: "clamp(68px, 8.25vw, 124px)" }}
                     >
                       ⏱️
                     </span>
@@ -624,7 +624,7 @@ function RoomCard({
                     <span
                       aria-hidden="true"
                       className="room-metric-value-emoji"
-                      style={{ fontSize: "clamp(72px, 8.65vw, 134px)" }}
+                      style={{ fontSize: "clamp(68px, 8.25vw, 124px)" }}
                     >
                       🤖
                     </span>
