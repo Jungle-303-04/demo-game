@@ -36,7 +36,7 @@ interface PictureInPictureSession {
   pipWindow: Window;
 }
 
-type SpectatorViewCount = 1 | 4 | 16;
+type SpectatorViewCount = 1 | 4;
 type SpectatorFrameWindow = Window & {
   __opsiaDriveSpectatorFrame?: () => void;
   __opsiaSetSpectatorFps?: (fps: number) => void;
@@ -817,7 +817,6 @@ function PlayerSpectatorView({
   managed = false,
   selfDriven = false,
   loadDelayMs = 0,
-  visible = true,
   wallFps,
   forceCanvas = false,
   targetFps,
@@ -828,7 +827,6 @@ function PlayerSpectatorView({
   managed?: boolean;
   selfDriven?: boolean;
   loadDelayMs?: number;
-  visible?: boolean;
   wallFps?: number;
   forceCanvas?: boolean;
   targetFps?: number;
@@ -852,18 +850,16 @@ function PlayerSpectatorView({
   const syncSpectatorFrame = useCallback((drawNow = false) => {
     const frameWindow = iframeRef.current?.contentWindow as SpectatorFrameWindow | null;
     if (!frameWindow) return;
-    const fps = visible ? (targetFps ?? wallFps ?? 60) : 5;
+    const fps = targetFps ?? wallFps ?? 60;
     let controlledDirectly = false;
 
     try {
       controlledDirectly = typeof frameWindow.__opsiaSetSpectatorFps === "function";
       frameWindow.__opsiaSetSpectatorFps?.(fps);
       frameWindow.__opsiaSetSpectatorVisible?.(true);
-      if (visible) {
-        frameWindow.dispatchEvent(new Event("resize"));
-        if (drawNow) frameWindow.__opsiaDriveSpectatorFrame?.();
-        frameWindow.__opsiaSetSpectatorVisible?.(true);
-      }
+      frameWindow.dispatchEvent(new Event("resize"));
+      if (drawNow) frameWindow.__opsiaDriveSpectatorFrame?.();
+      frameWindow.__opsiaSetSpectatorVisible?.(true);
     } catch {
       // Local Compose serves the console and games on different ports. The
       // origin-bound control message below applies the same policy there.
@@ -874,10 +870,10 @@ function PlayerSpectatorView({
       version: 1,
       fps,
       running: true,
-      resize: visible,
-      drawNow: drawNow && visible && !controlledDirectly,
+      resize: true,
+      drawNow: drawNow && !controlledDirectly,
     }, frameOriginRef.current);
-  }, [targetFps, visible, wallFps]);
+  }, [targetFps, wallFps]);
 
   useEffect(() => {
     if (loadDelayMs <= 0) {
@@ -954,8 +950,7 @@ function PlayerSpectatorView({
 
   useEffect(() => {
     if (!frameReady) return;
-    // Hidden frames stay warm at 5fps so Tab reveals a real frame immediately;
-    // visible four-up frames are raised to 60fps on every supported origin.
+    // Keep the active spectator frame in sync on every supported origin.
     syncSpectatorFrame(true);
   }, [frameReady, syncSpectatorFrame]);
 
@@ -969,9 +964,9 @@ function PlayerSpectatorView({
       }, frameOriginRef.current);
     };
     requestStats();
-    const timer = window.setInterval(requestStats, visible ? 250 : 2_000);
+    const timer = window.setInterval(requestStats, 250);
     return () => window.clearInterval(timer);
-  }, [debugStatsEnabled, frameReady, player.id, visible]);
+  }, [debugStatsEnabled, frameReady, player.id]);
 
   useEffect(() => {
     if (managed || selfDriven) return undefined;
@@ -998,11 +993,7 @@ function PlayerSpectatorView({
   }, [managed, player.id, registerFrame]);
 
   return (
-    <div
-      className={`player-spectator${visible ? "" : " is-hidden"}`}
-      aria-hidden={!visible}
-      ref={tileRef}
-    >
+    <div className="player-spectator" ref={tileRef}>
       {shouldLoad && (
         <iframe
           allow="fullscreen"
@@ -1026,51 +1017,24 @@ function PlayerSpectatorView({
 
 function SpectatorWall({
   room,
-  players,
   visiblePlayers,
-  layout,
 }: {
   room: GameRoom;
-  players: PlayerTelemetry[];
   visiblePlayers: PlayerTelemetry[];
-  layout: 4 | 16;
 }) {
-  const visibleIds = useMemo(
-    () => new Set(visiblePlayers.map((player) => player.id)),
-    [visiblePlayers],
-  );
-  const orderedPlayers = useMemo(() => {
-    // Keep a fixed, name-sorted pool while guaranteeing that a selected page is
-    // never outside the 20-frame prewarm budget.
-    const sorted = players
-      .slice()
-      .sort((left, right) => left.name.localeCompare(right.name));
-    const base = sorted.slice(0, layout === 4 ? 12 : 20);
-    const baseIds = new Set(base.map((player) => player.id));
-    const selectedOutsideBase = sorted.filter(
-      (player) => visibleIds.has(player.id) && !baseIds.has(player.id),
-    );
-    return [...base, ...selectedOutsideBase];
-  }, [players, visibleIds]);
-
   return (
-    <div className="spectator-wall" data-layout={layout}>
-      {orderedPlayers.map((player, index) => {
-        const visibleIndex = visiblePlayers.findIndex((candidate) => candidate.id === player.id);
-        return (
-          <PlayerSpectatorView
-            forceCanvas={layout === 16}
-            key={`${layout}:${player.id}`}
-            loadDelayMs={visibleIndex >= 0 ? visibleIndex * (layout === 4 ? 80 : 100) : 1_200 + index * 250}
-            player={player}
-            room={room}
-            selfDriven
-            targetFps={layout === 4 ? 60 : 30}
-            visible={visibleIndex >= 0}
-            wallFps={30}
-          />
-        );
-      })}
+    <div className="spectator-wall" data-layout="4">
+      {visiblePlayers.map((player, index) => (
+        <PlayerSpectatorView
+          key={player.id}
+          loadDelayMs={index * 40}
+          player={player}
+          room={room}
+          selfDriven
+          targetFps={30}
+          wallFps={30}
+        />
+      ))}
     </div>
   );
 }
@@ -1323,8 +1287,6 @@ function RoomViewer({
           <PlayerSpectatorView player={selectedPlayer} room={room} />
         ) : (
           <SpectatorWall
-            layout={spectatorViewCount}
-            players={alivePlayers}
             room={room}
             visiblePlayers={visibleSpectators}
           />
@@ -1369,7 +1331,7 @@ function RoomViewer({
             {botPending ? "투입 중" : `봇 +${BOT_BATCH_SIZE}`}
           </button>
           <div className="spectator-count-switch" aria-label="동시 관전 화면 수">
-            {([1, 4, 16] as const).map((count) => (
+            {([1, 4] as const).map((count) => (
               <button
                 aria-label={`${count}명 동시 관전`}
                 aria-pressed={spectatorViewCount === count}
