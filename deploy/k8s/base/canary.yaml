@@ -32,6 +32,14 @@ spec:
         opsia.dev/canary-id: bootstrap
         opsia.dev/revision: stable
     spec:
+      nodeSelector:
+        kyro.io/workload-role: game
+        opsia.dev/game-pool: high-capacity
+      tolerations:
+        - key: kyro.io/workload-role
+          operator: Equal
+          value: game
+          effect: NoSchedule
       terminationGracePeriodSeconds: 30
       containers:
         - name: game-server
@@ -95,6 +103,8 @@ spec:
         opsia.dev/fleet: canary
         opsia.dev/validation-only: "true"
     spec:
+      nodeSelector:
+        kyro.io/workload-role: infra
       containers:
         - name: bot-runner
           image: ghcr.io/jungle-303-04/demo-game/bot-runner:stable
