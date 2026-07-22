@@ -1,72 +1,111 @@
-apiVersion: apps/v1
 kind: Deployment
-metadata:
-  name: canary-room
-  namespace: sandbox
-  labels:
-    app: game-server
-    app.kubernetes.io/part-of: demo-game
-    opsia.dev/fleet: canary
-    opsia.dev/room-id: canary-room
-    game.opsia.dev/room-id: canary-room
-    opsia.dev/room-profile: faction
-    opsia.dev/public: disabled
-    opsia.dev/matchmaking: disabled
-    opsia.dev/canary-id: bootstrap
-    opsia.dev/revision: stable
 spec:
   replicas: 1
-  strategy: { type: Recreate }
-  selector: { matchLabels: { app: game-server, opsia.dev/fleet: canary, opsia.dev/room-id: canary-room } }
+  selector:
+    matchLabels:
+      app: game-server
+      opsia.dev/fleet: canary
+      opsia.dev/room-id: canary-room
+  strategy:
+    type: Recreate
   template:
+    spec:
+      containers:
+      - env:
+        - name: ROOM_ID
+          value: canary-room
+        - name: OPSIA_MAP_NAME
+          value: faction
+        - name: OPSIA_ROOM_PROFILE
+          value: faction
+        - name: OPSIA_CANARY
+          value: 'true'
+        - name: OPSIA_PUBLIC_MATCHMAKING
+          value: 'false'
+        - name: OPSIA_REDIS_KEY_PREFIX
+          value: 'room:canary-room:'
+        - name: REDIS_URL
+          value: redis://redis:6379/1
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: STRICT_MODE
+          value: 'false'
+        - name: OPSIA_ROOM
+          value: 'true'
+        - name: OPSIA_INFINITE
+          value: 'true'
+        - name: SURVEV_CLIENT_DIR
+          value: /app/upstream-survev/client/dist
+        - name: REQUIRE_SESSION_GATEWAY
+          value: 'false'
+        - name: REQUIRE_CONTROL_TOKEN
+          value: 'true'
+        - name: OPS_CONTROL_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: token
+              name: demo-game-control
+        name: game-server
+        image: ghcr.io/jungle-303-04/demo-game/game-server:stable
+        ports:
+        - name: http
+          containerPort: 8001
+        resources:
+          limits:
+            cpu: '3'
+            memory: 4Gi
+          requests:
+            cpu: '1'
+            memory: 2Gi
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 10
+          initialDelaySeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+          periodSeconds: 2
+          failureThreshold: 30
+          initialDelaySeconds: 5
+        imagePullPolicy: Always
+      tolerations:
+      - key: kyro.io/workload-role
+        value: game
+        effect: NoSchedule
+        operator: Equal
+      nodeSelector:
+        opsia.dev/game-pool: high-capacity
+        kyro.io/workload-role: game
+      terminationGracePeriodSeconds: 30
     metadata:
       labels:
         app: game-server
-        app.kubernetes.io/part-of: demo-game
         opsia.dev/fleet: canary
+        opsia.dev/public: disabled
         opsia.dev/room-id: canary-room
+        opsia.dev/revision: stable
+        opsia.dev/canary-id: bootstrap
+        opsia.dev/matchmaking: disabled
         game.opsia.dev/room-id: canary-room
         opsia.dev/room-profile: faction
-        opsia.dev/public: disabled
-        opsia.dev/matchmaking: disabled
-        opsia.dev/canary-id: bootstrap
-        opsia.dev/revision: stable
-    spec:
-      nodeSelector:
-        kyro.io/workload-role: game
-        opsia.dev/game-pool: high-capacity
-      tolerations:
-        - key: kyro.io/workload-role
-          operator: Equal
-          value: game
-          effect: NoSchedule
-      terminationGracePeriodSeconds: 30
-      containers:
-        - name: game-server
-          image: ghcr.io/jungle-303-04/demo-game/game-server:stable
-          imagePullPolicy: Always
-          env:
-            - { name: ROOM_ID, value: canary-room }
-            - { name: OPSIA_MAP_NAME, value: faction }
-            - { name: OPSIA_ROOM_PROFILE, value: faction }
-            - { name: OPSIA_CANARY, value: "true" }
-            - { name: OPSIA_PUBLIC_MATCHMAKING, value: "false" }
-            - { name: OPSIA_REDIS_KEY_PREFIX, value: "room:canary-room:" }
-            - { name: REDIS_URL, value: redis://redis:6379/1 }
-            - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
-            - { name: STRICT_MODE, value: "false" }
-            - { name: OPSIA_ROOM, value: "true" }
-            - { name: OPSIA_INFINITE, value: "true" }
-            - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
-            - { name: REQUIRE_SESSION_GATEWAY, value: "false" }
-            - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
-            - name: OPS_CONTROL_TOKEN
-              valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
-          ports: [{ containerPort: 8001, name: http }]
-          resources:
-            # Canary must reproduce live behavior with the same limits. Its
-            # Redis database and room key namespace remain isolated.
-            requests: { cpu: "1", memory: 2Gi }
-            limits: { cpu: "3", memory: 4Gi }
-          readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 5, periodSeconds: 2, failureThreshold: 30 }
-          livenessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 30, periodSeconds: 10 }
+        app.kubernetes.io/part-of: demo-game
+metadata:
+  name: canary-room
+  labels:
+    app: game-server
+    opsia.dev/fleet: canary
+    opsia.dev/public: disabled
+    opsia.dev/room-id: canary-room
+    opsia.dev/revision: stable
+    opsia.dev/canary-id: bootstrap
+    opsia.dev/matchmaking: disabled
+    game.opsia.dev/room-id: canary-room
+    opsia.dev/room-profile: faction
+    app.kubernetes.io/part-of: demo-game
+  namespace: sandbox
+apiVersion: apps/v1
