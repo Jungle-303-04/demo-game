@@ -268,6 +268,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminCss, /@keyframes room-map-danger-wiggle/);
   assert.match(adminCss, /\.room-map-tile\.is-selected/);
   assert.match(adminCss, /\.room-map-tile\.is-selected \{[^}]*opacity: 1;[^}]*transform: translateY\(-3px\) scale\(1\.02\);/s);
+  assert.match(adminCss, /\.room-map-tile-identity strong \{[^}]*overflow: hidden;[^}]*overflow-wrap: anywhere;[^}]*white-space: normal;/s);
   assert.doesNotMatch(roomMapPreviewStrip, /PlayerMarkers|roomPodLabel|<LiveMapCanvas/);
   assert.doesNotMatch(adminUi, /RoomPodMappingStrip|room-pod-map/);
   assert.match(roomCard, /className="room-graph-stack"/);
@@ -280,7 +281,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(roomCard, /profile\.tickLabel/);
   assert.match(adminCss, /\.room-signal-graph\.is-warning/);
   assert.match(adminCss, /\.room-signal-graph\.is-danger/);
-  assert.match(adminCss, /\.room-metric-duo strong \{[^}]*font: 900 clamp\(64px, 8vw, 124px\)/s);
+  assert.match(adminCss, /\.room-metric-duo strong \{[^}]*font: 900 clamp\(52px, 6vw, 96px\)/s);
+  assert.match(adminCss, /\.room-metric-value-emoji \{[^}]*font-size: 0\.58em;/s);
   assert.match(adminCss, /\.room-load-line \{[^}]*stroke: rgb\(73 84 99 \/ 0\.94\);/s);
   assert.match(adminCss, /\.room-signal-graph rect\.is-warning-bar \{[^}]*fill: hsl\(var\(--bar-hue, var\(--tick-hue\)\) 62% 48%/s);
   assert.match(adminCss, /\.room-signal-graph rect\.is-danger-bar \{[^}]*fill: hsl\(var\(--bar-hue, var\(--tick-hue\)\) 66% 48%/s);

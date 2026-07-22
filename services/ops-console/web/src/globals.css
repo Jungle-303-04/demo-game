@@ -509,15 +509,17 @@ button {
 }
 
 .room-map-tile-identity strong {
-  overflow: visible;
+  display: block;
+  overflow: hidden;
   max-width: calc(100% - 8px);
-  padding: 0.08em 0.04em 0.14em;
-  font: 800 clamp(28px, 3.4vw, 54px) "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-  letter-spacing: 0.01em;
-  line-height: 1.16;
-  text-overflow: clip;
-  white-space: nowrap;
-  overflow-wrap: normal;
+  padding: 0.08em 0.1em 0.14em;
+  font: 800 clamp(20px, 2.35vw, 38px) "Segoe UI Variable Text", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0.005em;
+  line-height: 1.06;
+  overflow-wrap: anywhere;
+  text-overflow: initial;
+  white-space: normal;
+  word-break: break-word;
 }
 
 .room-map-tile-identity small {
@@ -760,7 +762,7 @@ button {
   box-shadow:
     0 0 0 3px hsl(var(--tick-hue) 78% 44% / 0.05),
     0 14px 34px rgb(27 43 62 / 0.08);
-  font: 900 clamp(64px, 8vw, 124px) ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 900 clamp(52px, 6vw, 96px) ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: -0.075em;
   line-height: 0.9;
   white-space: nowrap;
@@ -784,7 +786,10 @@ button {
 .room-metric-duo strong > .room-metric-value {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  gap: 0.12em;
   min-width: 0;
+  max-width: 100%;
   color: inherit;
   font: inherit;
   letter-spacing: inherit;
@@ -794,16 +799,16 @@ button {
 .room-metric-value-emoji {
   display: inline-block;
   flex: 0 0 auto;
-  margin-right: -0.24em;
+  margin: 0;
   font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
-  font-size: clamp(68px, 8.25vw, 124px);
+  font-size: 0.58em;
   letter-spacing: 0;
   line-height: 1;
 }
 
 .room-metric-duo strong > small {
   display: inline-block;
-  margin-left: 5px;
+  margin-left: 0.06em;
   color: hsl(var(--tick-hue) 52% 34% / 0.72);
   font-size: 0.32em;
   font-weight: 950;
