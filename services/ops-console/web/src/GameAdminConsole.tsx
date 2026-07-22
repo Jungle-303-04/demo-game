@@ -552,166 +552,106 @@ function LiveRoomMiniMap({ room }: { room: GameRoom }) {
   );
 }
 
-function RoomCard({
+function ServerBlock({
   animationNow,
-  isSelected,
-  offset,
   room,
   ordinal,
   onJoin,
-  onSelect,
   onSpectate,
   onScenario,
   scenarioPending,
 }: {
   animationNow: number;
-  isSelected: boolean;
-  offset: number;
   room: GameRoom;
   ordinal: number;
   onJoin: () => void;
-  onSelect: () => void;
   onSpectate: () => void;
   onScenario: () => void;
   scenarioPending: boolean;
 }) {
-  const { bots, humans } = playerCounts(room);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const profile = roomLoadProfile(room, ordinal - 1, animationNow);
   const displayName = roomDisplayName(room);
+  const stableRoomId = roomStableId(room);
   const currentPodName = roomCurrentPodName(room);
-  const absOffset = Math.min(2, Math.abs(offset));
+  const menuId = `server-block-menu-${room.id}`;
   const style = {
-    "--offset": offset,
-    "--abs-offset": absOffset,
-    "--load": profile.tickPressure,
     ...tickSurfaceStyleVars(profile.tickHue, profile.tickRisk),
   } as StyleWithVariables;
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) {
+        setMenuOpen(false);
+      }
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [menuOpen]);
+
+  const runAndClose = (action: () => void) => {
+    setMenuOpen(false);
+    action();
+  };
+
   return (
     <article
-      aria-current={isSelected ? "true" : undefined}
-      className={`room-card ${isSelected ? "is-selected" : ""} ${absOffset >= 2 ? "is-far" : ""}`}
-      onClick={onSelect}
+      aria-label={`${displayName}, ${currentPodName}, Tick P95 ${profile.tickP95}ms`}
+      className={`server-block is-${profile.tickTone}`}
       style={style}
     >
-      <span className="room-number">{String(ordinal).padStart(2, "0")}</span>
-      <div className="room-preview">
-        <div className="room-graph-stack" aria-hidden="true">
-          <div className={`room-signal-graph is-${profile.tickTone}`}>
-            <div className="room-metrics" aria-label={`${profile.tickP95}ms tick p95, ${bots} bots`}>
-              <div className="room-tick-heading">
-                <span>{profile.tickLabel}</span>
-              </div>
-              <div className="room-metric-duo">
-                <strong className="room-metric-panel room-tick-metric">
-                  <span className="room-metric-label">
-                    TICK P95
-                  </span>
-                  <span className="room-metric-value">
-                    <span
-                      aria-hidden="true"
-                      className="room-metric-value-emoji"
-                    >
-                      ⏱️
-                    </span>
-                    {profile.tickP95}
-                  </span>
-                  <small>ms</small>
-                </strong>
-                <strong className="room-metric-panel room-bot-metric">
-                  <span className="room-metric-label">
-                    ACTIVE BOTS
-                  </span>
-                  <span className="room-metric-value">
-                    <span
-                      aria-hidden="true"
-                      className="room-metric-value-emoji"
-                    >
-                      🤖
-                    </span>
-                    {bots}
-                  </span>
-                  <small>BOTS</small>
-                </strong>
-              </div>
-              <p>server frame latency · active bots</p>
-            </div>
-            <svg viewBox="0 0 100 54" preserveAspectRatio="none">
-              <path className="room-load-fill" d={profile.fillPath} />
-              {profile.bars.map((value, index) => (
-                <rect
-                  height={(TICK_CHART_BAR_BASE_Y - tickChartBarTopY(value)).toFixed(1)}
-                  key={`${room.id}-load-bar-${index}`}
-                  className={`is-${tickBarTone(value)}-bar`}
-                  rx="1.4"
-                  style={tickVisualStyleVars(value)}
-                  width="5.4"
-                  x={(6 + index * (88 / Math.max(1, profile.bars.length - 1))).toFixed(1)}
-                  y={tickChartBarTopY(value).toFixed(1)}
-                />
-              ))}
-              <path className="room-load-line-halo" d={profile.linePath} />
-              <path className="room-load-line" d={profile.linePath} />
-            </svg>
+      <div className="server-block-tick">
+        <span>{profile.tickLabel}</span>
+        <strong>{profile.tickP95}<small>ms</small></strong>
+      </div>
+      <div className="server-block-menu" ref={menuRef}>
+        <button
+          aria-controls={menuId}
+          aria-expanded={menuOpen}
+          aria-haspopup="menu"
+          aria-label={`${displayName} 메뉴 열기`}
+          className="server-block-menu-toggle"
+          onClick={() => setMenuOpen((open) => !open)}
+          type="button"
+        >
+          <span aria-hidden="true">⋯</span>
+        </button>
+        {menuOpen ? (
+          <div className="server-block-menu-popover" id={menuId} role="menu">
+            <button onClick={() => runAndClose(onSpectate)} role="menuitem" type="button">
+              관전하기
+            </button>
+            <button onClick={() => runAndClose(onJoin)} role="menuitem" type="button">
+              참가하기
+            </button>
+            <button
+              className="is-scenario"
+              disabled={scenarioPending}
+              onClick={() => runAndClose(onScenario)}
+              role="menuitem"
+              type="button"
+            >
+              {scenarioPending ? "장애 실행 중…" : "장애 실행"}
+            </button>
           </div>
-        </div>
-        <span className={`live-badge ${room.status === "running" ? "" : "is-warning"}`}>
-          <i />{ROOM_STATUS_LABEL[room.status]}
-        </span>
+        ) : null}
       </div>
-      <div className={`room-card-details is-${profile.tickTone}`}>
-        <div className="room-card-copy">
-          <div>
-            <span>ROOM</span>
-            <h2>{displayName}</h2>
-          </div>
-          <strong>{room.players.length}</strong>
-        </div>
-      <dl className="room-identity room-pod-identity" aria-label={`${displayName} Kubernetes pod identity`}>
-        <div>
-          <dt>Current Pod</dt>
-          <dd title={currentPodName}>{currentPodName}</dd>
-        </div>
-      </dl>
-      <div className="room-card-counts">
-        <span>사용자 <strong>{humans}</strong></span>
-        <span>봇 <strong>{bots}</strong></span>
+      <div className="server-block-name" title={currentPodName}>
+        {currentPodName}
       </div>
-      </div>
-      <div className="room-card-actions">
-        <button
-          className="room-card-spectate"
-          onClick={(event) => {
-            event.stopPropagation();
-            onSpectate();
-          }}
-          type="button"
-        >
-          관전하기
-        </button>
-        <button
-          aria-label={`${displayName} 봇 접속 폭주 장애 즉시 실행`}
-          className="room-card-scenario"
-          disabled={scenarioPending}
-          onClick={(event) => {
-            event.stopPropagation();
-            onScenario();
-          }}
-          type="button"
-        >
-          {scenarioPending ? "실행 중…" : "장애 실행"}
-        </button>
-        <button
-          aria-haspopup="dialog"
-          aria-label={`${displayName} 참여하기`}
-          className="room-card-join"
-          onClick={(event) => {
-            event.stopPropagation();
-            onJoin();
-          }}
-          type="button"
-        >
-          참여하기
-        </button>
+      <div className="server-block-meta">
+        <span>{displayName}</span>
+        <span>{stableRoomId}</span>
+        <span>{room.players.length} connected</span>
       </div>
     </article>
   );
@@ -745,33 +685,31 @@ function JoinRoomDialog({
         event.preventDefault();
         event.currentTarget.close();
       }}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) event.currentTarget.close();
-      }}
       onClose={onDismiss}
       ref={dialogRef}
     >
       <div className="join-dialog-panel">
         <button
-          aria-label="참여 창 닫기"
+          aria-label="참가 화면에서 뒤로가기"
           autoFocus
-          className="join-dialog-close"
+          className="join-dialog-back"
           onClick={() => dialogRef.current?.close()}
           type="button"
         >
-          <span aria-hidden="true">×</span>
+          <span aria-hidden="true">←</span> 뒤로
         </button>
-        <span className="join-dialog-eyebrow">게임 참여</span>
         <h2 id={titleId}>{displayName}</h2>
-        <p id={descriptionId}>QR 코드를 스캔하면 이 방의 게임 화면으로 이동합니다.</p>
+        <p className="join-dialog-description" id={descriptionId}>
+          QR 코드를 스캔하면 이 방의 게임 화면으로 이동합니다.
+        </p>
         <div className="join-dialog-qr">
           <QRCodeSVG
             bgColor="#ffffff"
-            fgColor="#111318"
+            fgColor="#080a0d"
             level="M"
             marginSize={4}
-            size={220}
-            title={`${displayName} 참여 QR 코드`}
+            size={1024}
+            title={`${displayName} 참가 QR 코드`}
             value={joinUrl}
           />
         </div>
@@ -786,45 +724,6 @@ function JoinRoomDialog({
         </a>
       </div>
     </dialog>
-  );
-}
-
-function RoomMapPreviewStrip({
-  animationNow,
-  onSelectRoom,
-  rooms,
-  selectedRoomId,
-}: {
-  animationNow: number;
-  onSelectRoom: (roomId: string) => void;
-  rooms: GameRoom[];
-  selectedRoomId: string;
-}) {
-  return (
-    <section className="room-map-strip" aria-label="Kubernetes pod tick risk overview">
-      {rooms.map((room, index) => {
-        const displayName = roomDisplayName(room);
-        const currentPodName = roomCurrentPodName(room);
-        const profile = roomLoadProfile(room, index, animationNow);
-        const tickTone = profile.tickTone;
-        return (
-          <button
-            aria-label={`${displayName} Pod ${currentPodName}, tick ${profile.tickP95}ms`}
-            aria-pressed={room.id === selectedRoomId}
-            className={`room-map-tile is-${tickTone} ${room.id === selectedRoomId ? "is-selected" : ""}`}
-            key={room.id}
-            onClick={() => onSelectRoom(room.id)}
-            style={tickSurfaceStyleVars(profile.tickHue, profile.tickRisk)}
-            title={displayName}
-            type="button"
-          >
-            <span className="room-map-tile-identity">
-              <strong title={currentPodName}>{currentPodName}</strong>
-            </span>
-          </button>
-        );
-      })}
-    </section>
   );
 }
 
@@ -843,36 +742,7 @@ function RoomDirectory({
   onRunBotSurge: (roomId: string) => void;
   scenarioPendingRoomId: string | null;
 }) {
-  const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id ?? "");
-  const [backgroundSettingsOpen, setBackgroundSettingsOpen] = useState(false);
-  const [backgroundOpacity, setBackgroundOpacity] = useState(() => {
-    const raw = window.localStorage.getItem(MAP_BACKGROUND_OPACITY_KEY);
-    if (raw === null) return 30;
-    const stored = Number(raw);
-    return Number.isFinite(stored) && stored >= 0 ? clamp(stored, 0, 100) : 30;
-  });
-  const [backgroundBlur, setBackgroundBlur] = useState(() => {
-    const raw = window.localStorage.getItem(MAP_BACKGROUND_BLUR_KEY);
-    if (raw === null) return 0;
-    const stored = Number(raw);
-    return Number.isFinite(stored) && stored >= 0 ? clamp(stored, 0, 12) : 0;
-  });
   const animationNow = useAnimationFrameNow(rooms.length > 0);
-
-  useEffect(() => {
-    if (rooms.length === 0) return;
-    if (!rooms.some((room) => room.id === selectedRoomId)) {
-      setSelectedRoomId(rooms[0]!.id);
-    }
-  }, [rooms, selectedRoomId]);
-
-  useEffect(() => {
-    window.localStorage.setItem(MAP_BACKGROUND_OPACITY_KEY, String(backgroundOpacity));
-  }, [backgroundOpacity]);
-
-  useEffect(() => {
-    window.localStorage.setItem(MAP_BACKGROUND_BLUR_KEY, String(backgroundBlur));
-  }, [backgroundBlur]);
 
   if (rooms.length === 0) {
     return (
@@ -883,124 +753,25 @@ function RoomDirectory({
     );
   }
 
-  const selectedIndex = Math.max(0, rooms.findIndex((room) => room.id === selectedRoomId));
-  const selectedRoom = rooms[selectedIndex]!;
-  const selectAdjacentRoom = (direction: -1 | 1) => {
-    const nextIndex = (selectedIndex + direction + rooms.length) % rooms.length;
-    setSelectedRoomId(rooms[nextIndex]!.id);
-  };
-
   return (
     <section className="room-directory">
-      <div
-        className="room-directory-map-background"
-        key={selectedRoom.id}
-        style={{
-          "--map-background-blur": `${backgroundBlur}px`,
-          "--map-background-opacity": backgroundOpacity / 100,
-        } as StyleWithVariables}
-      >
-        <LiveMapCanvas
-          fit="contain"
-          map={selectedRoom.mapLayout}
-          seed={selectedRoom.seed}
-          showLabels={false}
-          theme={selectedRoom.map}
-        />
-      </div>
-      <div className="room-background-controls">
-        <button
-          aria-controls="room-background-settings"
-          aria-expanded={backgroundSettingsOpen}
-          className="room-background-settings-trigger"
-          onClick={() => setBackgroundSettingsOpen((open) => !open)}
-          type="button"
-        >
-          배경
-        </button>
-        {backgroundSettingsOpen ? (
-          <div
-            aria-label="배경 표시 설정"
-            className="room-background-settings"
-            id="room-background-settings"
-            role="group"
-          >
-            <label>
-              <span>배경 농도 <output>{backgroundOpacity}%</output></span>
-              <input
-                aria-label="배경 농도"
-                max="100"
-                min="0"
-                onInput={(event) => setBackgroundOpacity(Number(event.currentTarget.value))}
-                step="1"
-                type="range"
-                value={backgroundOpacity}
-              />
-            </label>
-            <label>
-              <span>배경 흐림 <output>{backgroundBlur}px</output></span>
-              <input
-                aria-label="배경 흐림"
-                max="12"
-                min="0"
-                onInput={(event) => setBackgroundBlur(Number(event.currentTarget.value))}
-                step="1"
-                type="range"
-                value={backgroundBlur}
-              />
-            </label>
-          </div>
-        ) : null}
-      </div>
       <div className="directory-heading">
-        <h1>실시간 게임</h1>
-        <span>{rooms.length}개 방</span>
+        <h1>게임 서버</h1>
+        <span>{rooms.length}개 서버</span>
       </div>
-      <RoomMapPreviewStrip
-        animationNow={animationNow}
-        onSelectRoom={setSelectedRoomId}
-        rooms={rooms}
-        selectedRoomId={selectedRoomId}
-      />
-      <div className="room-carousel" aria-label="실시간 게임 방">
-        <button
-          aria-label="이전 방 보기"
-          className="room-carousel-arrow"
-          disabled={rooms.length < 2}
-          onClick={() => selectAdjacentRoom(-1)}
-          type="button"
-        >
-          ‹
-        </button>
-        <div className="room-grid">
-          {rooms.map((room, index) => {
-            const offset = cyclicOffset(index, selectedIndex, rooms.length);
-            return (
-              <RoomCard
-                animationNow={animationNow}
-                isSelected={room.id === selectedRoomId}
-                key={room.id}
-                offset={offset}
-                onJoin={() => onJoinRoom(room.id)}
-                onSelect={() => setSelectedRoomId(room.id)}
-                onSpectate={() => onOpenRoom(room.id)}
-                onScenario={() => onRunBotSurge(room.id)}
-                ordinal={index + 1}
-                room={room}
-                scenarioPending={scenarioPendingRoomId === room.id}
-              />
-            );
-          })}
-        </div>
-        <button
-          aria-label="다음 방 보기"
-          className="room-carousel-arrow"
-          disabled={rooms.length < 2}
-          onClick={() => selectAdjacentRoom(1)}
-          type="button"
-        >
-          ›
-        </button>
+      <div className="server-grid" aria-label="실시간 게임 서버">
+        {rooms.map((room, index) => (
+          <ServerBlock
+            animationNow={animationNow}
+            key={room.id}
+            onJoin={() => onJoinRoom(room.id)}
+            onSpectate={() => onOpenRoom(room.id)}
+            onScenario={() => onRunBotSurge(room.id)}
+            ordinal={index + 1}
+            room={room}
+            scenarioPending={scenarioPendingRoomId === room.id}
+          />
+        ))}
       </div>
     </section>
   );
