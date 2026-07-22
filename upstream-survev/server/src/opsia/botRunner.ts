@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { GameConfig } from "../../../shared/gameConfig.ts";
 import * as net from "../../../shared/net/net.ts";
 import { type BotBrainSnapshot, createBotBrainState, decideBotIntent } from "./botBrain.ts";
-import { createBotInput } from "./botInput.ts";
+import { createBotInput, smoothBotAngle } from "./botInput.ts";
 import { botFindGameUrl, botWebsocketUrl, normalizeSessionGatewayUrl } from "./botRouting.ts";
 import { controlTokenMatches, readControlToken } from "./controlPlaneAuth.ts";
 
@@ -91,6 +91,8 @@ class SurvevProtocolBot {
     private resolveReady!: () => void;
     private rejectReady!: (error: Error) => void;
     private readonly brain = createBotBrainState();
+    private smoothedMoveAngle: number | undefined;
+    private smoothedAimAngle: number | undefined;
 
     constructor(
         id: string,
@@ -272,11 +274,31 @@ class SurvevProtocolBot {
     private sendInputs(): void {
         if (this.stopped || this.ws.readyState !== WebSocket.OPEN) return;
         requestRoomAwareness(this.roomId, this.roomEndpoint);
-        const intent = decideBotIntent(
+        const rawIntent = decideBotIntent(
             roomAwareness.get(this.roomId)?.snapshot,
             this.sessionId,
             this.brain,
         );
+        // The tactical brain may select a sharply different path whenever a
+        // fresh room snapshot arrives. Ease those discrete decisions across
+        // protocol ticks so watched bots turn like players instead of snapping
+        // between compass directions.
+        const moveStep = rawIntent.mode === "unstuck" ? 0.75 : 0.38;
+        this.smoothedMoveAngle = smoothBotAngle(
+            this.smoothedMoveAngle,
+            rawIntent.moveAngle,
+            moveStep,
+        );
+        this.smoothedAimAngle = smoothBotAngle(
+            this.smoothedAimAngle,
+            rawIntent.aimAngle,
+            0.52,
+        );
+        const intent = {
+            ...rawIntent,
+            moveAngle: this.smoothedMoveAngle,
+            aimAngle: this.smoothedAimAngle,
+        };
         const sendOne = () => {
             const input = createBotInput(intent);
             this.inputSeq = (this.inputSeq + 1) & 0xff;

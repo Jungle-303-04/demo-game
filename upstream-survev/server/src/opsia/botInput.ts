@@ -3,6 +3,18 @@ import * as net from "../../../shared/net/net.ts";
 import { v2 } from "../../../shared/utils/v2.ts";
 import type { BotIntent } from "./botBrain.ts";
 
+export const smoothBotAngle = (
+    current: number | undefined,
+    target: number,
+    maxStep: number,
+): number => {
+    if (current === undefined || !Number.isFinite(current)) return target;
+    const fullTurn = Math.PI * 2;
+    const delta = ((target - current + Math.PI) % fullTurn + fullTurn) % fullTurn - Math.PI;
+    if (Math.abs(delta) <= maxStep) return target;
+    return current + Math.sign(delta) * maxStep;
+};
+
 export const createBotInput = (intent: BotIntent, random: () => number = Math.random): net.InputMsg => {
     const input = new net.InputMsg();
     const moveX = Math.cos(intent.moveAngle);
