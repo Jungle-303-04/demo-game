@@ -266,7 +266,6 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(roomDirectory, /animationNow=\{animationNow\}/);
   assert.match(roomDirectory, /className="server-grid"/);
   assert.match(roomDirectory, /data-room-count=\{Math\.min\(rooms\.length, 6\)\}/);
-  assert.match(roomDirectory, /\{rooms\.length\}[\s\S]*ROOMS/);
   assert.match(roomDirectory, /rooms\.map\(\(room, index\) =>/);
   assert.match(roomDirectory, /<ServerBlock/);
   assert.match(roomDirectory, /onSpectate=\{\(\) => onOpenRoom\(room\.id\)\}/);
@@ -292,10 +291,11 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(serverBlock, /참가하기/);
   assert.match(serverBlock, /장애 실행/);
   assert.doesNotMatch(serverBlock, /room-graph-stack|room-signal-graph|LiveRoomMiniMap|ActualGameMap|<iframe/);
-  assert.match(adminCss, /\.server-block \{[^}]*--server-border-size: clamp\(50px, 4\.8vw, 80px\);[^}]*border: var\(--server-border-size\) solid hsl\(var\(--tick-hue\)/s);
+  assert.match(adminCss, /\.server-block \{[^}]*--server-border-size: clamp\(50px, 4\.8vw, 80px\);[^}]*--tick-status-color: hsl\(var\(--tick-hue\) 76% 60%\);[^}]*border: var\(--server-border-size\) solid var\(--tick-status-color\)/s);
   assert.doesNotMatch(adminUi, /<h1>게임 서버<\/h1>/);
-  assert.match(adminUi, /<span className="server-chip">게임 서버<\/span>/);
-  assert.match(adminCss, /\.server-block-tick-value \{[^}]*color: hsl\(var\(--tick-hue\) 76% 60%\);/s);
+  assert.match(adminUi, /<span className="server-chip"[\s\S]*<strong>\{rooms\.length\} ROOMS<\/strong>/);
+  assert.doesNotMatch(adminUi, /className="directory-heading"/);
+  assert.match(adminCss, /\.server-block-tick-value \{[^}]*color: var\(--tick-status-color\);/s);
   assert.match(adminCss, /\.server-block-name \{[^}]*overflow-wrap: anywhere;[^}]*text-align: center;/s);
   assert.match(adminCss, /\.server-block\.is-danger \{[^}]*animation: server-border-alert/s);
   assert.match(adminCss, /\.server-block-menu-toggle/);

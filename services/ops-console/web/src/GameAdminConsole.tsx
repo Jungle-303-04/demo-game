@@ -770,12 +770,6 @@ function RoomDirectory({
 
   return (
     <section className="room-directory">
-      <div className="directory-heading">
-        <strong aria-label={`${rooms.length}개 게임 서버`}>
-          <b>{rooms.length}</b>
-          <span>ROOMS</span>
-        </strong>
-      </div>
       <div
         className="server-grid"
         data-room-count={Math.min(rooms.length, 6)}
@@ -1553,7 +1547,10 @@ export function GameAdminConsole() {
           <span className="brand-mark">O</span>
           <strong>jungle-303</strong>
         </button>
-        <span className="server-chip">게임 서버</span>
+        <span className="server-chip" aria-label={`게임 서버 ${rooms.length}개`}>
+          <span>게임 서버</span>
+          <strong>{rooms.length} ROOMS</strong>
+        </span>
         <nav className="console-nav" aria-label="운영 콘솔 화면">
           <a
             aria-current={activePage === "spectate" ? "page" : undefined}
