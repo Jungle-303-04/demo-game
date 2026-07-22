@@ -38,7 +38,6 @@ interface PictureInPictureSession {
 
 type SpectatorViewCount = 1 | 4;
 type SpectatorFrameWindow = Window & {
-  __opsiaDriveSpectatorFrame?: () => void;
   __opsiaSetSpectatorFps?: (fps: number) => void;
   __opsiaSetSpectatorVisible?: (visible: boolean) => void;
 };
@@ -814,23 +813,17 @@ function roomWatchUrl(
 function PlayerSpectatorView({
   room,
   player,
-  managed = false,
-  selfDriven = false,
   loadDelayMs = 0,
   wallFps,
   forceCanvas = false,
   targetFps,
-  registerFrame,
 }: {
   room: GameRoom;
   player: PlayerTelemetry;
-  managed?: boolean;
-  selfDriven?: boolean;
   loadDelayMs?: number;
   wallFps?: number;
   forceCanvas?: boolean;
   targetFps?: number;
-  registerFrame?: (playerId: string, frame: HTMLIFrameElement | null) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const tileRef = useRef<HTMLDivElement | null>(null);
@@ -847,19 +840,15 @@ function PlayerSpectatorView({
     if (frame?.ownerDocument.defaultView) setFrameHostWindow(frame.ownerDocument.defaultView);
   }, []);
 
-  const syncSpectatorFrame = useCallback((drawNow = false) => {
+  const syncSpectatorFrame = useCallback(() => {
     const frameWindow = iframeRef.current?.contentWindow as SpectatorFrameWindow | null;
     if (!frameWindow) return;
     const fps = targetFps ?? wallFps ?? 60;
-    let controlledDirectly = false;
 
     try {
-      controlledDirectly = typeof frameWindow.__opsiaSetSpectatorFps === "function";
       frameWindow.__opsiaSetSpectatorFps?.(fps);
       frameWindow.__opsiaSetSpectatorVisible?.(true);
       frameWindow.dispatchEvent(new Event("resize"));
-      if (drawNow) frameWindow.__opsiaDriveSpectatorFrame?.();
-      frameWindow.__opsiaSetSpectatorVisible?.(true);
     } catch {
       // Local Compose serves the console and games on different ports. The
       // origin-bound control message below applies the same policy there.
@@ -871,7 +860,7 @@ function PlayerSpectatorView({
       fps,
       running: true,
       resize: true,
-      drawNow: drawNow && !controlledDirectly,
+      drawNow: false,
     }, frameOriginRef.current);
   }, [targetFps, wallFps]);
 
@@ -941,7 +930,7 @@ function PlayerSpectatorView({
       } catch {
         // Cross-origin readiness is acknowledged by opsia-spectator-status.
       }
-      syncSpectatorFrame(true);
+      syncSpectatorFrame();
     };
     probe();
     const timer = window.setInterval(probe, 250);
@@ -951,7 +940,7 @@ function PlayerSpectatorView({
   useEffect(() => {
     if (!frameReady) return;
     // Keep the active spectator frame in sync on every supported origin.
-    syncSpectatorFrame(true);
+    syncSpectatorFrame();
   }, [frameReady, syncSpectatorFrame]);
 
   useEffect(() => {
@@ -968,30 +957,6 @@ function PlayerSpectatorView({
     return () => window.clearInterval(timer);
   }, [debugStatsEnabled, frameReady, player.id]);
 
-  useEffect(() => {
-    if (managed || selfDriven) return undefined;
-    let animationFrame = 0;
-    const driveSpectatorFrame = () => {
-      try {
-        const frameWindow = iframeRef.current?.contentWindow as
-          | (Window & { __opsiaDriveSpectatorFrame?: () => void })
-          | null;
-        frameWindow?.__opsiaDriveSpectatorFrame?.();
-      } catch {
-        // A separately hosted development game client keeps its own ticker.
-      }
-      animationFrame = window.requestAnimationFrame(driveSpectatorFrame);
-    };
-    animationFrame = window.requestAnimationFrame(driveSpectatorFrame);
-    return () => window.cancelAnimationFrame(animationFrame);
-  }, [managed, selfDriven]);
-
-  useEffect(() => {
-    if (!managed || !registerFrame) return undefined;
-    registerFrame(player.id, iframeRef.current);
-    return () => registerFrame(player.id, null);
-  }, [managed, player.id, registerFrame]);
-
   return (
     <div className="player-spectator" ref={tileRef}>
       {shouldLoad && (
@@ -999,7 +964,7 @@ function PlayerSpectatorView({
           allow="fullscreen"
           className={frameReady ? "is-ready" : ""}
           key={loadAttempt}
-          onLoad={() => syncSpectatorFrame(true)}
+          onLoad={syncSpectatorFrame}
           ref={attachIframe}
           src={`${initialUrlRef.current}&frameAttempt=${loadAttempt}`}
           tabIndex={-1}
@@ -1030,7 +995,6 @@ function SpectatorWall({
           loadDelayMs={index * 40}
           player={player}
           room={room}
-          selfDriven
           targetFps={60}
           wallFps={30}
         />

@@ -105,8 +105,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /Math\.min\(spectatorViewCount, alivePlayers\.length\)/);
   assert.match(adminUi, /\(unwrappedIndex % alivePlayers\.length\) \+ alivePlayers\.length/);
   assert.doesNotMatch(adminCss, /\.spectator-wall\[data-layout="16"\]/);
-  assert.match(adminUi, /frameWindow\?\.__opsiaDriveSpectatorFrame\?\.\(\)/);
   assert.match(adminUi, /type: "opsia-spectator-control"/);
+  assert.match(adminUi, /drawNow: false/);
   assert.match(adminUi, /url\.searchParams\.set\("controllerOrigin", window\.location\.origin\)/);
   assert.match(adminUi, /data\.version === 1[\s\S]*data\.playing === true/);
   assert.match(adminUi, /frame\.contentWindow === event\.source/);
@@ -117,7 +117,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /targetFps=\{60\}/);
   assert.match(adminUi, /wallFps=\{30\}/);
   assert.doesNotMatch(adminUi, /selectedOutsideBase|prewarm budget|is-hidden/);
-  assert.match(adminUi, /requestAnimationFrame\(driveSpectatorFrame\)/);
+  assert.doesNotMatch(adminUi, /__opsiaDriveSpectatorFrame|driveSpectatorFrame|selfDriven|registerFrame/);
   assert.match(gameClient, /m_opsiaPlayerView/);
   assert.match(gameClient, /this\.m_uiManager\.hideMiniMap\(\)/);
   assert.match(adminUi, /<iframe/);
