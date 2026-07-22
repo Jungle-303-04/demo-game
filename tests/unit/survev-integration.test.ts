@@ -190,6 +190,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(botRunner, /OPSIA_MIN_BOTS_PER_ROOM/);
   assert.match(botRunner, /for \(const id of job\.createdBotIds\)/);
   assert.match(botRunner, /const NORMAL_BOT_INPUT_INTERVAL_MS = 100/);
+  assert.match(botRunner, /const SURGE_BOT_INPUT_INTERVAL_MS = 60/);
+  assert.match(botRunner, /const SURGE_BOT_INPUTS_PER_INTERVAL = 3/);
   assert.match(botRunner, /const HACK_BOT_INPUT_INTERVAL_MS = 30/);
   assert.match(botRunner, /this\.mode === "hack"/);
   assert.match(botRunner, /OPSIA_BOT_RECONCILE_INTERVAL_MS \?\? "2000"/);

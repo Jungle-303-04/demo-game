@@ -213,7 +213,7 @@ test("bot surge tracks its exact job and cleanup never falls back to room-wide b
         roomId: "room-0",
         total: 25,
         completed: 0,
-        mode: "normal",
+        mode: "surge",
         state: "running",
       }, 202);
     }
@@ -248,7 +248,7 @@ test("bot surge tracks its exact job and cleanup never falls back to room-wide b
   assert.deepEqual(calls[0], {
     url: "http://bots/bots/jobs",
     method: "POST",
-    body: { room: "room-0", count: 25, intervalMs: 50, mode: "normal" },
+    body: { room: "room-0", count: 25, intervalMs: 50, mode: "surge" },
   });
 
   const state = await controller.getState([room], false);

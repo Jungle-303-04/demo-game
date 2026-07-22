@@ -60,7 +60,7 @@ export interface FailureScenarioActionResult {
 interface BotSummary {
   id: string;
   roomId: string;
-  mode: "normal" | "hack";
+  mode: "normal" | "surge" | "hack";
   connected: boolean;
 }
 
@@ -74,7 +74,7 @@ interface BotJob {
   roomId: string;
   total: number;
   completed: number;
-  mode: "normal" | "hack";
+  mode: "normal" | "surge" | "hack";
   state: "running" | "completed" | "cancelled" | "failed";
   createdBotIds?: string[];
   error?: string;
@@ -143,7 +143,7 @@ export class FailureScenarioController {
         return {
           roomId: room.id,
           minimumBotsPerRoom,
-          normalBots: roomBots.filter((bot) => bot.mode === "normal").length,
+          normalBots: roomBots.filter((bot) => bot.mode !== "hack").length,
           hackBots: roomBots.filter((bot) => bot.mode === "hack").length,
           active: active ? this.publicRun(active) : undefined,
           lastResults: { ...(this.lastResults.get(room.id) ?? {}) },
@@ -184,7 +184,7 @@ export class FailureScenarioController {
           if (count < 1) {
             throw new UpstreamError(409, { error: "room_has_no_bot_capacity" }, "room_has_no_bot_capacity");
           }
-          const job = await this.startBotJob(room.id, count, "normal");
+          const job = await this.startBotJob(room.id, count, "surge");
           run.jobId = job.jobId;
           run.status = "starting";
           run.evidence = { requestedBots: count, jobState: job.state };
@@ -381,7 +381,7 @@ export class FailureScenarioController {
   private async startBotJob(
     roomId: string,
     count: number,
-    mode: "normal" | "hack",
+    mode: "normal" | "surge" | "hack",
   ): Promise<BotJob> {
     return fetchJson<BotJob>(`${this.botRunner}/bots/jobs`, {
       method: "POST",

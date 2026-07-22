@@ -6,7 +6,7 @@ import { createBotInput } from "./botInput.ts";
 import { botFindGameUrl, botWebsocketUrl, normalizeSessionGatewayUrl } from "./botRouting.ts";
 import { controlTokenMatches, readControlToken } from "./controlPlaneAuth.ts";
 
-type BotMode = "normal" | "hack";
+type BotMode = "normal" | "surge" | "hack";
 type FindGameResponse = {
     res?: Array<{ gameId: string; useHttps: boolean; addrs: string[]; data: string }>;
     error?: string;
@@ -35,6 +35,11 @@ type BotJob = {
 
 const controlToken = readControlToken();
 const NORMAL_BOT_INPUT_INTERVAL_MS = 100;
+// Keep burst bots below the server's 60-inputs/second per-session guard while
+// still creating a meaningful, sustained game-loop load for the bot-surge
+// failure scenario: 3 protocol-valid inputs every 60ms = 50 inputs/second.
+const SURGE_BOT_INPUT_INTERVAL_MS = 60;
+const SURGE_BOT_INPUTS_PER_INTERVAL = 3;
 const HACK_BOT_INPUT_INTERVAL_MS = 30;
 const BOT_JOIN_READY_GRACE_MS = 100;
 type RoomAwareness = {
@@ -251,7 +256,9 @@ class SurvevProtocolBot {
         this.inputLoopStarted = true;
         const inputInterval = this.mode === "hack"
             ? HACK_BOT_INPUT_INTERVAL_MS
-            : NORMAL_BOT_INPUT_INTERVAL_MS;
+            : this.mode === "surge"
+                ? SURGE_BOT_INPUT_INTERVAL_MS
+                : NORMAL_BOT_INPUT_INTERVAL_MS;
         this.timer = setInterval(() => this.sendInputs(), inputInterval);
     }
 
@@ -278,7 +285,11 @@ class SurvevProtocolBot {
         };
         // Hack mode is intentionally a protocol-valid input flood. The real
         // ClientBarn validation hook—not this runner—decides enforcement.
-        const count = this.mode === "hack" ? 20 : 1;
+        const count = this.mode === "hack"
+            ? 20
+            : this.mode === "surge"
+                ? SURGE_BOT_INPUTS_PER_INTERVAL
+                : 1;
         for (let index = 0; index < count; index++) sendOne();
     }
 }
@@ -596,14 +607,22 @@ const server = createServer(async (request, response) => {
         }
         if (request.method === "POST" && pathname === "/bots/jobs") {
             const body = await readJson(request);
-            const mode: BotMode = body.mode === "hack" ? "hack" : "normal";
+            const mode: BotMode = body.mode === "hack"
+                ? "hack"
+                : body.mode === "surge"
+                    ? "surge"
+                    : "normal";
             const roomId = String(body.room ?? "");
             const job = await startJob(Number(body.count), roomId, mode, Number(body.intervalMs ?? 300));
             return reply(response, 202, job);
         }
         if (request.method === "POST" && pathname === "/bots/spawn") {
             const body = await readJson(request);
-            const mode: BotMode = body.mode === "hack" ? "hack" : "normal";
+            const mode: BotMode = body.mode === "hack"
+                ? "hack"
+                : body.mode === "surge"
+                    ? "surge"
+                    : "normal";
             return reply(response, 201, {
                 bots: await spawn(
                     Number(body.count),

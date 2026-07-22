@@ -10,7 +10,7 @@ const delay = (milliseconds: number): Promise<void> => new Promise((resolve) => 
 interface BotSummary {
   id: string;
   roomId: string;
-  mode: "normal" | "hack";
+  mode: "normal" | "surge" | "hack";
   connected: boolean;
 }
 

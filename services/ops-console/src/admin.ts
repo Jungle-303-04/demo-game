@@ -124,7 +124,7 @@ interface BotSummary {
   id: string;
   sessionId: string;
   roomId: string;
-  mode: "normal" | "hack";
+  mode: "normal" | "surge" | "hack";
   connected: boolean;
 }
 

@@ -20,7 +20,9 @@ test("pod replacement is wired to the actual survev Game process snapshot and re
 test("scenario 01 speed-hack: real protocol flood emits an input event and strict rollout is image-only", async () => {
   const bot = await readFile(upstream("server/src/opsia/botRunner.ts"), "utf8");
   const runtime = await readFile(upstream("server/src/opsia/runtime.ts"), "utf8");
-  assert.match(bot, /count = this\.mode === "hack" \? 20 : 1/);
+  assert.match(bot, /const SURGE_BOT_INPUT_INTERVAL_MS = 60/);
+  assert.match(bot, /const SURGE_BOT_INPUTS_PER_INTERVAL = 3/);
+  assert.match(bot, /this\.mode === "surge"/);
   assert.match(bot, /net\.MsgType\.Input/);
   assert.match(runtime, /input_rate_exceeded/);
   assert.deepEqual(
