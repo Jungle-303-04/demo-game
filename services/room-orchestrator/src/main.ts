@@ -38,6 +38,7 @@ import {
 import {
   KubernetesRoomDeploymentScaler,
   NoopScaler,
+  type RoomWorkload,
   type ReplicaScaler,
 } from "./scaler.js";
 
@@ -46,14 +47,14 @@ const reconciler = new RoomReconciler(registry);
 const port = Number(process.env.PORT ?? 8082);
 const controlToken = readControlToken();
 const maxRooms = Number(process.env.MAX_ROOMS ?? ROOM_PROFILES.length);
-if (!Number.isInteger(maxRooms) || maxRooms < 1 || maxRooms > ROOM_PROFILES.length) throw new Error("invalid_max_rooms");
+if (!Number.isInteger(maxRooms) || maxRooms < 1 || maxRooms > 100) throw new Error("invalid_max_rooms");
 const desiredRoomIds = (process.env.DESIRED_ROOM_PROFILES
   ?? ROOM_PROFILES.map((_, ordinal) => `room-${ordinal}`).join(","))
   .split(",")
   .map((roomId) => roomId.trim())
   .filter(Boolean);
-if (desiredRoomIds.length !== maxRooms
-  || desiredRoomIds.some((roomId, ordinal) => roomId !== `room-${ordinal}`)) {
+if (desiredRoomIds.some((roomId) => !/^room-\d+$/.test(roomId))
+  || new Set(desiredRoomIds).size !== desiredRoomIds.length) {
   throw new Error("invalid_desired_room_profiles");
 }
 const endpointBase = process.env.GAME_ENDPOINT_BASE ?? "http://game-room-";
@@ -273,6 +274,8 @@ const parseSpec = (body: Record<string, unknown>, ordinal: number, current?: Roo
 const scaleAndReconcile = async (replicas: number) => {
   if (!Number.isInteger(replicas) || replicas < 0 || replicas > maxRooms) throw new Error("invalid_replicas");
   await scaler.scale(replicas);
+  const observed = await reconcileObservedWorkloads();
+  if (observed) return observed;
   return reconciler.reconcile(replicas, endpointFor, workloadNameFor);
 };
 const postGameCommand = async (endpoint: string, path: string, timeoutMs = 8_000): Promise<Record<string, unknown>> => {
@@ -298,6 +301,31 @@ const serializeMutation = <T>(operation: () => Promise<T>): Promise<T> => {
   const result = mutationTail.then(operation, operation);
   mutationTail = result.then(() => undefined, () => undefined);
   return result;
+};
+const registeredGatewayRooms = new Set<string>();
+const reconcileObservedWorkloads = async (): Promise<RoomRegistryRecord[] | undefined> => {
+  const workloads = await scaler.currentWorkloads();
+  if (!workloads) return undefined;
+  const activeWorkloads = workloads.filter((workload) => workload.replicas === 1);
+  const gatewayEndpoint = (process.env.SESSION_GATEWAY_INTERNAL_URL ?? "").replace(/\/$/, "");
+  if (gatewayEndpoint && controlToken) {
+    for (const workload of activeWorkloads) {
+      if (registeredGatewayRooms.has(workload.roomId)) continue;
+      const response = await fetch(`${gatewayEndpoint}/internal/rooms/${encodeURIComponent(workload.roomId)}/register`, withControlToken({
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ endpoint: workload.endpoint, epoch: 1 }),
+        signal: AbortSignal.timeout(5_000),
+      }, controlToken));
+      if (!response.ok) throw new Error(`gateway_room_registration_failed:${workload.roomId}:${response.status}`);
+      registeredGatewayRooms.add(workload.roomId);
+    }
+  }
+  const activeIds = new Set(activeWorkloads.map((workload) => workload.roomId));
+  for (const roomId of registeredGatewayRooms) {
+    if (!activeIds.has(roomId)) registeredGatewayRooms.delete(roomId);
+  }
+  return reconciler.reconcileWorkloads(workloads);
 };
 
 const server = createServer(async (request, response) => {
@@ -468,7 +496,7 @@ const server = createServer(async (request, response) => {
           throw new Error("canary_approval_required_for_revision");
         }
         rooms = activeRooms(await registry.list()).sort((left, right) => left.ordinal - right.ordinal);
-        if (rooms.length !== maxRooms || rooms.some((room, index) => room.roomId !== `room-${index}`)) {
+        if (rooms.length === 0 || rooms.some((room) => !/^room-\d+$/.test(room.roomId))) {
           throw new Error("all_game_rooms_must_be_active_for_rollout");
         }
       } catch (error) {
@@ -589,12 +617,17 @@ const server = createServer(async (request, response) => {
       });
     }
 
-    if (request.method === "GET" && path === "/rooms") return send(response, 200, {
-      rooms: await registry.list(),
-      maxRooms,
-      desiredRoomIds,
-      scalingAvailable: scaler.managed,
-    });
+    if (request.method === "GET" && path === "/rooms") {
+      await serializeMutation(async () => {
+        await reconcileObservedWorkloads();
+      });
+      return send(response, 200, {
+        rooms: await registry.list(),
+        maxRooms,
+        desiredRoomIds,
+        scalingAvailable: scaler.managed,
+      });
+    }
 
     if (request.method === "POST" && path === "/rooms") {
       const replicas = Number((await readJson(request)).replicas);
@@ -828,12 +861,9 @@ if (eventOutbox) {
   eventOutbox.replay(await eventAuthority.readRetained());
 }
 const persistedRooms = await registry.list();
-const actualReplicas = await scaler.currentReplicas();
-if (actualReplicas !== undefined) {
-  if (!Number.isInteger(actualReplicas) || actualReplicas < 0 || actualReplicas > maxRooms) {
-    throw new Error("actual_replicas_out_of_range");
-  }
-  await reconciler.reconcile(actualReplicas, endpointFor, workloadNameFor);
+const actualWorkloads = await reconcileObservedWorkloads();
+if (actualWorkloads !== undefined) {
+  // The registry has been rebuilt from Kubernetes labels before serving traffic.
 } else if (persistedRooms.length === 0) {
   const initialRooms = Number(process.env.INITIAL_ROOMS ?? maxRooms);
   if (!Number.isInteger(initialRooms) || initialRooms < 0 || initialRooms > maxRooms) {

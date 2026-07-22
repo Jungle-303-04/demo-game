@@ -94,6 +94,25 @@ describe("session gateway handoff protocol", () => {
         })).toThrowError("gateway_epoch_not_monotonic");
     });
 
+    test("registers a newly discovered labeled room without treating its workload name as identity", () => {
+        const registry = new FencedGatewayRoomRegistry([]);
+        expect(registry.register({
+            roomId: "room-6",
+            endpoint: "http://game-room-6:8001",
+            epoch: 1,
+        })).toMatchObject({ roomId: "room-6", endpoint: "http://game-room-6:8001", epoch: 1 });
+        expect(registry.register({
+            roomId: "room-6",
+            endpoint: "http://game-room-6:8001",
+            epoch: 1,
+        })).toMatchObject({ roomId: "room-6" });
+        expect(() => registry.register({
+            roomId: "room-6",
+            endpoint: "http://other-service:8001",
+            epoch: 1,
+        })).toThrowError("gateway_room_registration_conflict");
+    });
+
     test("rewrites only the one-time match token when resuming a stable session", () => {
         const original = new net.JoinMsg();
         original.protocol = 1021;

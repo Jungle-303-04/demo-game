@@ -63,9 +63,17 @@ export const ROOM_PROFILES: readonly RoomProfile[] = [
 ];
 
 export const roomProfileForOrdinal = (ordinal: number): RoomProfile => {
-  const profile = ROOM_PROFILES[ordinal];
+  if (!Number.isInteger(ordinal) || ordinal < 0) throw new Error("unsupported_room_ordinal");
+  const profile = ROOM_PROFILES[ordinal % ROOM_PROFILES.length];
   if (!profile) throw new Error("unsupported_room_ordinal");
-  return profile;
+  const fleetCycle = Math.floor(ordinal / ROOM_PROFILES.length);
+  return fleetCycle === 0
+    ? profile
+    : {
+      ...profile,
+      name: `${profile.name} ${fleetCycle + 1}`,
+      description: `${profile.description} (auto room ${ordinal})`,
+    };
 };
 
 export const roomProfileForMapKey = (mapKey: string, fallbackOrdinal: number): RoomProfile =>

@@ -8,6 +8,7 @@ data:
   alertmanagerWebhookPath: "/api/rca/alertmanager"
   recoveryActions: "image_rollforward,image_rollback,deployment_scale"
   desiredRooms: "5"
+  maxRooms: "20"
   roomProfiles: "room-0,room-1,room-2,room-3,room-4"
   # Leave empty until the Opsia gateway is reachable from this cluster. The
   # orchestrator still retains the authoritative local Redis event stream.

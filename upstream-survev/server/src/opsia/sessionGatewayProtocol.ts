@@ -192,6 +192,20 @@ export class FencedGatewayRoomRegistry {
             .sort((left, right) => Number(left.roomId.slice(5)) - Number(right.roomId.slice(5)));
     }
 
+    /** Registers a new stable room route without permitting an implicit cutover. */
+    register(route: GatewayRoomRoute): GatewayRoomRoute {
+        const normalized = normalizeRoute(route);
+        const current = this.routes.get(normalized.roomId);
+        if (current) {
+            if (current.endpoint !== normalized.endpoint || current.epoch !== normalized.epoch) {
+                throw new Error("gateway_room_registration_conflict");
+            }
+            return { ...current };
+        }
+        this.routes.set(normalized.roomId, normalized);
+        return { ...normalized };
+    }
+
     compareAndSwap(
         roomId: string,
         expectedEpoch: number,

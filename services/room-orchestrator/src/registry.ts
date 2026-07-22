@@ -4,6 +4,7 @@ import {
   type GameMode,
   roomProfileForOrdinal,
 } from "../../room-profiles.js";
+import type { RoomWorkload } from "./scaler.js";
 
 export type RegistryStatus = "waiting" | "running" | "ended" | "inactive";
 
@@ -159,6 +160,63 @@ export class RoomReconciler {
         players: 0,
         alive: 0,
         statusChangedAt: record.status === "inactive" ? record.statusChangedAt : changedAt,
+      });
+    }
+    return this.registry.list();
+  }
+
+  /**
+   * Kubernetes is the source of truth for fleet membership. A room is joined
+   * to its workload by the stable game.opsia.dev/room-id label; names only
+   * describe the currently serving deployment and Service.
+   */
+  async reconcileWorkloads(workloads: readonly RoomWorkload[]): Promise<RoomRegistryRecord[]> {
+    const existing = await this.registry.list();
+    const existingById = new Map(existing.map((record) => [record.roomId, record]));
+    const discovered = new Set<string>();
+    const changedAt = new Date().toISOString();
+    for (const workload of workloads) {
+      if (!/^room-\d+$/.test(workload.roomId)
+        || !Number.isInteger(workload.ordinal)
+        || workload.ordinal < 0
+        || workload.roomId !== `room-${workload.ordinal}`
+        || !Number.isInteger(workload.replicas)
+        || (workload.replicas !== 0 && workload.replicas !== 1)
+        || !workload.deploymentName
+        || !workload.serviceName
+        || !workload.endpoint) {
+        throw new Error("invalid_room_workload");
+      }
+      if (discovered.has(workload.roomId)) throw new Error("duplicate_room_workload");
+      discovered.add(workload.roomId);
+      const record = existingById.get(workload.roomId)
+        ?? recordForOrdinal(workload.ordinal, workload.endpoint, workload.deploymentName);
+      const status = workload.replicas === 1
+        ? (record.status === "inactive" ? "waiting" : record.status)
+        : "inactive";
+      await this.registry.put({
+        ...record,
+        ordinal: workload.ordinal,
+        podName: workload.deploymentName,
+        endpoint: workload.endpoint,
+        status,
+        players: status === "inactive" ? 0 : record.players,
+        alive: status === "inactive" ? 0 : record.alive,
+        spec: specForOrdinal(workload.ordinal, record.spec),
+        joinLocked: record.joinLocked ?? false,
+        statusChangedAt: status === record.status
+          ? record.statusChangedAt ?? record.spec?.createdAt ?? changedAt
+          : changedAt,
+      });
+    }
+    for (const record of existing.filter((entry) => !discovered.has(entry.roomId))) {
+      if (record.status === "inactive") continue;
+      await this.registry.put({
+        ...record,
+        status: "inactive",
+        players: 0,
+        alive: 0,
+        statusChangedAt: changedAt,
       });
     }
     return this.registry.list();

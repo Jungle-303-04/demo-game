@@ -16,7 +16,7 @@ spec:
             - { name: KUBERNETES_SERVICE_HOST, value: kubernetes.default.svc }
             - { name: NAMESPACE, value: sandbox }
             - { name: GAME_DEPLOYMENT_PREFIX, value: game-room }
-            - { name: MAX_ROOMS, valueFrom: { configMapKeyRef: { name: ops-policy, key: desiredRooms } } }
+            - { name: MAX_ROOMS, valueFrom: { configMapKeyRef: { name: ops-policy, key: maxRooms } } }
             - { name: INITIAL_ROOMS, valueFrom: { configMapKeyRef: { name: ops-policy, key: desiredRooms } } }
             - { name: DESIRED_ROOM_PROFILES, valueFrom: { configMapKeyRef: { name: ops-policy, key: roomProfiles } } }
             - { name: GAME_ENDPOINT_TEMPLATE, value: "http://game-room-{ordinal}:8001" }

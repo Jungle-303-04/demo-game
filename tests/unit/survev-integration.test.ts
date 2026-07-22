@@ -356,6 +356,7 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   const compose = await readFile(join(process.cwd(), "docker-compose.yml"), "utf8");
   const liveDeployments = await readFile(join(process.cwd(), "deploy/k8s/base/game.yaml"), "utf8");
   const roomServices = await readFile(join(process.cwd(), "deploy/k8s/base/services.yaml"), "utf8");
+  const rbac = await readFile(join(process.cwd(), "deploy/k8s/base/rbac.yaml"), "utf8");
   const canary = await readFile(join(process.cwd(), "deploy/k8s/base/canary.yaml"), "utf8");
   const gateway = await readFile(join(process.cwd(), "deploy/k8s/base/gateway.yaml"), "utf8");
   const policy = await readFile(join(process.cwd(), "deploy/k8s/base/configmap.yaml"), "utf8");
@@ -391,14 +392,18 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.doesNotMatch(liveDeployments, /kind: StatefulSet/);
   for (let ordinal = 0; ordinal < 5; ordinal += 1) {
     assert.match(roomServices, new RegExp(`name: game-room-${ordinal}`));
+    assert.match(roomServices, new RegExp(`game\\.opsia\\.dev/room-id: room-${ordinal}`));
   }
   assert.match(gateway, /room-\\d\+/);
   assert.match(gateway, /proxy_pass http:\/\/session-gateway\.sandbox\.svc\.cluster\.local:8083/);
   assert.match(policy, /desiredRooms: "5"/);
+  assert.match(policy, /maxRooms: "20"/);
   assert.match(policy, /roomProfiles: "room-0,room-1,room-2,room-3,room-4"/);
   assert.match(policy, /kind: GameFleet/);
   assert.match(policy, /maxConcurrentRooms: 1/);
   assert.match(management, /OPSIA_ROOM_DIRECTORY_URL/);
+  assert.match(management, /key: maxRooms/);
+  assert.match(rbac, /resources: \["services"\][\s\S]*verbs: \["get", "list"\]/);
   assert.match(management, /GAME_DEPLOYMENT_PREFIX, value: game-room/);
   assert.doesNotMatch(management, /OPS_ADMIN_TOKEN|REQUIRE_ADMIN_TOKEN|demo-game-admin/);
   assert.doesNotMatch(bootstrapSecrets, /demo-game-admin/);

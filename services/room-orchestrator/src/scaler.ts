@@ -1,20 +1,35 @@
 export interface ReplicaScaler {
   readonly managed: boolean;
   currentReplicas(): Promise<number | undefined>;
+  currentWorkloads(): Promise<RoomWorkload[] | undefined>;
   scale(replicas: number): Promise<void>;
   deletePod(roomId: string): Promise<string>;
+}
+
+export interface RoomWorkload {
+  roomId: string;
+  ordinal: number;
+  deploymentName: string;
+  serviceName: string;
+  endpoint: string;
+  replicas: number;
 }
 
 export class NoopScaler implements ReplicaScaler {
   readonly managed = false;
   async currentReplicas(): Promise<number | undefined> { return undefined; }
+  async currentWorkloads(): Promise<RoomWorkload[] | undefined> { return undefined; }
   async scale(_replicas: number): Promise<void> { throw new Error("room_scaling_requires_kubernetes"); }
   async deletePod(_roomId: string): Promise<string> { throw new Error("pod_failure_injection_requires_kubernetes"); }
 }
 
 interface KubernetesDeployment {
-  metadata?: { name?: string };
+  metadata?: { name?: string; labels?: Record<string, string> };
   spec?: { replicas?: number };
+}
+
+interface KubernetesService {
+  metadata?: { name?: string; labels?: Record<string, string> };
 }
 
 interface KubernetesPod {
@@ -61,65 +76,77 @@ export class KubernetesRoomDeploymentScaler implements ReplicaScaler {
       clearTimeout(timeout);
     }
   }
-  private deploymentName(ordinal: number): string {
-    return `${this.deploymentPrefix}-${ordinal}`;
+  private parseRoomId(labels: Record<string, string> | undefined): { roomId: string; ordinal: number } | undefined {
+    const roomId = labels?.["game.opsia.dev/room-id"];
+    const match = roomId?.match(/^room-(\d+)$/);
+    const ordinal = Number(match?.[1]);
+    if (!match || !Number.isInteger(ordinal) || ordinal < 0 || ordinal >= this.roomCount) return undefined;
+    return { roomId: roomId!, ordinal };
   }
 
-  private async roomDeployments(): Promise<Map<number, number>> {
-    const selector = encodeURIComponent("opsia.dev/fleet=live");
-    const response = await this.request(
-      `/apis/apps/v1/namespaces/${this.namespace}/deployments?labelSelector=${selector}`,
-    );
-    if (!response.ok) throw new Error(`room_deployments_read_failed:${response.status}`);
-    const body = await response.json() as { items?: KubernetesDeployment[] };
-    const deployments = new Map<number, number>();
-    for (const item of body.items ?? []) {
-      const name = item.metadata?.name ?? "";
-      const match = name.match(new RegExp(`^${this.deploymentPrefix}-(\\d+)$`));
-      if (!match) continue;
-      const ordinal = Number(match[1]);
-      const replicas = Number(item.spec?.replicas);
-      if (!Number.isInteger(ordinal) || ordinal < 0 || ordinal >= this.roomCount
-        || !Number.isInteger(replicas) || replicas < 0 || replicas > 1) {
+  private async roomWorkloads(): Promise<RoomWorkload[]> {
+    const [deploymentResponse, serviceResponse] = await Promise.all([
+      this.request(`/apis/apps/v1/namespaces/${this.namespace}/deployments?labelSelector=${encodeURIComponent("opsia.dev/fleet=live")}`),
+      this.request(`/api/v1/namespaces/${this.namespace}/services?labelSelector=${encodeURIComponent("app=game-server")}`),
+    ]);
+    if (!deploymentResponse.ok) throw new Error(`room_deployments_read_failed:${deploymentResponse.status}`);
+    if (!serviceResponse.ok) throw new Error(`room_services_read_failed:${serviceResponse.status}`);
+    const deployments = await deploymentResponse.json() as { items?: KubernetesDeployment[] };
+    const services = await serviceResponse.json() as { items?: KubernetesService[] };
+    const servicesByRoomId = new Map<string, string>();
+    for (const service of services.items ?? []) {
+      const room = this.parseRoomId(service.metadata?.labels);
+      const name = service.metadata?.name?.trim();
+      if (!room || !name) continue;
+      if (servicesByRoomId.has(room.roomId)) throw new Error("room_service_duplicate");
+      servicesByRoomId.set(room.roomId, name);
+    }
+    const workloads: RoomWorkload[] = [];
+    const discovered = new Set<string>();
+    for (const deployment of deployments.items ?? []) {
+      const room = this.parseRoomId(deployment.metadata?.labels);
+      if (!room) continue;
+      const deploymentName = deployment.metadata?.name?.trim();
+      const replicas = Number(deployment.spec?.replicas);
+      if (!deploymentName || !Number.isInteger(replicas) || replicas < 0 || replicas > 1) {
         throw new Error("room_deployment_invalid_replicas");
       }
-      deployments.set(ordinal, replicas);
+      if (discovered.has(room.roomId)) throw new Error("room_deployment_duplicate");
+      const serviceName = servicesByRoomId.get(room.roomId);
+      if (!serviceName) throw new Error("room_service_not_found");
+      discovered.add(room.roomId);
+      workloads.push({
+        roomId: room.roomId,
+        ordinal: room.ordinal,
+        deploymentName,
+        serviceName,
+        endpoint: `http://${serviceName}:8001`,
+        replicas,
+      });
     }
-    if (deployments.size !== this.roomCount) throw new Error("room_deployment_inventory_incomplete");
-    return deployments;
+    return workloads.sort((left, right) => left.ordinal - right.ordinal);
   }
 
+  async currentWorkloads(): Promise<RoomWorkload[]> { return this.roomWorkloads(); }
+
   async currentReplicas(): Promise<number> {
-    const deployments = await this.roomDeployments();
-    let activeRooms = 0;
-    let foundInactive = false;
-    for (let ordinal = 0; ordinal < this.roomCount; ordinal += 1) {
-      const replicas = deployments.get(ordinal);
-      if (replicas === 1) {
-        if (foundInactive) throw new Error("room_deployments_not_contiguous");
-        activeRooms += 1;
-      } else {
-        foundInactive = true;
-      }
-    }
-    return activeRooms;
+    return (await this.roomWorkloads()).filter((workload) => workload.replicas === 1).length;
   }
 
   async scale(replicas: number): Promise<void> {
     if (!Number.isInteger(replicas) || replicas < 0 || replicas > this.roomCount) {
       throw new Error("invalid_replicas");
     }
-    const deployments = await this.roomDeployments();
-    await Promise.all([...deployments].map(async ([ordinal, current]) => {
-      const desired = ordinal < replicas ? 1 : 0;
-      if (current === desired) return;
-      const name = this.deploymentName(ordinal);
-      const response = await this.request(`/apis/apps/v1/namespaces/${this.namespace}/deployments/${name}`, {
+    const deployments = await this.roomWorkloads();
+    await Promise.all(deployments.map(async (workload) => {
+      const desired = workload.ordinal < replicas ? 1 : 0;
+      if (workload.replicas === desired) return;
+      const response = await this.request(`/apis/apps/v1/namespaces/${this.namespace}/deployments/${workload.deploymentName}`, {
         method: "PATCH",
         headers: { "content-type": "application/merge-patch+json" },
         body: JSON.stringify({ spec: { replicas: desired } }),
       });
-      if (!response.ok) throw new Error(`room_deployment_scale_failed:${name}:${response.status}`);
+      if (!response.ok) throw new Error(`room_deployment_scale_failed:${workload.deploymentName}:${response.status}`);
     }));
   }
 

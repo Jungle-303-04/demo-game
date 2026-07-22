@@ -1043,6 +1043,25 @@ app.get("/internal/rooms", (response, request) => {
     });
 });
 
+app.post("/internal/rooms/:room/register", (response, request) => {
+    let aborted = false;
+    response.onAborted(() => { aborted = true; });
+    const roomId = request.getParameter(0) ?? "";
+    if (!authorized(request.getHeader("authorization"))) return replyJson(response, 401, { error: "unauthorized" });
+    void readBody(response, 64 * 1024).then((payload) => {
+        const body = payload.byteLength
+            ? JSON.parse(Buffer.from(payload).toString("utf8")) as Record<string, unknown>
+            : {};
+        const endpoint = String(body.endpoint ?? "").trim();
+        const epoch = Number(body.epoch ?? 1);
+        if (!endpoint) throw new Error("gateway_room_endpoint_required");
+        const route = registry.register({ roomId, endpoint, epoch });
+        if (!aborted) replyJson(response, 201, { route, status: "registered" });
+    }).catch((error) => {
+        if (!aborted) replyJson(response, 409, { error: error instanceof Error ? error.message : "gateway_room_register_failed" });
+    });
+});
+
 app.get("/internal/rooms/:room/operations/:operation", (response, request) => {
     if (!authorized(request.getHeader("authorization"))) return replyJson(response, 401, { error: "unauthorized" });
     const roomId = request.getParameter(0) ?? "";

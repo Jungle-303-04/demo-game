@@ -49,3 +49,25 @@ test("registry assigns the fixed map profile for each room Deployment ordinal", 
     ["Woods", "Solo FFA", 80],
   ]);
 });
+
+test("registry adds a room discovered from a labeled Kubernetes workload and preserves its stable roomId", async () => {
+  const registry = new MemoryRoomRegistry();
+  const reconciler = new RoomReconciler(registry);
+  await reconciler.reconcileWorkloads([{
+    roomId: "room-6",
+    ordinal: 6,
+    deploymentName: "suroi-room-demo-6-7f8c9d",
+    serviceName: "game-room-6",
+    endpoint: "http://game-room-6:8001",
+    replicas: 1,
+  }]);
+  const room = await registry.get("room-6");
+  assert.equal(room?.roomId, "room-6");
+  assert.equal(room?.podName, "suroi-room-demo-6-7f8c9d");
+  assert.equal(room?.endpoint, "http://game-room-6:8001");
+  assert.equal(room?.status, "waiting");
+  assert.equal(room?.spec?.name, "Desert Run 2");
+
+  await reconciler.reconcileWorkloads([]);
+  assert.equal((await registry.get("room-6"))?.status, "inactive");
+});
