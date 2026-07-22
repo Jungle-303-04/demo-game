@@ -48,7 +48,7 @@ spec:
               key: token
               name: demo-game-control
         name: game-server
-        image: ghcr.io/jungle-303-04/demo-game/game-server:stable
+        image: ghcr.io/jungle-303-04/demo-game/game-server:0000000000000000000000000000000000000820
         ports:
         - name: http
           containerPort: 8001
