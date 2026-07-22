@@ -30,6 +30,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   const failureScenarios = await readFile(join(process.cwd(), "services/ops-console/src/failure-scenarios.ts"), "utf8");
   const botRunner = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRunner.ts"), "utf8");
   const botRouting = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRouting.ts"), "utf8");
+  const sessionGatewaySource = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/sessionGateway.ts"), "utf8");
   const gameProcessManager = await readFile(join(process.cwd(), "upstream-survev/server/src/game/gameProcessManager.ts"), "utf8");
   const adminCss = await readFile(join(process.cwd(), "services/ops-console/web/src/globals.css"), "utf8");
   const adminHtml = await readFile(join(process.cwd(), "services/ops-console/web/index.html"), "utf8");
@@ -128,9 +129,12 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /controller\.requestWindow/);
   assert.match(adminUi, /createPortal\(liveStage, pipSession\.container\)/);
   assert.match(adminUi, /world-stage\$\{isInlinePip \? " is-inline-pip" : ""\}/);
+  assert.match(adminUi, /function firstAlivePlayer\(room\?: GameRoom\)/);
+  assert.match(adminUi, /function openRoomForSpectating\(roomId: string\)[\s\S]*setPlayerSpectating\(true\)[\s\S]*setSelectedPlayerId\(firstAlivePlayer\(room\)\?\.id \?\? ""\)/);
+  assert.match(adminUi, /onOpenRoom=\{openRoomForSpectating\}/);
+  assert.match(adminUi, /if \(playerSpectating\) \{[\s\S]*setSelectedPlayerId\(firstAlivePlayer\(selectedRoom\)\?\.id \?\? ""\)/);
   assert.match(adminCss, /\.server-grid \{[^}]*display: grid;[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/s);
-  assert.match(adminCss, /\.server-grid\[data-room-count="5"\] \{[^}]*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/s);
-  assert.match(adminCss, /\.server-grid\[data-room-count="5"\] > \.server-block:nth-child\(n \+ 4\) \{[^}]*grid-column: span 3;/s);
+  assert.doesNotMatch(adminCss, /\.server-grid\[data-room-count="5"\][^}]*grid-column: span 3/s);
   assert.match(adminCss, /\.server-block \{[^}]*background: #080a0d;/s);
   assert.match(adminCss, /\.server-block-name \{[^}]*color: #fff;/s);
   assert.match(adminCss, /\.server-block-menu-popover/);
@@ -200,6 +204,12 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(botRunner, /SESSION_GATEWAY_INTERNAL_URL/);
   assert.match(botRunner, /botFindGameUrl\(roomId, endpoint, sessionGatewayUrl\)/);
   assert.match(botRunner, /botWebsocketUrl\(roomId, match\.res\[0\], sessionId, sessionGatewayUrl\)/);
+  const gatewayWebsocketRoute = sessionGatewaySource.slice(
+    sessionGatewaySource.indexOf('app.ws<GatewaySocketData>("/play/*"'),
+    sessionGatewaySource.indexOf("// uWebSockets routes are registered in order"),
+  );
+  assert.match(gatewayWebsocketRoute, /if \(!data\.closed\) \{[\s\S]*try \{[\s\S]*socket\.end\(1013, "gateway_upstream_unavailable"\)/);
+  assert.match(gatewayWebsocketRoute, /if \(sessions\.delete\(data\.id\)\) \{[\s\S]*metrics\.connections = Math\.max/);
   assert.match(botRouting, /roomId === "canary-room"/);
   assert.match(botRouting, /session_gateway_url_required_for_live_bots/);
   assert.match(gameServer, /verifyGatewayConnection/);
@@ -267,6 +277,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(serverBlock, /profile\.tickLabel/);
   assert.match(serverBlock, /profile\.tickP95/);
   assert.match(serverBlock, /className="server-block-name"/);
+  assert.match(serverBlock, /className="server-block-tick-value"/);
   assert.match(serverBlock, /\{currentPodName\}/);
   assert.match(serverBlock, /className="server-block-meta"/);
   assert.match(serverBlock, /className="server-block-connections"/);
@@ -281,7 +292,10 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(serverBlock, /참가하기/);
   assert.match(serverBlock, /장애 실행/);
   assert.doesNotMatch(serverBlock, /room-graph-stack|room-signal-graph|LiveRoomMiniMap|ActualGameMap|<iframe/);
-  assert.match(adminCss, /\.server-block \{[^}]*border: clamp\(5px, 0\.48vw, 8px\) solid hsl\(var\(--tick-hue\)/s);
+  assert.match(adminCss, /\.server-block \{[^}]*--server-border-size: clamp\(50px, 4\.8vw, 80px\);[^}]*border: var\(--server-border-size\) solid hsl\(var\(--tick-hue\)/s);
+  assert.doesNotMatch(adminUi, /<h1>게임 서버<\/h1>/);
+  assert.match(adminUi, /<span className="server-chip">게임 서버<\/span>/);
+  assert.match(adminCss, /\.server-block-tick-value \{[^}]*color: hsl\(var\(--tick-hue\) 76% 60%\);/s);
   assert.match(adminCss, /\.server-block-name \{[^}]*overflow-wrap: anywhere;[^}]*text-align: center;/s);
   assert.match(adminCss, /\.server-block\.is-danger \{[^}]*animation: server-border-alert/s);
   assert.match(adminCss, /\.server-block-menu-toggle/);
@@ -312,7 +326,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.doesNotMatch(joinDialog, /if \(dialog\.open\) dialog\.close\(\)/);
   assert.match(adminCss, /\.join-room-dialog \{[^}]*width: 100vw;[^}]*height: 100dvh;[^}]*max-height: none;/s);
   assert.match(adminCss, /\.join-dialog-back \{[^}]*top: max\(7px, env\(safe-area-inset-top\)\);[^}]*left: max\(7px, env\(safe-area-inset-left\)\);/s);
-  assert.match(adminCss, /\.join-dialog-qr \{[^}]*width: min\(calc\(100vw - 16px\), calc\(100dvh - 64px\)\);/s);
+  assert.match(adminCss, /\.join-dialog-qr \{[^}]*width: min\(calc\(100vw - 8px\), calc\(100dvh - 24px\)\);/s);
   assert.match(compose, /PUBLIC_GAME_HOST:-localhost/);
   assert.match(compose, /"8083:8083"/);
   assert.match(compose, /SESSION_ROOM_ENDPOINTS:[^\n]*room-4=http:\/\/game-4:8001/);

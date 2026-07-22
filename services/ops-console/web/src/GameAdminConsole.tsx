@@ -228,6 +228,13 @@ function playerCounts(room: GameRoom) {
   return { bots, humans: room.players.length - bots };
 }
 
+function firstAlivePlayer(room?: GameRoom) {
+  return room?.players
+    .filter((player) => player.health > 0)
+    .slice()
+    .sort((left, right) => left.name.localeCompare(right.name, "ko"))[0];
+}
+
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
@@ -611,7 +618,6 @@ function ServerBlock({
     >
       <div className="server-block-tick">
         <span>{profile.tickLabel}</span>
-        <strong>{profile.tickP95}<small>ms</small></strong>
       </div>
       <div className="server-block-menu" ref={menuRef}>
         <button
@@ -645,8 +651,13 @@ function ServerBlock({
           </div>
         ) : null}
       </div>
-      <div className="server-block-name" title={currentPodName}>
-        {currentPodName}
+      <div className="server-block-primary">
+        <div className="server-block-name" title={currentPodName}>
+          {currentPodName}
+        </div>
+        <strong className="server-block-tick-value">
+          {profile.tickP95}<small>ms</small>
+        </strong>
       </div>
       <div className="server-block-meta">
         <span className="server-block-identity">
@@ -760,10 +771,6 @@ function RoomDirectory({
   return (
     <section className="room-directory">
       <div className="directory-heading">
-        <div>
-          <span>LIVE FLEET</span>
-          <h1>게임 서버</h1>
-        </div>
         <strong aria-label={`${rooms.length}개 게임 서버`}>
           <b>{rooms.length}</b>
           <span>ROOMS</span>
@@ -1412,6 +1419,7 @@ export function GameAdminConsole() {
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState("");
+  const [playerSpectating, setPlayerSpectating] = useState(false);
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [error, setError] = useState("");
   const [botPending, setBotPending] = useState(false);
@@ -1465,14 +1473,20 @@ export function GameAdminConsole() {
       setSelectedRoomId(null);
       setJoiningRoomId(null);
       setSelectedPlayerId("");
+      setPlayerSpectating(false);
     };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   useEffect(() => {
-    if (selectedPlayerId && !selectedPlayer) setSelectedPlayerId("");
-  }, [selectedPlayer, selectedPlayerId]);
+    if (!selectedRoom || selectedPlayer) return;
+    if (playerSpectating) {
+      setSelectedPlayerId(firstAlivePlayer(selectedRoom)?.id ?? "");
+    } else if (selectedPlayerId) {
+      setSelectedPlayerId("");
+    }
+  }, [playerSpectating, selectedPlayer, selectedPlayerId, selectedRoom]);
 
   async function addBots() {
     if (!selectedRoom || botPending) return;
@@ -1517,6 +1531,14 @@ export function GameAdminConsole() {
     setSelectedRoomId(null);
     setJoiningRoomId(null);
     setSelectedPlayerId("");
+    setPlayerSpectating(false);
+  }
+
+  function openRoomForSpectating(roomId: string) {
+    const room = rooms.find((candidate) => candidate.id === roomId);
+    setSelectedRoomId(roomId);
+    setPlayerSpectating(true);
+    setSelectedPlayerId(firstAlivePlayer(room)?.id ?? "");
   }
 
   return (
@@ -1583,10 +1605,17 @@ export function GameAdminConsole() {
           onBack={() => {
             setSelectedRoomId(null);
             setSelectedPlayerId("");
+            setPlayerSpectating(false);
           }}
-          onClearPlayer={() => setSelectedPlayerId("")}
+          onClearPlayer={() => {
+            setPlayerSpectating(false);
+            setSelectedPlayerId("");
+          }}
           onError={setError}
-          onSelectPlayer={setSelectedPlayerId}
+          onSelectPlayer={(playerId) => {
+            setPlayerSpectating(true);
+            setSelectedPlayerId(playerId);
+          }}
           room={selectedRoom}
           selectedPlayer={selectedPlayer}
         />
@@ -1594,10 +1623,7 @@ export function GameAdminConsole() {
         <RoomDirectory
           connection={connection}
           onJoinRoom={setJoiningRoomId}
-          onOpenRoom={(roomId) => {
-            setSelectedRoomId(roomId);
-            setSelectedPlayerId("");
-          }}
+          onOpenRoom={openRoomForSpectating}
           onRunBotSurge={(roomId) => void startBotSurge(roomId)}
           rooms={rooms}
           scenarioPendingRoomId={scenarioPendingRoomId}

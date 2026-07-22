@@ -1275,10 +1275,17 @@ app.ws<GatewaySocketData>("/play/*", {
         sessions.set(data.id, session);
         metrics.connections++;
         void session.start(route).catch(() => {
-            socket.end(1013, "gateway_upstream_unavailable");
+            if (!data.closed) {
+                try {
+                    socket.end(1013, "gateway_upstream_unavailable");
+                } catch {
+                    data.closed = true;
+                }
+            }
             session.stop();
-            sessions.delete(data.id);
-            metrics.connections = Math.max(0, metrics.connections - 1);
+            if (sessions.delete(data.id)) {
+                metrics.connections = Math.max(0, metrics.connections - 1);
+            }
         });
     },
     message(socket, payload) {
@@ -1288,8 +1295,9 @@ app.ws<GatewaySocketData>("/play/*", {
         const data = socket.getUserData();
         data.closed = true;
         sessions.get(data.id)?.stop();
-        sessions.delete(data.id);
-        metrics.connections = Math.max(0, metrics.connections - 1);
+        if (sessions.delete(data.id)) {
+            metrics.connections = Math.max(0, metrics.connections - 1);
+        }
     },
 });
 

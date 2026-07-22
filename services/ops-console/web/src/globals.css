@@ -201,7 +201,10 @@ button {
 }
 
 .console-shell.is-room-directory .server-chip {
-  display: none;
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 9px;
+  font-size: 10px;
 }
 
 .console-shell.is-room-directory .console-nav {
@@ -385,11 +388,11 @@ button {
 
 .directory-heading {
   display: flex;
-  min-height: 64px;
+  min-height: 52px;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 16px;
-  margin-bottom: 8px;
+  margin-bottom: 5px;
 }
 
 .directory-heading > div {
@@ -1352,19 +1355,8 @@ button {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.server-grid[data-room-count="5"] {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-}
-
-.server-grid[data-room-count="5"] > .server-block {
-  grid-column: span 2;
-}
-
-.server-grid[data-room-count="5"] > .server-block:nth-child(n + 4) {
-  grid-column: span 3;
-}
-
 .server-block {
+  --server-border-size: clamp(50px, 4.8vw, 80px);
   --tick-hue: 145;
   --tick-border-alpha: 0.9;
   --tick-glow-alpha: 0.16;
@@ -1373,9 +1365,9 @@ button {
   min-width: 0;
   min-height: 0;
   place-items: center;
-  padding: 74px 24px 70px;
-  border: clamp(5px, 0.48vw, 8px) solid hsl(var(--tick-hue) 72% 48% / var(--tick-border-alpha));
-  border-radius: 26px;
+  padding: 10px;
+  border: var(--server-border-size) solid hsl(var(--tick-hue) 72% 48% / var(--tick-border-alpha));
+  border-radius: clamp(38px, 4vw, 62px);
   background: #080a0d;
   box-shadow:
     0 0 0 1px hsl(var(--tick-hue) 66% 55% / 0.18),
@@ -1407,39 +1399,29 @@ button {
 
 .server-block-tick {
   position: absolute;
-  top: 18px;
-  left: 20px;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
   display: flex;
   align-items: baseline;
-  gap: 12px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(4, 7, 11, 0.84);
   color: rgba(255, 255, 255, 0.68);
 }
 
 .server-block-tick span {
   color: #fff;
-  font-size: clamp(14px, 1.05vw, 18px);
+  font-size: clamp(10px, 0.76vw, 13px);
   font-weight: 850;
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
-.server-block-tick strong {
-  color: hsl(var(--tick-hue) 76% 60%);
-  font: 800 clamp(26px, 2vw, 36px)/0.9 "Segoe UI Variable Display", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-  letter-spacing: -0.04em;
-}
-
-.server-block-tick small {
-  margin-left: 2px;
-  color: rgba(255, 255, 255, 0.54);
-  font-size: 11px;
-  letter-spacing: 0;
-}
-
 .server-block-menu {
   position: absolute;
-  top: 12px;
-  right: 12px;
+  top: 10px;
+  right: 10px;
   z-index: 5;
 }
 
@@ -1512,13 +1494,19 @@ button {
   opacity: 0.48;
 }
 
-.server-block-name {
+.server-block-primary {
   display: grid;
   min-width: 0;
   max-width: 100%;
   place-items: center;
+  gap: clamp(8px, 1.2vh, 16px);
+}
+
+.server-block-name {
+  min-width: 0;
+  max-width: 100%;
   color: #fff;
-  font: 800 clamp(36px, 4vw, 70px)/0.98 "Segoe UI Variable Display", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  font: 800 clamp(31px, 3.4vw, 58px)/0.98 "Segoe UI Variable Display", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   letter-spacing: -0.055em;
   overflow-wrap: anywhere;
   text-align: center;
@@ -1526,16 +1514,34 @@ button {
   word-break: break-word;
 }
 
+.server-block-tick-value {
+  color: hsl(var(--tick-hue) 76% 60%);
+  font: 820 clamp(48px, 5.6vw, 92px)/0.78 "Segoe UI Variable Display", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.075em;
+  text-shadow: 0 0 22px hsl(var(--tick-hue) 74% 52% / 0.2);
+}
+
+.server-block-tick-value small {
+  margin-left: 5px;
+  font-size: 0.24em;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
 .server-block-meta {
   position: absolute;
-  right: 20px;
-  bottom: 17px;
-  left: 20px;
+  right: 10px;
+  bottom: 9px;
+  left: 10px;
   display: flex;
   min-width: 0;
   align-items: end;
   justify-content: space-between;
   gap: 12px;
+  padding: 4px 8px;
+  border-radius: 10px;
+  background: rgba(4, 7, 11, 0.82);
   color: rgba(255, 255, 255, 0.58);
 }
 
@@ -1618,7 +1624,7 @@ button {
   height: 100%;
   min-height: 100dvh;
   place-items: center;
-  padding: 34px 8px 28px;
+  padding: 12px 4px;
   overflow: hidden;
   border: 0;
   border-radius: 0;
@@ -1652,16 +1658,12 @@ button {
 
 .join-dialog-panel h2 {
   position: absolute;
-  top: 10px;
-  left: 50%;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
   overflow: hidden;
-  max-width: calc(100% - 210px);
-  margin: 0;
-  color: #58606a;
-  font-size: 11px;
-  letter-spacing: -0.01em;
-  text-overflow: ellipsis;
-  transform: translateX(-50%);
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   white-space: nowrap;
 }
 
@@ -1679,10 +1681,10 @@ button {
 .join-dialog-qr {
   display: grid;
   place-items: center;
-  width: min(calc(100vw - 16px), calc(100dvh - 64px));
+  width: min(calc(100vw - 8px), calc(100dvh - 24px));
   max-width: 100%;
   aspect-ratio: 1;
-  padding: clamp(5px, 0.8vmin, 10px);
+  padding: clamp(2px, 0.36vmin, 5px);
   border: 0;
   border-radius: 0;
   background: #fff;
@@ -3002,33 +3004,32 @@ body.opsia-pip-body .map-viewport {
 
 @media (max-width: 980px) {
   .server-block {
-    padding: 60px 14px 56px;
-    border-width: 5px;
-    border-radius: 20px;
+    --server-border-size: 50px;
+    padding: 8px;
+    border-radius: 40px;
   }
 
   .server-block-tick {
-    top: 13px;
-    left: 14px;
-    gap: 7px;
+    top: 6px;
+    left: 6px;
   }
 
   .server-block-tick span {
     font-size: 11px;
   }
 
-  .server-block-tick strong {
-    font-size: 23px;
-  }
-
   .server-block-name {
     font-size: clamp(24px, 4.2vw, 40px);
   }
 
+  .server-block-tick-value {
+    font-size: clamp(38px, 6vw, 58px);
+  }
+
   .server-block-meta {
-    right: 14px;
-    bottom: 12px;
-    left: 14px;
+    right: 6px;
+    bottom: 6px;
+    left: 6px;
   }
 
   .server-block-identity b {
@@ -3190,19 +3191,11 @@ body.opsia-pip-body .map-viewport {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .server-grid[data-room-count="5"] > .server-block {
-    grid-column: auto;
-  }
-
-  .server-grid[data-room-count="5"] > .server-block:last-child {
-    grid-column: span 2;
-  }
-
   .server-block {
+    --server-border-size: 40px;
     min-height: 150px;
-    padding: 52px 10px 47px;
-    border-width: 4px;
-    border-radius: 17px;
+    padding: 5px;
+    border-radius: 32px;
   }
 
   .server-block-name {
@@ -3210,9 +3203,9 @@ body.opsia-pip-body .map-viewport {
   }
 
   .server-block-meta {
-    right: 10px;
-    bottom: 9px;
-    left: 10px;
+    right: 5px;
+    bottom: 5px;
+    left: 5px;
     gap: 7px;
   }
 
@@ -3325,12 +3318,12 @@ body.opsia-pip-body .map-viewport {
   }
 
   .join-dialog-panel {
-    padding: 34px 4px 25px;
+    padding: 8px 2px;
   }
 
   .join-dialog-qr {
-    width: min(calc(100vw - 8px), calc(100dvh - 58px));
-    padding: 4px;
+    width: min(calc(100vw - 4px), calc(100dvh - 16px));
+    padding: 2px;
   }
 
   .room-toolbar {
@@ -3524,8 +3517,7 @@ body.opsia-pip-body .map-viewport {
   }
 
   .server-block {
-    padding-top: 49px;
-    padding-bottom: 43px;
+    padding: 6px;
   }
 
   .server-block-tick {
@@ -3536,12 +3528,12 @@ body.opsia-pip-body .map-viewport {
     font-size: 9px;
   }
 
-  .server-block-tick strong {
-    font-size: 19px;
-  }
-
   .server-block-name {
     font-size: clamp(19px, 3.5vw, 34px);
+  }
+
+  .server-block-tick-value {
+    font-size: clamp(32px, 5vw, 48px);
   }
 
   .server-block-menu {
@@ -3567,17 +3559,12 @@ body.opsia-pip-body .map-viewport {
 
 @media (max-height: 560px) {
   .join-dialog-panel {
-    padding: 28px 4px 20px;
-  }
-
-  .join-dialog-panel h2 {
-    top: 7px;
-    font-size: 9px;
+    padding: 6px 2px;
   }
 
   .join-dialog-qr {
-    width: min(calc(100vw - 8px), calc(100dvh - 48px));
-    padding: 4px;
+    width: min(calc(100vw - 4px), calc(100dvh - 12px));
+    padding: 2px;
   }
 
   .join-dialog-new-tab {
