@@ -562,6 +562,7 @@ function RoomCard({
   onSelect,
   onSpectate,
   onScenario,
+  scenarioPending,
 }: {
   animationNow: number;
   isSelected: boolean;
@@ -572,6 +573,7 @@ function RoomCard({
   onSelect: () => void;
   onSpectate: () => void;
   onScenario: () => void;
+  scenarioPending: boolean;
 }) {
   const { bots, humans } = playerCounts(room);
   const profile = roomLoadProfile(room, ordinal - 1, animationNow);
@@ -687,14 +689,16 @@ function RoomCard({
           관전하기
         </button>
         <button
+          aria-label={`${displayName} 봇 접속 폭주 장애 즉시 실행`}
           className="room-card-scenario"
+          disabled={scenarioPending}
           onClick={(event) => {
             event.stopPropagation();
             onScenario();
           }}
           type="button"
         >
-          장애 실행
+          {scenarioPending ? "실행 중…" : "장애 실행"}
         </button>
         <button
           aria-haspopup="dialog"
@@ -829,13 +833,15 @@ function RoomDirectory({
   connection,
   onJoinRoom,
   onOpenRoom,
-  onOpenScenario,
+  onRunBotSurge,
+  scenarioPendingRoomId,
 }: {
   rooms: GameRoom[];
   connection: ConnectionState;
   onJoinRoom: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
-  onOpenScenario: (roomId: string) => void;
+  onRunBotSurge: (roomId: string) => void;
+  scenarioPendingRoomId: string | null;
 }) {
   const [selectedRoomId, setSelectedRoomId] = useState(rooms[0]?.id ?? "");
   const [backgroundSettingsOpen, setBackgroundSettingsOpen] = useState(false);
@@ -978,9 +984,10 @@ function RoomDirectory({
                 onJoin={() => onJoinRoom(room.id)}
                 onSelect={() => setSelectedRoomId(room.id)}
                 onSpectate={() => onOpenRoom(room.id)}
-                onScenario={() => onOpenScenario(room.id)}
+                onScenario={() => onRunBotSurge(room.id)}
                 ordinal={index + 1}
                 room={room}
+                scenarioPending={scenarioPendingRoomId === room.id}
               />
             );
           })}
@@ -1623,6 +1630,7 @@ export function GameAdminConsole() {
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [error, setError] = useState("");
   const [botPending, setBotPending] = useState(false);
+  const [scenarioPendingRoomId, setScenarioPendingRoomId] = useState<string | null>(null);
   const requestPendingRef = useRef(false);
   const hasMapLayoutsRef = useRef(false);
 
@@ -1695,6 +1703,20 @@ export function GameAdminConsole() {
       setError(errorMessage(addError));
     } finally {
       setBotPending(false);
+    }
+  }
+
+  async function startBotSurge(roomId: string) {
+    if (scenarioPendingRoomId) return;
+    setScenarioPendingRoomId(roomId);
+    setError("");
+    try {
+      await controlPlaneClient.startFailureScenario(roomId, "bot-surge");
+      await refresh(true);
+    } catch (scenarioError) {
+      setError(errorMessage(scenarioError));
+    } finally {
+      setScenarioPendingRoomId(null);
     }
   }
 
@@ -1787,12 +1809,13 @@ export function GameAdminConsole() {
         <RoomDirectory
           connection={connection}
           onJoinRoom={setJoiningRoomId}
-          onOpenScenario={(roomId) => navigateTo("scenarios", roomId)}
           onOpenRoom={(roomId) => {
             setSelectedRoomId(roomId);
             setSelectedPlayerId("");
           }}
+          onRunBotSurge={(roomId) => void startBotSurge(roomId)}
           rooms={rooms}
+          scenarioPendingRoomId={scenarioPendingRoomId}
         />
       )}
 

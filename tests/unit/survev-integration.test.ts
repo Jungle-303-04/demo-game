@@ -134,6 +134,9 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminCss, /\.room-card\.is-selected/);
   assert.match(adminCss, /\.world-stage\.is-inline-pip \{[^}]*aspect-ratio: 1;/s);
   assert.match(adminUi, /controlPlaneClient\.addBots/);
+  assert.match(adminUi, /controlPlaneClient\.startFailureScenario\(roomId, "bot-surge"\)/);
+  assert.match(adminUi, /onRunBotSurge=\{\(roomId\) => void startBotSurge\(roomId\)\}/);
+  assert.match(adminUi, /장애 실행/);
   assert.match(adminUi, /snapshotCapturedAt > 0/);
   assert.doesNotMatch(adminUi, /ROOM_FORM_DEFAULTS|ManagementTab/);
   assert.match(adminUi, /import \{ FailureScenarioPage \} from "\.\/FailureScenarioPage\.js"/);
