@@ -128,7 +128,9 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /controller\.requestWindow/);
   assert.match(adminUi, /createPortal\(liveStage, pipSession\.container\)/);
   assert.match(adminUi, /world-stage\$\{isInlinePip \? " is-inline-pip" : ""\}/);
-  assert.match(adminCss, /\.server-grid \{[^}]*display: grid;[^}]*grid-template-columns: repeat\(auto-fit/s);
+  assert.match(adminCss, /\.server-grid \{[^}]*display: grid;[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);/s);
+  assert.match(adminCss, /\.server-grid\[data-room-count="5"\] \{[^}]*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);/s);
+  assert.match(adminCss, /\.server-grid\[data-room-count="5"\] > \.server-block:nth-child\(n \+ 4\) \{[^}]*grid-column: span 3;/s);
   assert.match(adminCss, /\.server-block \{[^}]*background: #080a0d;/s);
   assert.match(adminCss, /\.server-block-name \{[^}]*color: #fff;/s);
   assert.match(adminCss, /\.server-block-menu-popover/);
@@ -253,6 +255,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(roomDirectory, /const animationNow = useAnimationFrameNow\(rooms\.length > 0\)/);
   assert.match(roomDirectory, /animationNow=\{animationNow\}/);
   assert.match(roomDirectory, /className="server-grid"/);
+  assert.match(roomDirectory, /data-room-count=\{Math\.min\(rooms\.length, 6\)\}/);
+  assert.match(roomDirectory, /\{rooms\.length\}[\s\S]*ROOMS/);
   assert.match(roomDirectory, /rooms\.map\(\(room, index\) =>/);
   assert.match(roomDirectory, /<ServerBlock/);
   assert.match(roomDirectory, /onSpectate=\{\(\) => onOpenRoom\(room\.id\)\}/);
@@ -265,6 +269,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(serverBlock, /className="server-block-name"/);
   assert.match(serverBlock, /\{currentPodName\}/);
   assert.match(serverBlock, /className="server-block-meta"/);
+  assert.match(serverBlock, /className="server-block-connections"/);
   assert.match(serverBlock, /\{displayName\}/);
   assert.match(serverBlock, /\{stableRoomId\}/);
   assert.match(serverBlock, /aria-haspopup="menu"/);
@@ -281,6 +286,10 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminCss, /\.server-block\.is-danger \{[^}]*animation: server-border-alert/s);
   assert.match(adminCss, /\.server-block-menu-toggle/);
   assert.match(adminCss, /\.server-block-menu-popover/);
+  assert.doesNotMatch(adminCss, /\.server-block:hover \{[^}]*transform:/s);
+  assert.match(adminUi, /activePage === "spectate" && !selectedRoom \? "is-room-directory"/);
+  assert.match(adminCss, /\.console-shell\.is-room-directory \.console-topbar \{[^}]*height: 46px;/s);
+  assert.match(adminCss, /\.room-directory \{[^}]*height: calc\(100dvh - 46px\);/s);
   assert.match(adminUi, /"위험 · TICK P95"/);
   assert.match(adminUi, /"주의 · TICK P95"/);
   assert.match(adminUi, /"정상 · TICK P95"/);
@@ -302,8 +311,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(joinDialog, /target="_blank"/);
   assert.doesNotMatch(joinDialog, /if \(dialog\.open\) dialog\.close\(\)/);
   assert.match(adminCss, /\.join-room-dialog \{[^}]*width: 100vw;[^}]*height: 100dvh;[^}]*max-height: none;/s);
-  assert.match(adminCss, /\.join-dialog-back \{[^}]*top: max\(12px, env\(safe-area-inset-top\)\);[^}]*left: max\(12px, env\(safe-area-inset-left\)\);/s);
-  assert.match(adminCss, /\.join-dialog-qr \{[^}]*width: min\(calc\(100vw - 32px\), calc\(100dvh - 96px\)\);/s);
+  assert.match(adminCss, /\.join-dialog-back \{[^}]*top: max\(7px, env\(safe-area-inset-top\)\);[^}]*left: max\(7px, env\(safe-area-inset-left\)\);/s);
+  assert.match(adminCss, /\.join-dialog-qr \{[^}]*width: min\(calc\(100vw - 16px\), calc\(100dvh - 64px\)\);/s);
   assert.match(compose, /PUBLIC_GAME_HOST:-localhost/);
   assert.match(compose, /"8083:8083"/);
   assert.match(compose, /SESSION_ROOM_ENDPOINTS:[^\n]*room-4=http:\/\/game-4:8001/);

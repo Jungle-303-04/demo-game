@@ -649,9 +649,13 @@ function ServerBlock({
         {currentPodName}
       </div>
       <div className="server-block-meta">
-        <span>{displayName}</span>
-        <span>{stableRoomId}</span>
-        <span>{room.players.length} connected</span>
+        <span className="server-block-identity">
+          <b>{displayName}</b>
+          <small>{stableRoomId}</small>
+        </span>
+        <strong className="server-block-connections">
+          {room.players.length}<small>접속</small>
+        </strong>
       </div>
     </article>
   );
@@ -756,10 +760,20 @@ function RoomDirectory({
   return (
     <section className="room-directory">
       <div className="directory-heading">
-        <h1>게임 서버</h1>
-        <span>{rooms.length}개 서버</span>
+        <div>
+          <span>LIVE FLEET</span>
+          <h1>게임 서버</h1>
+        </div>
+        <strong aria-label={`${rooms.length}개 게임 서버`}>
+          <b>{rooms.length}</b>
+          <span>ROOMS</span>
+        </strong>
       </div>
-      <div className="server-grid" aria-label="실시간 게임 서버">
+      <div
+        className="server-grid"
+        data-room-count={Math.min(rooms.length, 6)}
+        aria-label="실시간 게임 서버"
+      >
         {rooms.map((room, index) => (
           <ServerBlock
             animationNow={animationNow}
@@ -1506,7 +1520,7 @@ export function GameAdminConsole() {
   }
 
   return (
-    <main className={`console-shell ${activePage === "spectate" && selectedRoom ? "is-room-open" : ""} ${activePage === "scenarios" ? "is-scenario-page" : ""}`}>
+    <main className={`console-shell ${activePage === "spectate" && selectedRoom ? "is-room-open" : ""} ${activePage === "spectate" && !selectedRoom ? "is-room-directory" : ""} ${activePage === "scenarios" ? "is-scenario-page" : ""}`}>
       <header className="console-topbar">
         <button
           aria-label="실시간 게임 방 목록"
