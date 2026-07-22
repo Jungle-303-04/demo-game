@@ -296,17 +296,15 @@ test("compose starts five actual survev rooms, discovers them for 50 protocol bo
   assert.equal(admittedAfterRecovery.status, 200);
   assert.equal((await admittedAfterRecovery.json() as { res?: unknown[] }).res?.length, 1);
 
-  // Start the self-recovering admission storm first so its 16-second window
-  // overlaps the bot and process scenarios instead of extending test runtime.
+  // Admission load generation is independent of Kubernetes recovery.
   const storm = await scenarioAction("room-2", "admission-storm", "start");
   assert.equal(storm.status, 202);
   assert.equal(storm.body.status, "active");
-  assert.equal(storm.body.evidence?.requests, 90);
-  assert.ok(Number(storm.body.evidence?.rateLimited ?? 0) > 0);
-  assert.ok(Number(storm.body.evidence?.accepted ?? 0) <= 20);
-  const stormState = roomScenario(await getScenarioState(), "room-2");
-  assert.equal(stormState.active?.scenarioId, "admission-storm");
-  assert.equal(typeof stormState.active?.autoRecoverAt, "string");
+  assert.equal(storm.body.evidence?.failureRatePercent, 0);
+  const stormStop = await scenarioAction("room-2", "admission-storm", "recover");
+  assert.equal(stormStop.status, 200);
+  assert.equal(stormStop.body.status, "completed");
+  assert.equal(stormStop.body.evidence?.loadStopped, true);
 
   const surge = await scenarioAction("room-0", "bot-surge", "start");
   assert.equal(surge.status, 202);
@@ -396,18 +394,6 @@ test("compose starts five actual survev rooms, discovers them for 50 protocol bo
   const podFailure = await scenarioAction("room-0", "pod-failure", "start");
   assert.equal(podFailure.status, 409);
   assert.equal(podFailure.body.error, "pod_failure_requires_kubernetes");
-
-  const recoveredStormState = await waitForCondition(
-    "admission_storm_auto_recovery",
-    getScenarioState,
-    (state) => {
-      const room = state.rooms.find((candidate) => candidate.roomId === "room-2");
-      return room?.active === undefined && room?.lastResults["admission-storm"] !== undefined;
-    },
-    25_000,
-    300,
-  );
-  assert.equal(roomScenario(recoveredStormState, "room-2").lastResults["admission-storm"]?.evidence?.requests, 90);
 
   const finalBots = await waitForBaselineBots(roomIds);
   assert.equal(finalBots.bots.filter((bot) => bot.connected).length, 50);

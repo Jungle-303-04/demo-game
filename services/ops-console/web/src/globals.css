@@ -2738,6 +2738,85 @@ body.opsia-pip-body .map-viewport {
   margin: 2px 0 0;
 }
 
+.admission-capacity-panel {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.8fr) minmax(0, 1.8fr);
+  gap: 12px;
+  width: 100%;
+  margin: 4px 0;
+  padding: 12px;
+  border: 1px solid #b9d8f7;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #edf7ff, #f8fbff);
+}
+
+.admission-capacity-panel.is-incident {
+  border-color: #ffc3be;
+  background: linear-gradient(135deg, #fff0ee, #fff8f6);
+}
+
+.admission-success-rate {
+  display: grid;
+  align-content: center;
+}
+
+.admission-success-rate > span,
+.admission-capacity-panel dt {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.admission-success-rate > strong {
+  margin: 2px 0;
+  color: #1761a8;
+  font-size: 31px;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+
+.admission-capacity-panel.is-incident .admission-success-rate > strong {
+  color: var(--red);
+}
+
+.admission-success-rate small {
+  margin-left: 2px;
+  font-size: 13px;
+}
+
+.admission-success-rate > b {
+  color: #3976aa;
+  font-size: 9px;
+}
+
+.admission-capacity-panel.is-incident .admission-success-rate > b {
+  color: #b13831;
+}
+
+.admission-capacity-panel > dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin: 0;
+}
+
+.admission-capacity-panel > dl > div {
+  min-width: 0;
+  padding: 7px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 72%);
+}
+
+.admission-capacity-panel dd {
+  margin: 2px 0 0;
+  overflow: hidden;
+  font: 750 11px ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .scenario-evidence > div {
   min-width: 0;
   padding: 6px 8px;

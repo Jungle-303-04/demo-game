@@ -10,6 +10,10 @@ import {
   FailureScenarioController,
   isFailureScenarioId,
 } from "../../services/ops-console/src/failure-scenarios.js";
+import type {
+  AdmissionLoadService,
+  AdmissionLoadStatus,
+} from "../../services/ops-console/src/admission-load.js";
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
   status,
@@ -302,48 +306,84 @@ test("pod failure is capability-gated before mutation and verifies runtime recov
   ]);
 });
 
-test("admission storm reports accepted, rate-limited, and other rejected requests and expires automatically", async (context) => {
-  let now = Date.parse("2026-07-20T01:00:00.000Z");
-  let stormRequests = 0;
+test("admission saturation exposes the failure metric and cleanup only stops the load", async (context) => {
+  let loadStatus: AdmissionLoadStatus = {
+    jobId: "admission-exact",
+    roomId: "room-0",
+    phase: "ramping",
+    startedAt: "2026-07-20T01:00:00.000Z",
+    expiresAt: "2026-07-20T01:03:00.000Z",
+    targetRps: 20,
+    maximumRps: 120,
+    requests: 20,
+    accepted: 20,
+    rateLimited: 0,
+    rejected: 0,
+    requestRps: 20,
+    acceptedRps: 20,
+    rejectedRps: 0,
+    successRatePercent: 100,
+    failureRatePercent: 0,
+    responseP95Ms: 24,
+    incidentTriggered: false,
+  };
+  let stopped = false;
+  const admissionLoad: AdmissionLoadService = {
+    start: () => loadStatus,
+    status: () => loadStatus,
+    stop: () => {
+      stopped = true;
+      loadStatus = { ...loadStatus, phase: "stopped" };
+      return loadStatus;
+    },
+  };
+  const calls: string[] = [];
   installFetch(context, (url, init) => {
-    if (url === "http://game-0/api/find_game") {
-      stormRequests += 1;
-      assert.equal(init?.method, "POST");
-      const body = requestBody(init);
-      assert.equal(body.version, 1021);
-      assert.match(String(body.opsiaSessionId), /^scenario-storm-room-0-/);
-      if (stormRequests <= 12) return json({ res: [{ gameId: "game-0" }] });
-      if (stormRequests <= 72) return json({ error: "rate_limited" }, 429);
-      return json({ error: "full" }, 503);
-    }
+    calls.push(`${init?.method ?? "GET"} ${url}`);
     if (url === "http://bots/bots") return json({ bots: [], minimumBotsPerRoom: 10 });
     return json({ error: `unexpected_url:${url}` }, 500);
   });
 
-  const controller = new FailureScenarioController("http://orchestrator", "http://bots", () => now);
+  const controller = new FailureScenarioController(
+    "http://orchestrator",
+    "http://bots",
+    Date.now,
+    "http://api-server",
+    admissionLoad,
+  );
   const record = registryRoom();
   const room = adminRoom();
-  const started = await controller.start(record, room, "admission-storm", false);
-  assert.equal(stormRequests, 90);
-  assert.deepEqual(started.evidence, {
-    requests: 90,
-    accepted: 12,
-    rateLimited: 60,
-    rejected: 18,
-    automaticRecoverySeconds: 16,
-  });
+  const started = await controller.start(record, room, "admission-storm", true);
+  assert.equal(started.evidence?.successRatePercent, 100);
+  assert.equal(started.evidence?.failureRatePercent, 0);
+  assert.equal(controller.admissionFailureRates().get("room-0"), 0);
 
-  await assert.rejects(
-    controller.recover(record, room, "admission-storm"),
-    (error: unknown) => error instanceof UpstreamError
-      && error.status === 409
-      && (error.body as { error?: string }).error === "scenario_auto_recovery_pending",
-  );
+  loadStatus = {
+    ...loadStatus,
+    phase: "saturated",
+    targetRps: 40,
+    successRatePercent: 72.5,
+    failureRatePercent: 27.5,
+    requestRps: 40,
+    acceptedRps: 29,
+    rejectedRps: 11,
+    incidentTriggered: true,
+    saturationReason: "failure_threshold",
+  };
+  const incident = await controller.getState([room], true);
+  assert.equal(incident.rooms[0]?.active?.status, "active");
+  assert.equal(incident.rooms[0]?.active?.evidence?.failureRatePercent, 27.5);
+  assert.equal(incident.rooms[0]?.active?.evidence?.rejectedRps, 11);
+  assert.equal(controller.admissionFailureRates().get("room-0"), 27.5);
+  assert.equal(stopped, false);
 
-  now += 16_001;
-  const state = await controller.getState([room], false);
-  assert.equal(state.rooms[0]?.active, undefined);
-  assert.deepEqual(state.rooms[0]?.lastResults["admission-storm"]?.evidence, started.evidence);
+  const stoppedResult = await controller.recover(record, room, "admission-storm");
+  assert.equal(stoppedResult.status, "completed");
+  assert.equal(stoppedResult.evidence?.failureRatePercent, 27.5);
+  assert.equal(stoppedResult.evidence?.loadStopped, true);
+  assert.equal(stopped, true);
+  assert.equal(controller.admissionFailureRates().has("room-0"), false);
+  assert.ok(calls.every((call) => !call.includes("/scale")));
 });
 
 test("process crash remains recovering until both health and snapshot checks pass", async (context) => {

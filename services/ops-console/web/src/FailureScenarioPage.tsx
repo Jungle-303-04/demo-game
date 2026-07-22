@@ -96,10 +96,10 @@ const SCENARIOS: readonly ScenarioDefinition[] = [
   {
     id: "admission-storm",
     code: "04",
-    title: "입장 요청 폭주",
-    summary: "선택한 방으로 짧은 시간에 반복 입장 요청을 보냅니다.",
-    symptom: "Admission 실패율과 API 부하 상승",
-    recovery: "요청 발생기를 중단하고 연결 안정화",
+    title: "신규 입장 처리량 포화",
+    summary: "중앙 입장 API의 실제 성공률을 보며 요청량을 높이고 장애 상태를 유지합니다.",
+    symptom: "신규 입장 성공률 하락 · 기존 게임 세션 유지",
+    recovery: "외부 Pod 증설 시 입장 실패율 하락 확인",
     tone: "danger",
   },
   {
@@ -179,6 +179,34 @@ function EvidenceList({ evidence }: { evidence?: FailureScenarioEvidence }) {
         </div>
       ))}
     </dl>
+  );
+}
+
+function evidenceNumber(evidence: FailureScenarioEvidence | undefined, key: string): number {
+  const value = Number(evidence?.[key]);
+  return Number.isFinite(value) ? value : 0;
+}
+
+function AdmissionCapacityPanel({ evidence }: { evidence?: FailureScenarioEvidence }) {
+  const failureRate = evidenceNumber(evidence, "failureRatePercent");
+  const incident = evidence?.incidentTriggered === true;
+  const stopped = evidence?.loadStopped === true;
+  return (
+    <div className={`admission-capacity-panel ${incident && !stopped ? "is-incident" : ""}`}>
+      <div className="admission-success-rate">
+        <span>신규 입장 실패율</span>
+        <strong>{failureRate.toFixed(1)}<small>%</small></strong>
+        <b>{stopped ? "측정 종료" : failureRate >= 20 ? "장애" : "정상 범위"}</b>
+      </div>
+      <dl>
+        <div><dt>요청</dt><dd>{evidenceNumber(evidence, "requestRps").toFixed(1)} req/s</dd></div>
+        <div><dt>성공</dt><dd>{evidenceNumber(evidence, "acceptedRps").toFixed(1)} req/s</dd></div>
+        <div><dt>거절</dt><dd>{evidenceNumber(evidence, "rejectedRps").toFixed(1)} req/s</dd></div>
+        <div><dt>응답 P95</dt><dd>{evidenceNumber(evidence, "responseP95Ms").toFixed(1)} ms</dd></div>
+        <div><dt>성공률</dt><dd>{evidenceNumber(evidence, "successRatePercent").toFixed(1)}%</dd></div>
+        <div><dt>장애 기준</dt><dd>실패율 20%</dd></div>
+      </dl>
+    </div>
   );
 }
 
@@ -322,6 +350,7 @@ export function FailureScenarioPage({
   const selectedCounts = selectedRoom ? playerCounts(selectedRoom) : undefined;
   const inputAccepted = selectedRoom?.metrics.inputAccepted ?? 0;
   const inputRejected = selectedRoom?.metrics.inputRejected ?? 0;
+  const admissionFailureRate = selectedRoom?.metrics.admissionFailureRatePercent ?? 0;
   const activeScenario = selectedScenarioRoom?.active;
   const roomControllable =
     selectedRoom?.status === "running" || selectedRoom?.status === "degraded";
@@ -490,7 +519,10 @@ export function FailureScenarioPage({
               <div><span>PLAYERS</span><strong>{selectedRoom.players.length}<small>/{selectedRoom.maxPlayers}</small></strong></div>
               <div className={inputRejected > 0 ? "is-danger" : ""}><span>INPUT REJECTED</span><strong>{inputRejected.toLocaleString("ko-KR")}<small> / accepted {inputAccepted.toLocaleString("ko-KR")}</small></strong></div>
               <div><span>SERVER TICK</span><strong>{selectedRoom.tickRate.toFixed(1)}<small> Hz</small></strong></div>
-              <div><span>TICK P95</span><strong>{selectedRoom.metrics.tickP95Ms.toFixed(1)}<small> ms</small></strong></div>
+              <div className={admissionFailureRate >= 20 ? "is-danger" : ""}>
+                <span>입장 실패율</span>
+                <strong>{admissionFailureRate.toFixed(1)}<small>%</small></strong>
+              </div>
               <div><span>GAME CPU</span><strong>{selectedRoom.metrics.cpuPercent.toFixed(1)}<small>%</small></strong></div>
               <div><span>TELEMETRY</span><strong>{selectedRoom.metrics.telemetryLagMs.toFixed(0)}<small> ms</small></strong></div>
             </div>
@@ -516,15 +548,10 @@ export function FailureScenarioPage({
                 (scenario.id === "process-crash" || scenario.id === "pod-failure") &&
                 (selectedRoom.status !== "running" || !selectedRoom.podHealthy),
               );
-              const automaticRecoveryWaiting = Boolean(
-                activeForCard &&
-                scenario.id === "admission-storm" &&
-                activeScenario.autoRecoverAt &&
-                Date.now() < Date.parse(activeScenario.autoRecoverAt),
-              );
-              const recoveryReady = !runtimeRecoveryWaiting && !automaticRecoveryWaiting;
+              const recoveryReady = !runtimeRecoveryWaiting;
               const startDisabled = Boolean(
-                pending || anotherScenarioActive || activeForCard || podCapabilityMissing || stateUnavailable || !roomControllable,
+                pending || anotherScenarioActive || activeForCard || podCapabilityMissing
+                || stateUnavailable || !roomControllable,
               );
               const result = selectedScenarioRoom?.lastResults[scenario.id];
               const confirming =
@@ -557,6 +584,9 @@ export function FailureScenarioPage({
                     <div className="scenario-active-detail">
                       <span>시작 {new Date(activeScenario.startedAt).toLocaleTimeString("ko-KR", { hour12: false })}</span>
                       {activeScenario.jobId && <span>JOB {activeScenario.jobId}</span>}
+                      {scenario.id === "admission-storm" && (
+                        <AdmissionCapacityPanel evidence={activeScenario.evidence} />
+                      )}
                       <EvidenceList evidence={activeScenario.evidence} />
                     </div>
                   )}
@@ -564,6 +594,9 @@ export function FailureScenarioPage({
                     <div className="scenario-last-result">
                       <span>최근 결과 · {new Date(result.at).toLocaleTimeString("ko-KR", { hour12: false })}</span>
                       <strong>{result.message}</strong>
+                      {scenario.id === "admission-storm" && (
+                        <AdmissionCapacityPanel evidence={result.evidence} />
+                      )}
                       <EvidenceList evidence={result.evidence} />
                     </div>
                   )}
@@ -585,11 +618,11 @@ export function FailureScenarioPage({
                       >
                         {pendingForCard && pending?.action === "recover"
                           ? "복구 요청 중"
+                          : scenario.id === "admission-storm"
+                            ? "입장 부하 중단"
                           : runtimeRecoveryWaiting
                             ? "런타임 자동 복구 대기"
-                            : automaticRecoveryWaiting
-                              ? "Admission 자동 복구 대기"
-                              : "복구 실행"}
+                            : "복구 실행"}
                       </button>
                     ) : confirming ? (
                       <div className="scenario-confirmation" role="group" aria-label={`${scenario.title} 실행 확인`}>

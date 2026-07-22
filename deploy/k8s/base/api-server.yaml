@@ -4,7 +4,10 @@ metadata:
   name: api-server
   namespace: sandbox
 spec:
-  replicas: 2
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
   selector: { matchLabels: { app: api-server } }
   template:
     metadata: { labels: { app: api-server, app.kubernetes.io/part-of: demo-game } }
@@ -12,9 +15,16 @@ spec:
       containers:
         - name: api-server
           image: ghcr.io/jungle-303-04/demo-game/api-server:stable
-          env: [{ name: ORCHESTRATOR_URL, value: http://room-orchestrator:8082 }]
+          imagePullPolicy: Always
+          env:
+            - { name: ORCHESTRATOR_URL, value: http://management-server:8082 }
+            - { name: MAX_FIND_GAME_PER_SECOND, value: "25" }
+            - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
+            - name: OPS_CONTROL_TOKEN
+              valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
           ports: [{ name: http, containerPort: 8081 }]
           readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 2 }
+          resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 256Mi } }
 ---
 apiVersion: v1
 kind: Service
@@ -22,4 +32,11 @@ metadata: { name: api-server, namespace: sandbox, labels: { app: api-server } }
 spec:
   selector: { app: api-server }
   ports: [{ name: http, port: 8081, targetPort: http }]
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: api-server, namespace: sandbox }
+spec:
+  minAvailable: 1
+  selector: { matchLabels: { app: api-server } }
 

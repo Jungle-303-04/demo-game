@@ -63,7 +63,7 @@ patches:
             }
 
             location = /api/find-game {
-              proxy_pass http://management-server.sandbox.svc.cluster.local:8081;
+              proxy_pass http://api-server.sandbox.svc.cluster.local:8081;
               proxy_set_header Host $host;
               proxy_set_header X-Forwarded-Host $host;
               proxy_set_header X-Forwarded-Proto https;

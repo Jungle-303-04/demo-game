@@ -16,17 +16,6 @@ spec:
       serviceAccountName: management-server
       automountServiceAccountToken: false
       containers:
-        - name: api-server
-          image: ghcr.io/jungle-303-04/demo-game/api-server:stable
-          imagePullPolicy: Always
-          env:
-            - { name: ORCHESTRATOR_URL, value: http://127.0.0.1:8082 }
-            - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
-            - name: OPS_CONTROL_TOKEN
-              valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
-          ports: [{ name: api, containerPort: 8081 }]
-          readinessProbe: { httpGet: { path: /healthz, port: api }, initialDelaySeconds: 2 }
-          resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 256Mi } }
         - name: room-orchestrator
           image: ghcr.io/jungle-303-04/demo-game/room-orchestrator:stable
           imagePullPolicy: Always
@@ -83,6 +72,7 @@ spec:
           env:
             - { name: ORCHESTRATOR_URL, value: http://127.0.0.1:8082 }
             - { name: BOT_RUNNER_URL, value: http://127.0.0.1:8084 }
+            - { name: API_SERVER_URL, value: http://api-server:8081 }
             - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
             - name: OPS_CONTROL_TOKEN
               valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
@@ -112,5 +102,5 @@ metadata: { name: management-server, namespace: sandbox, labels: { app: manageme
 spec:
   selector: { app: management-server }
   ports:
-    - { name: api, port: 8081, targetPort: api }
+    - { name: registry, port: 8082, targetPort: registry }
     - { name: console, port: 8085, targetPort: console }

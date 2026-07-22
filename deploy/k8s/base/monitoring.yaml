@@ -27,7 +27,12 @@ spec:
           labels: { severity: warning, service: game-server }
           annotations: { summary: "rejected game input is elevated" }
         - alert: DemoGameJoinStorm
-          expr: find_game_fail_ratio > 0.2
+          expr: |
+            (
+              sum(rate(find_game_requests_total{outcome!="accepted"}[1m]))
+              /
+              clamp_min(sum(rate(find_game_requests_total[1m])), 0.001)
+            ) > 0.2
           for: 20s
           labels: { severity: warning, service: api-server }
           annotations: { summary: "matchmaking rejections are elevated" }

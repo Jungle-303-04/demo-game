@@ -4,6 +4,11 @@ import {
   type RegistryRoom,
   UpstreamError,
 } from "./admin.js";
+import {
+  AdmissionLoadController,
+  type AdmissionLoadService,
+  type AdmissionLoadStatus,
+} from "./admission-load.js";
 
 export const FAILURE_SCENARIO_IDS = [
   "admission-lock",
@@ -90,8 +95,6 @@ interface MutableRun extends FailureScenarioRun {
   surgePeakTickP95Ms?: number;
 }
 
-const ADMISSION_STORM_REQUESTS = 90;
-const ADMISSION_STORM_RECOVERY_MS = 16_000;
 const BOT_SURGE_INITIAL_SIZE = 25;
 const BOT_SURGE_RAMP_SIZE = 10;
 const BOT_SURGE_MAX_ADDITIONAL_BOTS = 60;
@@ -100,7 +103,6 @@ const BOT_SURGE_TARGET_TICK_P95_MS = 60;
 const BOT_SURGE_RAMP_INTERVAL_MS = 3_000;
 const BOT_SURGE_HOLD_MS = 10_000;
 const MALICIOUS_BOT_COUNT = 3;
-const SURVEV_PROTOCOL_VERSION = 1021;
 
 export const isFailureScenarioId = (value: string): value is FailureScenarioId =>
   FAILURE_SCENARIO_IDS.some((scenarioId) => scenarioId === value);
@@ -120,11 +122,17 @@ export class FailureScenarioController {
     Partial<Record<FailureScenarioId, FailureScenarioResult>>
   >();
 
+  private readonly admissionLoad: AdmissionLoadService;
+
   constructor(
     private readonly orchestrator: string,
     private readonly botRunner: string,
     private readonly now: () => number = Date.now,
-  ) {}
+    admissionEndpoint = process.env.API_SERVER_URL ?? "http://api-server:8081",
+    admissionLoad?: AdmissionLoadService,
+  ) {
+    this.admissionLoad = admissionLoad ?? new AdmissionLoadController({ endpoint: admissionEndpoint, now });
+  }
 
   async getState(
     rooms: AdminRoom[],
@@ -133,6 +141,10 @@ export class FailureScenarioController {
     this.expireAutomaticRuns();
     const roomsById = new Map(rooms.map((room) => [room.id, room]));
     await Promise.all([...this.activeRuns.entries()].map(async ([roomId, run]) => {
+      if (run.scenarioId === "admission-storm") {
+        this.syncAdmissionRun(roomId, run);
+        return;
+      }
       if (run.scenarioId === "bot-surge") {
         await this.advanceBotSurge(roomId, run, roomsById.get(roomId));
         return;
@@ -152,6 +164,16 @@ export class FailureScenarioController {
       };
       this.activeRuns.set(roomId, run);
     }));
+    for (const [roomId, run] of [...this.activeRuns]) {
+      if (run.status !== "failed") continue;
+      this.activeRuns.delete(roomId);
+      this.remember(
+        roomId,
+        run.scenarioId,
+        "시나리오 실행이 실패했습니다. 새 시나리오를 다시 실행할 수 있습니다.",
+        run.evidence,
+      );
+    }
     const inventory = await this.botInventory();
 
     const minimumBotsPerRoom = Math.max(0, Number(inventory.minimumBotsPerRoom ?? 0));
@@ -172,6 +194,16 @@ export class FailureScenarioController {
     };
   }
 
+  admissionFailureRates(): ReadonlyMap<string, number> {
+    const rates = new Map<string, number>();
+    for (const [roomId, run] of this.activeRuns) {
+      if (run.scenarioId !== "admission-storm" || !run.jobId) continue;
+      const status = this.admissionLoad.status(run.jobId);
+      if (status) rates.set(roomId, status.failureRatePercent);
+    }
+    return rates;
+  }
+
   async start(
     record: RegistryRoom,
     room: AdminRoom,
@@ -180,7 +212,16 @@ export class FailureScenarioController {
   ): Promise<FailureScenarioActionResult> {
     this.expireAutomaticRuns();
     const existing = this.activeRuns.get(room.id);
-    if (existing) throw scenarioConflict(existing);
+    if (existing?.status === "failed") {
+      this.activeRuns.delete(room.id);
+      this.remember(
+        room.id,
+        existing.scenarioId,
+        "시나리오 실행이 실패했습니다. 새 시나리오를 다시 실행할 수 있습니다.",
+        existing.evidence,
+      );
+    }
+    else if (existing) throw scenarioConflict(existing);
 
     const run: MutableRun = {
       scenarioId,
@@ -237,15 +278,21 @@ export class FailureScenarioController {
           return this.started(room.id, run, "비정상 입력을 보내는 프로토콜 클라이언트를 투입했습니다.");
         }
         case "admission-storm": {
-          const evidence = await this.runAdmissionStorm(record.endpoint, room.id);
+          if ([...this.activeRuns.entries()].some(([activeRoomId, active]) =>
+            activeRoomId !== room.id && active.scenarioId === "admission-storm")) {
+            throw new Error("admission_load_already_running");
+          }
+          const load = this.admissionLoad.start(room.id);
+          run.jobId = load.jobId;
           run.status = "active";
-          run.autoRecoverAtMs = this.now() + ADMISSION_STORM_RECOVERY_MS;
-          run.autoRecoverAt = new Date(run.autoRecoverAtMs).toISOString();
-          run.evidence = evidence;
+          run.evidence = {
+            ...this.admissionEvidence(load),
+            failureThresholdPercent: 20,
+          };
           return this.started(
             room.id,
             run,
-            "입장 API 폭주를 발생시켰습니다. 예약 슬롯과 rate limit은 16초 내 자동 복구됩니다.",
+            "중앙 입장 API의 실제 성공률을 보며 요청량을 증가시키고 있습니다.",
           );
         }
         case "process-crash": {
@@ -293,14 +340,15 @@ export class FailureScenarioController {
       return this.completed(room.id, scenarioId, "이미 안전 상태입니다.", { idempotent: true });
     }
     if (run.scenarioId !== scenarioId) throw scenarioConflict(run);
-    run.status = "recovering";
 
     switch (scenarioId) {
       case "admission-lock":
+        run.status = "recovering";
         await this.setJoinLocked(record, false);
         return this.completeRun(room.id, run, "신규 플레이어 입장을 다시 허용했습니다.", { joinLocked: false });
       case "bot-surge":
       case "malicious-input": {
+        run.status = "recovering";
         if (run.jobId || run.jobIds?.length) {
           const cleanup = await this.cleanupBotJobs(run);
           return this.completeRun(room.id, run, "시나리오가 만든 봇만 제거했습니다.", cleanup);
@@ -308,21 +356,20 @@ export class FailureScenarioController {
         return this.completeRun(room.id, run, "정리할 시나리오 봇이 없습니다.", { killed: 0 });
       }
       case "admission-storm": {
-        const retryAfterMs = Math.max(0, (run.autoRecoverAtMs ?? 0) - this.now());
-        if (retryAfterMs > 0) {
-          throw new UpstreamError(
-            409,
-            { error: "scenario_auto_recovery_pending", retryAfterMs },
-            "scenario_auto_recovery_pending",
-          );
-        }
-        return this.completeRun(room.id, run, "입장 rate limit과 예약 슬롯이 자동 복구됐습니다.");
+        if (!run.jobId) throw new Error("admission_load_job_not_found");
+        const stopped = this.admissionLoad.stop(run.jobId);
+        return this.completeRun(room.id, run, "신규 입장 부하를 중단했습니다.", {
+          ...this.admissionEvidence(stopped),
+          loadStopped: true,
+        });
       }
       case "process-crash": {
+        run.status = "recovering";
         await this.assertRoomRuntimeRecovered(record);
         return this.completeRun(room.id, run, "게임 process와 snapshot 연결이 정상 복구됐습니다.");
       }
       case "pod-failure": {
+        run.status = "recovering";
         if (room.status !== "running" || !room.podHealthy) {
           throw new UpstreamError(
             409,
@@ -549,7 +596,11 @@ export class FailureScenarioController {
 
   private async botInventory(): Promise<BotInventory> {
     try {
-      const inventory = await fetchJson<BotInventory>(`${this.botRunner}/bots`, undefined, 4_000);
+      // The scenario dashboard must stay responsive even while the bot runner
+      // is being restarted or the game cluster is saturated. Bot population is
+      // supplementary display data here, so fall back to the cached inventory
+      // quickly instead of holding the entire incident view for four seconds.
+      const inventory = await fetchJson<BotInventory>(`${this.botRunner}/bots`, undefined, 750);
       this.lastBotInventory = inventory;
       return inventory;
     } catch {
@@ -558,6 +609,44 @@ export class FailureScenarioController {
       // loop continues ramping and can still perform automatic cleanup.
       return this.lastBotInventory;
     }
+  }
+
+  private syncAdmissionRun(roomId: string, run: MutableRun): void {
+    if (!run.jobId) return;
+    const status = this.admissionLoad.status(run.jobId);
+    if (!status) {
+      run.status = "failed";
+      run.evidence = { ...run.evidence, phase: "unavailable", error: "admission_load_job_not_found" };
+      return;
+    }
+    run.evidence = this.admissionEvidence(status, run.evidence);
+    run.status = status.phase === "failed" ? "failed" : "active";
+    if (status.phase === "safety_timeout") {
+      this.completeRun(roomId, run, "안전 제한 시간에 도달해 장애 부하만 중단했습니다. 서비스 복구로 처리하지 않습니다.", {
+        ...run.evidence,
+        safetyTimeout: true,
+        recoveryVerified: false,
+      });
+    }
+  }
+
+  private admissionEvidence(
+    status: AdmissionLoadStatus,
+    source: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      ...source,
+      successRatePercent: status.successRatePercent,
+      failureRatePercent: status.failureRatePercent,
+      requestRps: status.requestRps,
+      acceptedRps: status.acceptedRps,
+      rejectedRps: status.rejectedRps,
+      responseP95Ms: status.responseP95Ms,
+      targetRps: status.targetRps,
+      phase: status.phase,
+      incidentTriggered: status.incidentTriggered,
+      ...(status.expiresAt ? { safetyExpiresAt: status.expiresAt } : {}),
+    };
   }
 
   private async startBotJob(
@@ -591,41 +680,6 @@ export class FailureScenarioController {
       if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250));
     }
     return false;
-  }
-
-  private async runAdmissionStorm(
-    endpoint: string,
-    roomId: string,
-  ): Promise<Record<string, unknown>> {
-    const results = await Promise.all(Array.from({ length: ADMISSION_STORM_REQUESTS }, async (_, index) => {
-      try {
-        const response = await fetch(`${endpoint}/api/find_game`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          signal: AbortSignal.timeout(3_000),
-          body: JSON.stringify({
-            region: "local",
-            zones: ["local"],
-            version: SURVEV_PROTOCOL_VERSION,
-            playerCount: 1,
-            autoFill: true,
-            gameModeIdx: 2,
-            opsiaSessionId: `scenario-storm-${roomId}-${this.now()}-${index}`,
-          }),
-        });
-        const body = await response.json().catch(() => ({})) as { res?: unknown[]; error?: string };
-        return { status: response.status, accepted: Boolean(body.res?.length), error: body.error };
-      } catch (error) {
-        return { status: 0, accepted: false, error: error instanceof Error ? error.message : "request_failed" };
-      }
-    }));
-    return {
-      requests: results.length,
-      accepted: results.filter((result) => result.accepted).length,
-      rateLimited: results.filter((result) => result.status === 429).length,
-      rejected: results.filter((result) => !result.accepted && result.status !== 429).length,
-      automaticRecoverySeconds: ADMISSION_STORM_RECOVERY_MS / 1_000,
-    };
   }
 
   private async assertRoomRuntimeRecovered(record: RegistryRoom): Promise<void> {

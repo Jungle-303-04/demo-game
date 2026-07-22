@@ -52,6 +52,26 @@ test("matchmaker reserves its rate-limit slot before concurrent directory probes
   await Promise.all([first, second]);
 });
 
+test("matchmaker metrics count every rejected admission and expose capacity", async () => {
+  const directory: RoomDirectory = {
+    list: async () => [{ ...recordForOrdinal(0), status: "running", players: 0 }],
+  };
+  const matchmaker = new Matchmaker(directory, 1, () => 1_000);
+  await matchmaker.findGame("session-a", "Ada");
+  await assert.rejects(
+    matchmaker.findGame("session-b", "Grace"),
+    /find_game_rejected:rate_limited/,
+  );
+
+  const metrics = await matchmaker.registry.metrics();
+  assert.match(metrics, /find_game_requests_total\{outcome="accepted"\} 1/);
+  assert.match(metrics, /find_game_requests_total\{outcome="rate_limited"\} 1/);
+  assert.match(metrics, /find_game_fail_ratio 0\.5/);
+  assert.match(metrics, /find_game_inflight 0/);
+  assert.match(metrics, /find_game_capacity_per_second 1/);
+  assert.match(metrics, /find_game_request_duration_seconds_count\{outcome="rate_limited"\} 1/);
+});
+
 test("HTTP room directory authenticates and bounds its orchestrator request", async (context) => {
   const originalFetch = globalThis.fetch;
   let captured: RequestInit | undefined;

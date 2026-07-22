@@ -46,8 +46,6 @@ const POLL_INTERVAL_MS = 400;
 const UI_ANIMATION_FRAME_MS = 1000 / 60;
 const BOT_BATCH_SIZE = 10;
 const ROOM_ID_LABEL_KEY = "game.opsia.dev/room-id";
-const DEMO_TICK_ROOM_ID = "room-0";
-const DEMO_TICK_CYCLE_MS = 24_000;
 const MAP_BACKGROUND_OPACITY_KEY = "opsia.map-background-opacity";
 const MAP_BACKGROUND_BLUR_KEY = "opsia.map-background-blur";
 
@@ -247,12 +245,11 @@ function cyclicOffset(index: number, selectedIndex: number, total: number) {
   return offset;
 }
 
-type TickTone = "healthy" | "warning" | "danger";
+type AdmissionTone = "healthy" | "warning" | "danger";
 
-const TICK_HEALTHY_MS = 45;
-const TICK_WARNING_MS = 60;
-const TICK_DANGER_MS = 120;
-const TICK_CHART_MAX_MS = 160;
+const ADMISSION_WARNING_PERCENT = 5;
+const ADMISSION_INCIDENT_PERCENT = 20;
+const ADMISSION_CHART_MAX_PERCENT = 25;
 const TICK_CHART_BAR_BASE_Y = 50;
 const TICK_CHART_BAR_HEIGHT = 44;
 const TICK_HEALTHY_HUE = 145;
@@ -264,56 +261,37 @@ function smoothStep(progress: number) {
   return clamped * clamped * (3 - 2 * clamped);
 }
 
-function demoTickP95ForRoom(room: GameRoom, nowMs = Date.now()) {
-  const observedTick = clamp(Math.round(room.metrics.tickP95Ms), 0, 999);
-  if (roomStableId(room) !== DEMO_TICK_ROOM_ID) return observedTick;
-
-  const cyclePosition = nowMs % DEMO_TICK_CYCLE_MS;
-  const low = Math.max(34, Math.min(observedTick, 46));
-  const high = Math.max(116, observedTick);
-
-  if (cyclePosition < 5_000) return low;
-  if (cyclePosition < 10_000) {
-    return Math.round(low + (high - low) * smoothStep((cyclePosition - 5_000) / 5_000));
-  }
-  if (cyclePosition < 15_000) return high;
-  if (cyclePosition < 20_000) {
-    return Math.round(high - (high - low) * smoothStep((cyclePosition - 15_000) / 5_000));
-  }
-  return low;
+function admissionFailureRateForRoom(room: GameRoom) {
+  return clamp(Number(room.metrics.admissionFailureRatePercent ?? 0), 0, 100);
 }
 
-function roomRiskTickMs(room: GameRoom, nowMs = Date.now()) {
-  const tickP95 = demoTickP95ForRoom(room, nowMs);
-  if (room.status === "degraded") return Math.max(tickP95, TICK_DANGER_MS);
-  if (room.status === "recovering") return Math.max(tickP95, TICK_WARNING_MS);
-  return tickP95;
+function admissionRiskProgress(failureRate: number) {
+  return smoothStep(failureRate / ADMISSION_INCIDENT_PERCENT);
 }
 
-function tickRiskProgress(tickMs: number) {
-  return smoothStep((tickMs - TICK_HEALTHY_MS) / (TICK_DANGER_MS - TICK_HEALTHY_MS));
-}
+function admissionHueFor(failureRate: number) {
+  if (failureRate < ADMISSION_WARNING_PERCENT) return TICK_HEALTHY_HUE;
 
-function tickHueFor(tickMs: number) {
-  if (tickMs < TICK_WARNING_MS) return TICK_HEALTHY_HUE;
-
-  const progress = smoothStep((tickMs - TICK_WARNING_MS) / (TICK_DANGER_MS - TICK_WARNING_MS));
+  const progress = smoothStep(
+    (failureRate - ADMISSION_WARNING_PERCENT)
+      / (ADMISSION_INCIDENT_PERCENT - ADMISSION_WARNING_PERCENT),
+  );
   return Math.round(TICK_WARNING_HUE - progress * (TICK_WARNING_HUE - TICK_DANGER_HUE));
 }
 
-function tickBarFillFor(tickMs: number) {
-  const progress = tickRiskProgress(tickMs);
+function admissionBarFillFor(failureRate: number) {
+  const progress = admissionRiskProgress(failureRate);
   const alpha = (0.58 + progress * 0.18).toFixed(2);
-  return `hsl(${tickHueFor(tickMs)} 60% 48% / ${alpha})`;
+  return `hsl(${admissionHueFor(failureRate)} 60% 48% / ${alpha})`;
 }
 
-function tickVisualStyleVars(tickMs: number): StyleWithVariables {
-  const progress = tickRiskProgress(tickMs);
+function admissionVisualStyleVars(failureRate: number): StyleWithVariables {
+  const progress = admissionRiskProgress(failureRate);
   return {
     "--bar-alpha": (0.58 + progress * 0.26).toFixed(2),
-    "--bar-hue": tickHueFor(tickMs),
+    "--bar-hue": admissionHueFor(failureRate),
     "--bar-shadow-alpha": (0.08 + progress * 0.16).toFixed(2),
-    fill: tickBarFillFor(tickMs),
+    fill: admissionBarFillFor(failureRate),
   };
 }
 
@@ -327,79 +305,55 @@ function tickSurfaceStyleVars(tickHue: number, tickRisk: number): StyleWithVaria
   };
 }
 
-function roomTickTone(room: GameRoom, nowMs = Date.now()): TickTone {
-  const tickP95 = roomRiskTickMs(room, nowMs);
-  if (tickP95 >= TICK_DANGER_MS) return "danger";
-  if (tickP95 >= TICK_WARNING_MS) return "warning";
+function admissionTone(failureRate: number): AdmissionTone {
+  if (failureRate >= ADMISSION_INCIDENT_PERCENT) return "danger";
+  if (failureRate >= ADMISSION_WARNING_PERCENT) return "warning";
   return "healthy";
 }
 
-function tickBarTone(tickMs: number): TickTone {
-  if (tickMs >= TICK_DANGER_MS) return "danger";
-  if (tickMs >= TICK_WARNING_MS) return "warning";
-  return "healthy";
+function admissionChartBarTopY(failureRate: number) {
+  return TICK_CHART_BAR_BASE_Y
+    - clamp(failureRate / ADMISSION_CHART_MAX_PERCENT, 0, 1) * TICK_CHART_BAR_HEIGHT;
 }
 
-function tickSeriesPointAge(point: number, totalPoints: number) {
-  const newestPoint = Math.max(0, totalPoints - 1);
-  return (newestPoint - point) * 760;
+function admissionToneLabel(tone: AdmissionTone) {
+  return tone === "danger" ? "장애 · 입장 실패율" :
+    tone === "warning" ? "주의 · 입장 실패율" :
+      "정상 · 입장 실패율";
 }
 
-function tickChartBarTopY(tickMs: number) {
-  return TICK_CHART_BAR_BASE_Y - clamp(tickMs / TICK_CHART_MAX_MS, 0, 1) * TICK_CHART_BAR_HEIGHT;
-}
-
-function tickToneLabel(tone: TickTone) {
-  return tone === "danger" ? "위험 · TICK P95" :
-    tone === "warning" ? "주의 · TICK P95" :
-      "정상 · TICK P95";
-}
-
-function roomLoadProfile(room: GameRoom, index: number, nowMs = Date.now()) {
-  const tickP95 = demoTickP95ForRoom(room, nowMs);
-  const riskTickMs = roomRiskTickMs(room, nowMs);
+function roomLoadProfile(room: GameRoom, index: number, _nowMs = Date.now()) {
+  const admissionFailureRate = admissionFailureRateForRoom(room);
   const rejected = Math.max(0, Math.round(room.metrics.inputRejected));
   const telemetryLag = clamp(Math.round(room.metrics.telemetryLagMs), 0, 9_999);
   const cpu = clamp(Math.round(room.metrics.cpuPercent), 0, 100);
   const redisOps = clamp(Math.round(room.metrics.redisOpsPerSecond ?? room.players.length * 2 + index * 9), 0, 999);
-  const tickRisk = Math.round(tickRiskProgress(riskTickMs) * 100);
-  const tickPressure = clamp(tickRisk, 0, 100);
-  const tickTone = roomTickTone(room, nowMs);
-  const tickLabel = tickToneLabel(tickTone);
-  const tickHue = tickHueFor(riskTickMs);
-  const tickSeries = Array.from({ length: 14 }, (_, point) => {
-    const age = tickSeriesPointAge(point, 14);
-    const localNow = nowMs - age;
-    const baseTick = roomStableId(room) === DEMO_TICK_ROOM_ID
-      ? demoTickP95ForRoom(room, localNow)
-      : tickP95;
-    const wave = Math.sin((point + 1) * (0.58 + index * 0.06)) * (5 + index * 0.4);
-    const statusDrift = room.status === "degraded" ? 18 : room.status === "recovering" ? 8 : 0;
-    const rejectSpike = rejected > 0 && point % 4 === 3 ? 18 : 0;
-    return clamp(Math.round(baseTick + wave + statusDrift + rejectSpike), 18, TICK_CHART_MAX_MS);
-  });
+  const admissionRisk = Math.round(admissionRiskProgress(admissionFailureRate) * 100);
+  const admissionToneValue = admissionTone(admissionFailureRate);
+  const admissionLabel = admissionToneLabel(admissionToneValue);
+  const admissionHue = admissionHueFor(admissionFailureRate);
+  const admissionSeries = Array.from({ length: 14 }, () => admissionFailureRate);
   const pathFor = (series: number[]) => series
     .map((value, point) => {
       const x = (point / (series.length - 1)) * 100;
-      const y = tickChartBarTopY(value);
+      const y = admissionChartBarTopY(value);
       return `${point === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
     })
     .join(" ");
-  const linePath = pathFor(tickSeries);
+  const linePath = pathFor(admissionSeries);
   return {
-    bars: tickSeries,
+    admissionFailureRate,
+    admissionHue,
+    admissionLabel,
+    admissionRisk,
+    admissionTone: admissionToneValue,
+    bars: admissionSeries,
     cpu,
     fillPath: `${linePath} L 100 52 L 0 52 Z`,
     linePath,
     redisOps,
     rejected,
     telemetryLag,
-    tickLabel,
-    tickHue,
-    tickP95,
-    tickPressure,
-    tickRisk,
-    tickTone,
   };
 }
 
@@ -565,6 +519,8 @@ function ServerBlock({
   onJoin,
   onSpectate,
   onScenario,
+  scenarioActionLabel,
+  scenarioDisabled,
   scenarioPending,
 }: {
   animationNow: number;
@@ -573,6 +529,8 @@ function ServerBlock({
   onJoin: () => void;
   onSpectate: () => void;
   onScenario: () => void;
+  scenarioActionLabel: string;
+  scenarioDisabled: boolean;
   scenarioPending: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -583,7 +541,7 @@ function ServerBlock({
   const currentPodName = roomCurrentPodName(room);
   const menuId = `server-block-menu-${room.id}`;
   const style = {
-    ...tickSurfaceStyleVars(profile.tickHue, profile.tickRisk),
+    ...tickSurfaceStyleVars(profile.admissionHue, profile.admissionRisk),
   } as StyleWithVariables;
 
   useEffect(() => {
@@ -611,12 +569,12 @@ function ServerBlock({
 
   return (
     <article
-      aria-label={`${displayName}, ${currentPodName}, Tick P95 ${profile.tickP95}ms`}
-      className={`server-block is-${profile.tickTone}`}
+      aria-label={`${displayName}, ${currentPodName}, 입장 실패율 ${profile.admissionFailureRate.toFixed(1)}%`}
+      className={`server-block is-${profile.admissionTone}`}
       style={style}
     >
       <div className="server-block-tick">
-        <span>{profile.tickLabel}</span>
+        <span>{profile.admissionLabel}</span>
       </div>
       <div className="server-block-menu" ref={menuRef}>
         <button
@@ -640,12 +598,12 @@ function ServerBlock({
             </button>
             <button
               className="is-scenario"
-              disabled={scenarioPending}
+              disabled={scenarioPending || scenarioDisabled}
               onClick={() => runAndClose(onScenario)}
               role="menuitem"
               type="button"
             >
-              {scenarioPending ? "장애 실행 중…" : "장애 실행"}
+              {scenarioPending ? "요청 처리 중…" : scenarioActionLabel}
             </button>
           </div>
         ) : null}
@@ -655,7 +613,7 @@ function ServerBlock({
           {currentPodName}
         </div>
         <strong className="server-block-tick-value">
-          {profile.tickP95}<small>ms</small>
+          {profile.admissionFailureRate.toFixed(1)}<small>%</small>
         </strong>
       </div>
       <div className="server-block-meta">
@@ -746,14 +704,18 @@ function RoomDirectory({
   connection,
   onJoinRoom,
   onOpenRoom,
-  onRunBotSurge,
+  onRunAdmissionStorm,
+  onStopAdmissionStorm,
+  admissionActiveRoomId,
   scenarioPendingRoomId,
 }: {
   rooms: GameRoom[];
   connection: ConnectionState;
   onJoinRoom: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
-  onRunBotSurge: (roomId: string) => void;
+  onRunAdmissionStorm: (roomId: string) => void;
+  onStopAdmissionStorm: (roomId: string) => void;
+  admissionActiveRoomId: string | null;
   scenarioPendingRoomId: string | null;
 }) {
   const animationNow = useAnimationFrameNow(rooms.length > 0);
@@ -774,18 +736,32 @@ function RoomDirectory({
         data-room-count={Math.min(rooms.length, 6)}
         aria-label="실시간 게임 서버"
       >
-        {rooms.map((room, index) => (
-          <ServerBlock
-            animationNow={animationNow}
-            key={room.id}
-            onJoin={() => onJoinRoom(room.id)}
-            onSpectate={() => onOpenRoom(room.id)}
-            onScenario={() => onRunBotSurge(room.id)}
-            ordinal={index + 1}
-            room={room}
-            scenarioPending={scenarioPendingRoomId === room.id}
-          />
-        ))}
+        {rooms.map((room, index) => {
+          const admissionActive = admissionActiveRoomId === room.id;
+          const admissionRunningElsewhere = Boolean(
+            admissionActiveRoomId && admissionActiveRoomId !== room.id,
+          );
+          return (
+            <ServerBlock
+              animationNow={animationNow}
+              key={room.id}
+              onJoin={() => onJoinRoom(room.id)}
+              onSpectate={() => onOpenRoom(room.id)}
+              onScenario={() => admissionActive
+                ? onStopAdmissionStorm(room.id)
+                : onRunAdmissionStorm(room.id)}
+              ordinal={index + 1}
+              room={room}
+              scenarioActionLabel={admissionActive
+                ? "입장 부하 중단"
+                : admissionRunningElsewhere
+                  ? "입장 부하 실행 중"
+                  : "장애 실행"}
+              scenarioDisabled={admissionRunningElsewhere}
+              scenarioPending={scenarioPendingRoomId === room.id}
+            />
+          );
+        })}
       </div>
     </section>
   );
@@ -1344,9 +1320,10 @@ export function GameAdminConsole() {
   const [error, setError] = useState("");
   const [botPending, setBotPending] = useState(false);
   const [scenarioPendingRoomId, setScenarioPendingRoomId] = useState<string | null>(null);
+  const [admissionActiveRoomId, setAdmissionActiveRoomId] = useState<string | null>(null);
   const requestPendingRef = useRef(false);
   const hasMapLayoutsRef = useRef(false);
-  const scenarioTrackingRef = useRef(false);
+  const scenarioTrackingRef = useRef(true);
 
   const selectedRoom = rooms.find((room) => room.id === selectedRoomId);
   const joiningRoom = rooms.find((room) => room.id === joiningRoomId);
@@ -1362,9 +1339,11 @@ export function GameAdminConsole() {
       const state = await controlPlaneClient.getState(hasMapLayoutsRef.current);
       if (scenarioTrackingRef.current) {
         const scenarioState = await controlPlaneClient.getFailureScenarios();
-        scenarioTrackingRef.current = scenarioState.rooms.some(
-          (room) => room.active?.scenarioId === "bot-surge",
+        const activeAdmissionRoom = scenarioState.rooms.find(
+          (room) => room.active?.scenarioId === "admission-storm",
         );
+        scenarioTrackingRef.current = Boolean(activeAdmissionRoom);
+        setAdmissionActiveRoomId(activeAdmissionRoom?.roomId ?? null);
       }
       setRooms((currentRooms) => {
         const currentById = new Map(currentRooms.map((room) => [room.id, room]));
@@ -1432,13 +1411,29 @@ export function GameAdminConsole() {
     }
   }
 
-  async function startBotSurge(roomId: string) {
+  async function startAdmissionStorm(roomId: string) {
     if (scenarioPendingRoomId) return;
     setScenarioPendingRoomId(roomId);
     setError("");
     try {
-      await controlPlaneClient.startFailureScenario(roomId, "bot-surge");
+      await controlPlaneClient.startFailureScenario(roomId, "admission-storm");
       scenarioTrackingRef.current = true;
+      setAdmissionActiveRoomId(roomId);
+      await refresh(true);
+    } catch (scenarioError) {
+      setError(errorMessage(scenarioError));
+    } finally {
+      setScenarioPendingRoomId(null);
+    }
+  }
+
+  async function stopAdmissionStorm(roomId: string) {
+    if (scenarioPendingRoomId) return;
+    setScenarioPendingRoomId(roomId);
+    setError("");
+    try {
+      await controlPlaneClient.recoverFailureScenario(roomId, "admission-storm");
+      setAdmissionActiveRoomId(null);
       await refresh(true);
     } catch (scenarioError) {
       setError(errorMessage(scenarioError));
@@ -1552,10 +1547,12 @@ export function GameAdminConsole() {
         />
       ) : (
         <RoomDirectory
+          admissionActiveRoomId={admissionActiveRoomId}
           connection={connection}
           onJoinRoom={setJoiningRoomId}
           onOpenRoom={openRoomForSpectating}
-          onRunBotSurge={(roomId) => void startBotSurge(roomId)}
+          onRunAdmissionStorm={(roomId) => void startAdmissionStorm(roomId)}
+          onStopAdmissionStorm={(roomId) => void stopAdmissionStorm(roomId)}
           rooms={rooms}
           scenarioPendingRoomId={scenarioPendingRoomId}
         />
