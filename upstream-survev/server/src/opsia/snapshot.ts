@@ -31,6 +31,7 @@ export interface GameSnapshotEnvelope<T> {
     mapSeed: number;
     createdAt: number;
     checksumAlgorithm: "sha256";
+    checksumEncoding?: "canonical-json" | "ordered-json";
     checksum: string;
     payload: T;
 }
@@ -211,17 +212,14 @@ const envelopeContent = <T>(envelope: Omit<GameSnapshotEnvelope<T>, "checksum">)
     mapSeed: envelope.mapSeed,
     createdAt: envelope.createdAt,
     checksumAlgorithm: envelope.checksumAlgorithm,
+    ...(envelope.checksumEncoding ? { checksumEncoding: envelope.checksumEncoding } : {}),
     payload: envelope.payload,
 });
 
-const envelopeChecksum = (content: ReturnType<typeof envelopeContent>): string => {
-    const payload = content.payload;
-    const ordered = typeof payload === "object"
-        && payload !== null
-        && "stateChecksumAlgorithm" in payload
-        && payload.stateChecksumAlgorithm === "ordered-json-sha256";
-    return ordered ? checksumOrderedValue(content) : checksumValue(content);
-};
+const envelopeChecksum = (content: ReturnType<typeof envelopeContent>): string =>
+    content.checksumEncoding === "ordered-json"
+        ? checksumOrderedValue(content)
+        : checksumValue(content);
 
 export const createSnapshotEnvelope = <T extends { schemaVersion: number }>(
     payload: T,
@@ -252,6 +250,12 @@ export const createSnapshotEnvelope = <T extends { schemaVersion: number }>(
         mapSeed: context.mapSeed,
         createdAt: context.createdAt ?? Date.now(),
         checksumAlgorithm: "sha256",
+        checksumEncoding: typeof payload === "object"
+                && payload !== null
+                && "stateChecksumAlgorithm" in payload
+                && payload.stateChecksumAlgorithm === "ordered-json-sha256"
+            ? "ordered-json"
+            : "canonical-json",
         payload,
     };
     return { ...unsigned, checksum: envelopeChecksum(envelopeContent(unsigned)) };
@@ -269,6 +273,9 @@ export const verifySnapshotEnvelope = <T extends { schemaVersion: number }>(
         value.kind !== "opsia.game-snapshot"
         || value.schemaVersion !== SNAPSHOT_ENVELOPE_SCHEMA_VERSION
         || value.checksumAlgorithm !== "sha256"
+        || (value.checksumEncoding !== undefined
+            && value.checksumEncoding !== "canonical-json"
+            && value.checksumEncoding !== "ordered-json")
         || typeof value.checksum !== "string"
         || value.checksum.length !== 64
         || typeof value.roomId !== "string"

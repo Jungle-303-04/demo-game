@@ -7,6 +7,7 @@ import { createRoomJournalEntry, parseRoomJournalEntry, RoomStateJournal } from 
 import {
     BoundedSnapshotWriter,
     checksumOrderedValue,
+    checksumValue,
     createSnapshotEnvelope,
     parseSnapshotEnvelope,
     readSnapshotRuntimeConfig,
@@ -89,6 +90,33 @@ describe("snapshot envelope", () => {
 
         expect(() => parseSnapshotEnvelope(JSON.stringify(tampered)))
             .toThrow("snapshot_checksum_mismatch");
+    });
+
+    it("reads the transitional canonical envelope containing an ordered state checksum", () => {
+        const payload = {
+            schemaVersion: 4 as const,
+            stateChecksumAlgorithm: "ordered-json-sha256",
+            stateChecksum: "a".repeat(64),
+            world: { marker: 1 },
+        };
+        const unsigned = {
+            kind: "opsia.game-snapshot" as const,
+            schemaVersion: 1 as const,
+            payloadSchemaVersion: 4,
+            roomId: request(1).context.roomId,
+            roomEpoch: request(1).context.roomEpoch,
+            serverTick: request(1).context.serverTick,
+            snapshotTick: request(1).context.snapshotTick,
+            gameBuildRevision: request(1).context.gameBuildRevision,
+            mapSeed: request(1).context.mapSeed,
+            createdAt: request(1).context.createdAt,
+            checksumAlgorithm: "sha256" as const,
+            payload,
+        };
+        const transitional = { ...unsigned, checksum: checksumValue(unsigned) };
+
+        expect(parseSnapshotEnvelope<typeof payload>(JSON.stringify(transitional)).payload)
+            .toEqual(payload);
     });
 
     it("rejects a configured interval below the independently validated minimum", () => {
