@@ -420,6 +420,7 @@ export interface OpsiaPlayerSnapshot {
     throwableWeapon: string;
     throwableCount: number;
     isBot: boolean;
+    indoors: boolean;
     connected: boolean;
 }
 
@@ -1973,6 +1974,7 @@ export const makeOpsSnapshot = (
                 ? player.invManager.get(player.weapons[3].type as InventoryItem)
                 : 0,
             isBot: player.bot,
+            indoors: player.indoors,
             connected: !player.disconnected,
         })),
     };

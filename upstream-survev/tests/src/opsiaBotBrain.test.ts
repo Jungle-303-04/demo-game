@@ -5,6 +5,7 @@ import {
     type BotBrainSnapshot,
     createBotBrainState,
     decideBotIntent,
+    decideLightweightCombatIntent,
 } from "../../server/src/opsia/botBrain.ts";
 
 const player = (overrides: Partial<BotBrainPlayer> = {}): BotBrainPlayer => ({
@@ -40,6 +41,152 @@ const snapshot = (overrides: Partial<BotBrainSnapshot> = {}): BotBrainSnapshot =
 });
 
 describe("Opsia protocol bot brain", () => {
+    test("lightweight combat shoots a nearby enemy without tactical pathfinding", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideLightweightCombatIntent(snapshot(), "self", state, 1_000, () => 0.5);
+
+        expect(intent.mode).toBe("combat");
+        expect(intent.shoot).toBe(true);
+        expect(intent.aimAngle).toBeCloseTo(0);
+    });
+
+    test("lightweight combat seeks a gun when unarmed", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideLightweightCombatIntent(
+            snapshot({
+                loot: [{ id: 17, type: "m9", kind: "gun", x: 540, y: 500, count: 1 }],
+                players: [player({ weapon: "fists", ammo: 0 })],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("loot");
+        expect(intent.moving).toBe(true);
+        expect(intent.moveAngle).toBeCloseTo(0);
+    });
+
+    test("lightweight combat punches a nearby loot crate", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideLightweightCombatIntent(
+            snapshot({
+                players: [player({ weapon: "fists", ammo: 0 })],
+                obstacles: [{
+                    id: 21,
+                    type: "crate",
+                    kind: "obstacle",
+                    x: 503.5,
+                    y: 500,
+                    width: 4,
+                    height: 4,
+                    destructible: true,
+                    containsLoot: true,
+                    health: 100,
+                }],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("break");
+        expect(intent.shoot).toBe(true);
+        expect(intent.moving).toBe(false);
+    });
+
+    test("lightweight combat opens a nearby crate before chasing a distant gun", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideLightweightCombatIntent(
+            snapshot({
+                players: [player({ weapon: "fists", ammo: 0 })],
+                loot: [{ id: 22, type: "m9", kind: "gun", x: 700, y: 500, count: 1 }],
+                obstacles: [{
+                    id: 23,
+                    type: "crate",
+                    kind: "obstacle",
+                    x: 520,
+                    y: 500,
+                    width: 4,
+                    height: 4,
+                    destructible: true,
+                    containsLoot: true,
+                    health: 100,
+                }],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("break");
+        expect(intent.moving).toBe(true);
+        expect(intent.moveAngle).toBeCloseTo(0);
+    });
+
+    test("lightweight combat keeps a loaded gun equipped and shoots a crate", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideLightweightCombatIntent(
+            snapshot({
+                players: [player({
+                    activeSlot: 0,
+                    primaryWeapon: "hk416",
+                    primaryAmmo: 30,
+                    primaryReserve: 90,
+                    weapon: "hk416",
+                    ammo: 30,
+                })],
+                obstacles: [{
+                    id: 24,
+                    type: "crate",
+                    kind: "obstacle",
+                    x: 550,
+                    y: 500,
+                    width: 4,
+                    height: 4,
+                    destructible: true,
+                    containsLoot: true,
+                    health: 100,
+                }],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("break");
+        expect(intent.shoot).toBe(true);
+        expect(intent.equip).toBeUndefined();
+        expect(intent.moving).toBe(false);
+    });
+
+    test("lightweight combat escapes an indoor doorway after one stalled snapshot", () => {
+        const state = createBotBrainState(() => 0.5);
+        const first = snapshot({
+            capturedAt: 1_000,
+            players: [
+                player({ indoors: true }),
+                player({ sessionId: "enemy", team: "blue", x: 600, y: 500 }),
+            ],
+        });
+        decideLightweightCombatIntent(first, "self", state, 1_000, () => 0.5);
+        const intent = decideLightweightCombatIntent(
+            { ...first, capturedAt: 1_800 },
+            "self",
+            state,
+            1_800,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("unstuck");
+        expect(intent.moving).toBe(true);
+        expect(state.unstuckUntil).toBe(2_975);
+    });
+
     test("tracks and shoots a nearby enemy instead of firing randomly", () => {
         const state = createBotBrainState(() => 0.5);
         const intent = decideBotIntent(snapshot(), "self", state, 1_000, () => 0.5);
@@ -73,7 +220,7 @@ describe("Opsia protocol bot brain", () => {
         expect(state.targetLootId).toBe(7);
     });
 
-    test("stops and interacts when it reaches its loot target", () => {
+    test("keeps moving and interacts when it reaches its loot target", () => {
         const state = createBotBrainState(() => 0.5);
         const intent = decideBotIntent(
             snapshot({
@@ -87,7 +234,7 @@ describe("Opsia protocol bot brain", () => {
         );
 
         expect(intent.mode).toBe("loot");
-        expect(intent.moving).toBe(false);
+        expect(intent.moving).toBe(true);
         expect(intent.interact).toBe(true);
     });
 
@@ -647,16 +794,17 @@ describe("Opsia protocol bot brain", () => {
         expect(state.unstuckUntil).toBe(0);
     });
 
-    test("changes course after repeated moving snapshots show no movement", () => {
+    test("changes course quickly after two moving snapshots show no movement", () => {
         const state = createBotBrainState(() => 0.5);
-        for (let index = 1; index <= 5; index++) {
+        for (let index = 1; index <= 3; index++) {
             decideBotIntent(snapshot({ capturedAt: index }), "self", state, index * 300, () => 0.5);
         }
-        const intent = decideBotIntent(snapshot({ capturedAt: 6 }), "self", state, 1_600, () => 0.5);
+        const intent = decideBotIntent(snapshot({ capturedAt: 4 }), "self", state, 1_000, () => 0.5);
 
         expect(intent.mode).toBe("unstuck");
         expect(intent.moving).toBe(true);
         expect(state.strafeSign).toBe(-1);
+        expect(state.unstuckUntil).toBe(3_150);
     });
 
     test("falls back to non-shooting wander on a stale room snapshot", () => {
@@ -666,8 +814,10 @@ describe("Opsia protocol bot brain", () => {
         const intent = decideBotIntent(snapshot({ capturedAt: 1_000 }), "self", state, 3_001, () => 0.5);
 
         expect(intent.mode).toBe("wander");
+        expect(intent.moving).toBe(true);
         expect(intent.shoot).toBe(false);
         expect(state.targetSessionId).toBeUndefined();
+        expect(state.decisionUntil).toBe(3_801);
     });
 
     test("does not shoot through an authoritative wall and commits to a flank waypoint", () => {

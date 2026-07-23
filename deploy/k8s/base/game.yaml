@@ -49,6 +49,7 @@ spec:
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
+            - { name: OPSIA_BOT_STARTER_GUN, value: hk416 }
             - { name: OPSIA_INFINITE, value: "true" }
             - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
             - { name: REQUIRE_SESSION_GATEWAY, value: "true" }
@@ -114,6 +115,7 @@ spec:
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
+            - { name: OPSIA_BOT_STARTER_GUN, value: hk416 }
             - { name: OPSIA_INFINITE, value: "true" }
             - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
             - { name: REQUIRE_SESSION_GATEWAY, value: "true" }
@@ -179,6 +181,7 @@ spec:
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
+            - { name: OPSIA_BOT_STARTER_GUN, value: hk416 }
             - { name: OPSIA_INFINITE, value: "true" }
             - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
             - { name: REQUIRE_SESSION_GATEWAY, value: "true" }
@@ -244,6 +247,7 @@ spec:
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
+            - { name: OPSIA_BOT_STARTER_GUN, value: hk416 }
             - { name: OPSIA_INFINITE, value: "true" }
             - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
             - { name: REQUIRE_SESSION_GATEWAY, value: "true" }
@@ -309,6 +313,7 @@ spec:
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
+            - { name: OPSIA_BOT_STARTER_GUN, value: hk416 }
             - { name: OPSIA_INFINITE, value: "true" }
             - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
             - { name: REQUIRE_SESSION_GATEWAY, value: "true" }

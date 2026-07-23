@@ -117,36 +117,46 @@ button {
   letter-spacing: 0.04em;
 }
 
-.console-nav {
+.border-metric-tabs {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 3px;
   margin-left: 14px;
   padding: 3px;
+  overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
+  scrollbar-width: none;
 }
 
-.console-nav a {
+.border-metric-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.border-metric-tabs button {
   min-height: 30px;
   padding: 7px 11px;
+  cursor: pointer;
+  border: 0;
   border-radius: 7px;
+  background: transparent;
   color: var(--soft);
   font-size: 12px;
   font-weight: 700;
   line-height: 1;
-  text-decoration: none;
+  white-space: nowrap;
   transition: background 150ms ease, color 150ms ease, box-shadow 150ms ease;
 }
 
-.console-nav a[aria-current="page"] {
+.border-metric-tabs button[aria-selected="true"] {
   background: var(--card);
   color: var(--ink);
   box-shadow: 0 2px 7px rgba(23, 37, 55, 0.08);
 }
 
-.console-nav a:focus-visible {
+.border-metric-tabs button:focus-visible {
   outline: 3px solid rgba(10, 132, 255, 0.22);
   outline-offset: 2px;
 }
@@ -218,14 +228,14 @@ button {
   font-size: 10px;
 }
 
-.console-shell.is-room-directory .console-nav {
+.console-shell.is-room-directory .border-metric-tabs {
   gap: 2px;
   margin-left: 10px;
   padding: 2px;
   border-radius: 8px;
 }
 
-.console-shell.is-room-directory .console-nav a {
+.console-shell.is-room-directory .border-metric-tabs button {
   min-height: 24px;
   padding: 5px 8px;
   border-radius: 6px;
@@ -1183,7 +1193,6 @@ button {
 }
 
 .room-identity dt,
-.room-toolbar-identity dt,
 .scenario-room-identity dt {
   color: var(--muted);
   font-size: 9px;
@@ -1193,7 +1202,6 @@ button {
 }
 
 .room-identity dd,
-.room-toolbar-identity dd,
 .scenario-room-identity dd {
   min-width: 0;
   margin: 3px 0 0;
@@ -1368,8 +1376,15 @@ button {
 
 .server-block {
   --server-border-size: clamp(50px, 4.8vw, 80px);
+  --status-left-hue: 145;
+  --status-left-saturation: 76%;
+  --status-right-hue: 145;
+  --status-right-saturation: 76%;
   --tick-hue: 145;
-  --tick-status-color: hsl(var(--tick-hue) 76% 60%);
+  --tick-saturation: 76%;
+  --status-left-color: hsl(var(--status-left-hue) var(--status-left-saturation) 60%);
+  --status-right-color: hsl(var(--status-right-hue) var(--status-right-saturation) 60%);
+  --tick-status-color: hsl(var(--tick-hue) var(--tick-saturation) 60%);
   --tick-glow-alpha: 0.16;
   position: relative;
   display: grid;
@@ -1377,13 +1392,21 @@ button {
   min-height: 0;
   place-items: center;
   padding: 10px;
-  border: var(--server-border-size) solid var(--tick-status-color);
+  border: var(--server-border-size) solid transparent;
   border-radius: clamp(38px, 4vw, 62px);
-  background: #080a0d;
+  background:
+    linear-gradient(#080a0d, #080a0d) padding-box,
+    linear-gradient(
+      90deg,
+      var(--status-left-color) 0%,
+      var(--status-left-color) 50%,
+      var(--status-right-color) 50%,
+      var(--status-right-color) 100%
+    ) border-box;
   box-shadow:
-    0 0 0 1px hsl(var(--tick-hue) 66% 55% / 0.18),
+    0 0 0 1px hsl(var(--tick-hue) var(--tick-saturation) 55% / 0.18),
     0 16px 36px rgba(4, 7, 11, 0.16),
-    0 0 28px hsl(var(--tick-hue) 70% 48% / var(--tick-glow-alpha));
+    0 0 28px hsl(var(--tick-hue) var(--tick-saturation) 48% / var(--tick-glow-alpha));
   color: #fff;
   isolation: isolate;
   transition: border-color 180ms ease, box-shadow 180ms ease, transform 180ms ease;
@@ -1396,15 +1419,15 @@ button {
 @keyframes server-border-alert {
   from {
     box-shadow:
-      0 0 0 1px hsl(var(--tick-hue) 66% 55% / 0.18),
+      0 0 0 1px hsl(var(--tick-hue) var(--tick-saturation) 55% / 0.18),
       0 16px 36px rgba(4, 7, 11, 0.16),
-      0 0 22px hsl(var(--tick-hue) 70% 48% / var(--tick-glow-alpha));
+      0 0 22px hsl(var(--tick-hue) var(--tick-saturation) 48% / var(--tick-glow-alpha));
   }
   to {
     box-shadow:
-      0 0 0 2px hsl(var(--tick-hue) 76% 60% / 0.3),
+      0 0 0 2px hsl(var(--tick-hue) var(--tick-saturation) 60% / 0.3),
       0 20px 42px rgba(4, 7, 11, 0.2),
-      0 0 40px hsl(var(--tick-hue) 78% 52% / calc(var(--tick-glow-alpha) + 0.12));
+      0 0 40px hsl(var(--tick-hue) var(--tick-saturation) 52% / calc(var(--tick-glow-alpha) + 0.12));
   }
 }
 
@@ -1530,7 +1553,7 @@ button {
   font: 820 clamp(64px, 6.6vw, 112px)/0.76 "Segoe UI Variable Display", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.075em;
-  text-shadow: 0 0 22px hsl(var(--tick-hue) 74% 52% / 0.2);
+  text-shadow: 0 0 22px hsl(var(--tick-hue) var(--tick-saturation) 52% / 0.2);
 }
 
 .server-block-tick-value small {
@@ -1538,6 +1561,35 @@ button {
   font-size: 0.24em;
   font-weight: 800;
   letter-spacing: -0.02em;
+}
+
+.server-block-tick-value.is-paired {
+  display: flex;
+  align-items: baseline;
+  gap: clamp(8px, 1vw, 18px);
+  color: #fff;
+  font-size: clamp(46px, 5vw, 88px);
+  letter-spacing: -0.06em;
+}
+
+.server-block-tick-value.is-paired > span:first-child {
+  color: var(--status-left-color);
+}
+
+.server-block-tick-value.is-paired > span:last-child {
+  color: var(--status-right-color);
+}
+
+.server-block-tick-value.is-paired em {
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 0.62em;
+  font-style: normal;
+  font-weight: 500;
+}
+
+.server-block-tick-value.is-paired small {
+  margin-left: 3px;
+  font-size: 0.28em;
 }
 
 .server-block-meta {
@@ -1603,7 +1655,7 @@ button {
 
 .server-block-menu-toggle:focus-visible,
 .server-block-menu-popover button:focus-visible {
-  outline: 3px solid hsl(var(--tick-hue) 74% 60% / 0.46);
+  outline: 3px solid hsl(var(--tick-hue) var(--tick-saturation) 60% / 0.46);
   outline-offset: 2px;
 }
 
@@ -1817,22 +1869,6 @@ button {
   font-weight: 730;
 }
 
-.room-toolbar-identity {
-  display: grid;
-  grid-template-columns: minmax(92px, 0.85fr) minmax(132px, 1.15fr) minmax(190px, 1.4fr);
-  gap: 7px;
-  min-width: min(56vw, 620px);
-  margin: 0;
-}
-
-.room-toolbar-identity > div {
-  min-width: 0;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--surface);
-}
-
 .room-actions {
   display: flex;
   align-items: center;
@@ -1870,6 +1906,28 @@ button {
   color: #fff;
 }
 
+.room-actions .remove-bots-button {
+  border-color: rgba(255, 90, 85, 0.35);
+  background: #fff5f4;
+  color: #c53631;
+}
+
+.room-actions .remove-bots-button:hover:not(:disabled) {
+  border-color: rgba(255, 90, 85, 0.62);
+  background: #ffe9e7;
+}
+
+.room-actions .reset-map-button {
+  border-color: rgba(218, 145, 18, 0.48);
+  background: #fff9e9;
+  color: #8c5a00;
+}
+
+.room-actions .reset-map-button:hover:not(:disabled) {
+  border-color: rgba(218, 145, 18, 0.78);
+  background: #fff1c7;
+}
+
 .spectator-count-switch {
   display: flex;
   padding: 2px;
@@ -1895,7 +1953,7 @@ button {
 }
 
 .room-actions button:disabled {
-  cursor: wait;
+  cursor: not-allowed;
   opacity: 0.55;
 }
 
@@ -1923,6 +1981,39 @@ button {
   overflow: hidden;
   background: #11161c;
   contain: layout paint size;
+}
+
+.room-view-overlay {
+  position: absolute;
+  z-index: 20;
+  top: max(62px, calc(env(safe-area-inset-top) + 16px));
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  transform: translateX(-50%);
+  color: #fff;
+  line-height: 1;
+  pointer-events: none;
+  text-align: center;
+  text-shadow:
+    0 4px 10px rgba(0, 0, 0, 0.98),
+    0 0 40px rgba(0, 0, 0, 0.95);
+  white-space: nowrap;
+}
+
+.room-view-overlay strong {
+  font-size: clamp(55px, 11vw, 170px);
+  font-weight: 850;
+  letter-spacing: -0.06em;
+}
+
+.room-view-overlay span {
+  color: rgba(255, 255, 255, 0.9);
+  font-size: clamp(35px, 6.75vw, 100px);
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
 }
 
 .console-shell.is-room-open .world-stage {
@@ -3075,6 +3166,11 @@ body.opsia-pip-body .map-viewport {
     font-size: clamp(46px, 7vw, 68px);
   }
 
+  .server-block-tick-value.is-paired {
+    gap: 7px;
+    font-size: clamp(34px, 5.5vw, 56px);
+  }
+
   .server-block-meta {
     right: 6px;
     bottom: 6px;
@@ -3154,17 +3250,11 @@ body.opsia-pip-body .map-viewport {
     flex-wrap: wrap;
   }
 
-  .room-toolbar-identity {
-    order: 3;
-    width: 100%;
-    min-width: 0;
-  }
-
   .server-chip {
     display: none;
   }
 
-  .console-nav {
+  .border-metric-tabs {
     margin-left: 12px;
   }
 
@@ -3204,11 +3294,12 @@ body.opsia-pip-body .map-viewport {
     display: none;
   }
 
-  .console-nav {
+  .border-metric-tabs {
+    flex: 1 1 auto;
     margin-left: 8px;
   }
 
-  .console-nav a {
+  .border-metric-tabs button {
     padding: 7px 8px;
     font-size: 11px;
   }
@@ -3249,6 +3340,11 @@ body.opsia-pip-body .map-viewport {
 
   .server-block-name {
     font-size: clamp(24px, 6.5vw, 38px);
+  }
+
+  .server-block-tick-value.is-paired {
+    gap: 4px;
+    font-size: clamp(25px, 7vw, 38px);
   }
 
   .server-block-meta {
@@ -3361,7 +3457,6 @@ body.opsia-pip-body .map-viewport {
   }
 
   .room-identity,
-  .room-toolbar-identity,
   .scenario-room-identity {
     grid-template-columns: 1fr;
   }
@@ -3533,7 +3628,7 @@ body.opsia-pip-body .map-viewport {
     display: none;
   }
 
-  .console-shell.is-room-directory .console-nav a {
+  .console-shell.is-room-directory .border-metric-tabs button {
     min-height: 21px;
     padding: 4px 7px;
     font-size: 9px;
@@ -3583,6 +3678,11 @@ body.opsia-pip-body .map-viewport {
 
   .server-block-tick-value {
     font-size: clamp(32px, 5vw, 48px);
+  }
+
+  .server-block-tick-value.is-paired {
+    gap: 4px;
+    font-size: clamp(26px, 4.2vw, 38px);
   }
 
   .server-block-menu {

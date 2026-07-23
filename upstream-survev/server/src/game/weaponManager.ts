@@ -707,7 +707,12 @@ export class WeaponManager {
 
         this.player.cancelAction();
 
-        weapon.ammo--;
+        // Load-test/demo bots must remain visibly armed for long-running
+        // spectator sessions. They still obey fire delay and reload-free gun
+        // mechanics, but do not exhaust their magazine on crates or duels.
+        if (!(process.env.OPSIA_ROOM === "true" && this.player.bot)) {
+            weapon.ammo--;
+        }
         this.player.weapsDirty = true;
 
         const collisionLayer = util.toGroundLayer(this.player.layer);

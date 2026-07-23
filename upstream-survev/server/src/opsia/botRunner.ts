@@ -1,7 +1,13 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { GameConfig } from "../../../shared/gameConfig.ts";
 import * as net from "../../../shared/net/net.ts";
-import { type BotBrainSnapshot, createBotBrainState, decideBotIntent } from "./botBrain.ts";
+import {
+    type BotBrainSnapshot,
+    type BotIntent,
+    createBotBrainState,
+    decideBotIntent,
+    decideLightweightCombatIntent,
+} from "./botBrain.ts";
 import { createBotInput, smoothBotAngle } from "./botInput.ts";
 import { botFindGameUrl, botWebsocketUrl, normalizeSessionGatewayUrl } from "./botRouting.ts";
 import { controlTokenMatches, readControlToken } from "./controlPlaneAuth.ts";
@@ -41,7 +47,16 @@ const NORMAL_BOT_INPUT_INTERVAL_MS = 100;
 const SURGE_BOT_INPUT_INTERVAL_MS = 60;
 const SURGE_BOT_INPUTS_PER_INTERVAL = 3;
 const HACK_BOT_INPUT_INTERVAL_MS = 30;
-const BOT_JOIN_READY_GRACE_MS = 100;
+// One room snapshot is shared by every bot in that room. Refreshing it often
+// enough lets a crowded room notice walls and stalled movement without issuing
+// one request per bot.
+const BOT_AWARENESS_INTERVAL_MS = 750;
+const BOT_DECISION_INTERVAL_MS = 650;
+const tacticalBotBrainEnabled = process.env.OPSIA_BOT_TACTICAL_BRAIN === "true";
+// Lightweight combat is safe for the normal high-population demo: the room
+// only sends players, loot, and destructible loot crates. Full tactical mode
+// additionally receives the complete static navigation mesh.
+const lightweightCombatEnabled = process.env.OPSIA_BOT_LIGHTWEIGHT_COMBAT !== "false";
 const botNamePrefixes = [
     "Lucky",
     "Silent",
@@ -94,13 +109,14 @@ const requestRoomAwareness = (roomId: string, endpoint: string): void => {
     const awareness = roomAwareness.get(roomId) ?? { requestedAt: 0 };
     roomAwareness.set(roomId, awareness);
     const now = Date.now();
-    if (awareness.pending || now - awareness.requestedAt < 250) return;
+    if (awareness.pending || now - awareness.requestedAt < BOT_AWARENESS_INTERVAL_MS) return;
     awareness.requestedAt = now;
     awareness.pending = (async () => {
         try {
-            const response = await fetch(`${endpoint}/ops/snapshot?brain=1`, {
+            const brainMode = tacticalBotBrainEnabled ? "1" : "lite";
+            const response = await fetch(`${endpoint}/ops/snapshot?brain=${brainMode}`, {
                 headers: controlToken ? { authorization: `Bearer ${controlToken}` } : undefined,
-                signal: AbortSignal.timeout(900),
+                signal: AbortSignal.timeout(2_500),
             });
             if (!response.ok) return;
             awareness.snapshot = await response.json() as BotBrainSnapshot;
@@ -122,7 +138,6 @@ class SurvevProtocolBot {
     private readonly ws: WebSocket;
     private readonly stream = new net.MsgStream(new ArrayBuffer(1024));
     private timer: NodeJS.Timeout | undefined;
-    private readyGraceTimer: NodeJS.Timeout | undefined;
     private connected = false;
     private stopped = false;
     private inputLoopStarted = false;
@@ -133,6 +148,9 @@ class SurvevProtocolBot {
     private resolveReady!: () => void;
     private rejectReady!: (error: Error) => void;
     private readonly brain = createBotBrainState();
+    private cachedIntent: BotIntent | undefined;
+    private nextDecisionAt = 0;
+    private readonly decisionIntervalMs: number;
     private smoothedMoveAngle: number | undefined;
     private smoothedAimAngle: number | undefined;
 
@@ -149,6 +167,9 @@ class SurvevProtocolBot {
     ) {
         this.id = id;
         this.sessionId = sessionId;
+        // Spread decisions across the interval so a large bot batch does not
+        // turn and request work on the same event-loop tick.
+        this.decisionIntervalMs = BOT_DECISION_INTERVAL_MS + stableNameHash(sessionId) % 401;
         this.nickname = requestedNickname?.trim().slice(0, 16) || humanLikeBotName(sessionId);
         this.roomId = roomId;
         this.mode = mode;
@@ -180,17 +201,14 @@ class SurvevProtocolBot {
                 ],
             };
             this.send(net.MsgType.Join, join);
-            // OPSIA rooms often do not emit an immediate downstream packet
-            // until the client starts producing input. Treat a still-open
-            // socket shortly after the real Join frame as connected, then
-            // begin the normal protocol input loop. A socket that is rejected
-            // by admission closes before this grace period settles.
-            this.readyGraceTimer = setTimeout(() => this.markConnected(), BOT_JOIN_READY_GRACE_MS);
+            // The game server emits a lightweight AliveCounts acknowledgement
+            // only after it accepts this Join. Do not treat the gateway socket
+            // opening by itself as a successful game connection.
         });
         this.ws.addEventListener("message", (event) => {
             this.logDisconnectNotice(event.data);
             this.markConnected();
-        });
+        }, { once: true });
         this.ws.addEventListener("close", (event) => {
             console.warn(JSON.stringify({
                 level: "warn",
@@ -225,7 +243,7 @@ class SurvevProtocolBot {
         };
     }
 
-    async waitUntilConnected(timeoutMs = 5_000): Promise<void> {
+    async waitUntilConnected(timeoutMs = 8_000): Promise<void> {
         let timeout: NodeJS.Timeout | undefined;
         try {
             await Promise.race([
@@ -248,8 +266,6 @@ class SurvevProtocolBot {
         this.stopped = true;
         this.connected = false;
         this.settleReady();
-        if (this.readyGraceTimer) clearTimeout(this.readyGraceTimer);
-        this.readyGraceTimer = undefined;
         if (this.timer) clearInterval(this.timer);
         this.timer = undefined;
         this.inputLoopStarted = false;
@@ -271,8 +287,6 @@ class SurvevProtocolBot {
 
     private markConnected(): void {
         if (this.stopped || this.connected || this.ws.readyState !== WebSocket.OPEN) return;
-        if (this.readyGraceTimer) clearTimeout(this.readyGraceTimer);
-        this.readyGraceTimer = undefined;
         this.connected = true;
         this.startInputLoop();
         this.settleReady();
@@ -321,32 +335,43 @@ class SurvevProtocolBot {
 
     private sendInputs(): void {
         if (this.stopped || this.ws.readyState !== WebSocket.OPEN) return;
-        requestRoomAwareness(this.roomId, this.roomEndpoint);
-        const rawIntent = decideBotIntent(
-            roomAwareness.get(this.roomId)?.snapshot,
-            this.sessionId,
-            this.brain,
-        );
-        // The tactical brain may select a sharply different path whenever a
-        // fresh room snapshot arrives. Ease those discrete decisions across
-        // protocol ticks so watched bots turn like players instead of snapping
-        // between compass directions.
-        const moveStep = rawIntent.mode === "unstuck" ? 0.75 : 0.38;
-        this.smoothedMoveAngle = smoothBotAngle(
-            this.smoothedMoveAngle,
-            rawIntent.moveAngle,
-            moveStep,
-        );
-        this.smoothedAimAngle = smoothBotAngle(
-            this.smoothedAimAngle,
-            rawIntent.aimAngle,
-            0.52,
-        );
-        const intent = {
-            ...rawIntent,
-            moveAngle: this.smoothedMoveAngle,
-            aimAngle: this.smoothedAimAngle,
-        };
+        const roomBrainEnabled = tacticalBotBrainEnabled || lightweightCombatEnabled;
+        if (roomBrainEnabled) requestRoomAwareness(this.roomId, this.roomEndpoint);
+        const now = Date.now();
+        if (!this.cachedIntent || now >= this.nextDecisionAt) {
+            const snapshot = roomBrainEnabled ? roomAwareness.get(this.roomId)?.snapshot : undefined;
+            const rawIntent = tacticalBotBrainEnabled
+                ? decideBotIntent(snapshot, this.sessionId, this.brain)
+                : lightweightCombatEnabled
+                ? decideLightweightCombatIntent(snapshot, this.sessionId, this.brain)
+                : decideBotIntent(undefined, this.sessionId, this.brain);
+            // The tactical brain may select a sharply different path whenever
+            // a fresh room snapshot arrives. Ease those discrete decisions
+            // across protocol ticks so watched bots turn like players instead
+            // of snapping between compass directions.
+            const moveStep = rawIntent.mode === "unstuck"
+                ? 0.75
+                : !roomBrainEnabled && rawIntent.mode === "wander"
+                ? 0.95
+                : 0.38;
+            this.smoothedMoveAngle = smoothBotAngle(
+                this.smoothedMoveAngle,
+                rawIntent.moveAngle,
+                moveStep,
+            );
+            this.smoothedAimAngle = smoothBotAngle(
+                this.smoothedAimAngle,
+                rawIntent.aimAngle,
+                0.52,
+            );
+            this.cachedIntent = {
+                ...rawIntent,
+                moveAngle: this.smoothedMoveAngle,
+                aimAngle: this.smoothedAimAngle,
+            };
+            this.nextDecisionAt = now + this.decisionIntervalMs;
+        }
+        const intent = this.cachedIntent;
         const sendOne = () => {
             const input = createBotInput(intent);
             this.inputSeq = (this.inputSeq + 1) & 0xff;
@@ -446,6 +471,8 @@ const reconcileBatchSize = Math.max(
     1,
     Math.min(20, Number.parseInt(process.env.OPSIA_BOT_RECONCILE_BATCH_SIZE ?? "5", 10) || 5),
 );
+const reconcileFailures = new Map<string, number>();
+const reconcileRetryAt = new Map<string, number>();
 let reconciliationPending = false;
 
 const readJson = async (request: IncomingMessage): Promise<Record<string, unknown>> => {
@@ -482,7 +509,7 @@ const spawn = async (
         const response = await fetch(findGameUrl, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            signal: AbortSignal.timeout(2_000),
+            signal: AbortSignal.timeout(6_000),
             body: JSON.stringify({
                 region: "local",
                 zones: ["local"],
@@ -527,7 +554,7 @@ const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs
     if ([...jobs.values()].some((job) => job.roomId === roomId && job.state === "running")) {
         throw new Error("bot_job_already_running");
     }
-    const summaryResponse = await fetch(`${endpoint}/summary`, { signal: AbortSignal.timeout(1_500) });
+    const summaryResponse = await fetch(`${endpoint}/summary`, { signal: AbortSignal.timeout(8_000) });
     if (!summaryResponse.ok) throw new Error(`room_summary_failed:${summaryResponse.status}`);
     if ([...jobs.values()].some((job) => job.roomId === roomId && job.state === "running")) {
         throw new Error("bot_job_already_running");
@@ -551,27 +578,31 @@ const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs
     while (jobs.size > 100) jobs.delete(jobs.keys().next().value!);
     void (async () => {
         try {
-            const spawnTasks: Promise<void>[] = [];
-            for (let index = 0; index < count; index++) {
+            const spawnOne = async (): Promise<void> => {
                 if (job.state !== "running") return;
-                spawnTasks.push((async () => {
-                    const created = await spawn(1, roomId, mode);
-                    if (job.state !== "running") {
-                        for (const bot of created) bots.get(bot.id)?.stop();
-                        return;
+                const created = await spawn(1, roomId, mode);
+                if (job.state !== "running") {
+                    for (const bot of created) bots.get(bot.id)?.stop();
+                    return;
+                }
+                job.createdBotIds.push(...created.map((bot) => bot.id));
+                job.completed += 1;
+            };
+            // Surge bots must reach the same lobby before the game flips
+            // canJoin=false. Normal jobs stay sequential so every rejected
+            // connection is observed immediately instead of becoming an
+            // unhandled promise rejection while the pacing timer is active.
+            if (mode === "surge") {
+                await Promise.all(Array.from({ length: count }, () => spawnOne()));
+            } else {
+                for (let index = 0; index < count; index++) {
+                    await spawnOne();
+                    if (job.state !== "running") return;
+                    if (index < count - 1) {
+                        await new Promise((resolve) => setTimeout(resolve, intervalMs));
                     }
-                    job.createdBotIds.push(...created.map((bot) => bot.id));
-                    job.completed += 1;
-                })());
-                // Surge bots must reach the same lobby before the game flips
-                // canJoin=false. Keep normal jobs paced, but launch the
-                // pressure cohort together so it becomes real connected
-                // players instead of a stream of rejected late joins.
-                if (mode !== "surge" && index < count - 1) {
-                    await new Promise((resolve) => setTimeout(resolve, intervalMs));
                 }
             }
-            await Promise.all(spawnTasks);
             if (job.state === "running") job.state = "completed";
         } catch (error) {
             if (job.state !== "running") return;
@@ -588,15 +619,24 @@ const connectedBotCount = (roomId: string): number =>
         return summary.roomId === roomId && summary.connected;
     }).length;
 
-const warnBotPopulationRetry = (roomId: string | undefined, error: unknown) => {
+const warnBotPopulationRetry = (roomId: string | undefined, error: unknown, retryInMs?: number) => {
     console.warn(JSON.stringify({
         level: "warn",
         event: "bot_population_reconcile_retry",
         detail: {
             ...(roomId ? { roomId } : {}),
             error: error instanceof Error ? error.message : "bot_reconcile_failed",
+            ...(retryInMs ? { retryInMs } : {}),
         },
     }));
+};
+
+const deferBotPopulationRetry = (roomId: string, error: unknown): void => {
+    const failures = Math.min(6, (reconcileFailures.get(roomId) ?? 0) + 1);
+    const retryInMs = Math.min(60_000, Math.max(10_000, reconcileIntervalMs * (2 ** failures)));
+    reconcileFailures.set(roomId, failures);
+    reconcileRetryAt.set(roomId, Date.now() + retryInMs);
+    warnBotPopulationRetry(roomId, error, retryInMs);
 };
 
 const reconcileMinimumBots = async (): Promise<void> => {
@@ -604,12 +644,21 @@ const reconcileMinimumBots = async (): Promise<void> => {
     reconciliationPending = true;
     try {
         const roomMap = await rooms();
-        await Promise.all([...roomMap.keys()].map(async (roomId) => {
+        await Promise.all([...roomMap.entries()].map(async ([roomId, endpoint]) => {
+            if ((reconcileRetryAt.get(roomId) ?? 0) > Date.now()) return;
             const deficit = minimumBotsPerRoom - connectedBotCount(roomId);
             if (deficit <= 0) return;
-            const requested = Math.min(deficit, reconcileBatchSize);
             try {
+                const summaryResponse = await fetch(`${endpoint}/summary`, { signal: AbortSignal.timeout(8_000) });
+                if (!summaryResponse.ok) throw new Error(`room_summary_failed:${summaryResponse.status}`);
+                const summary = await summaryResponse.json() as { players?: number; maxPlayers?: number };
+                const capacity = Number(summary.maxPlayers ?? 100);
+                const available = Math.max(0, capacity - Number(summary.players ?? 0));
+                if (available < 1) throw new Error("bot_capacity_exceeded");
+                const requested = Math.min(deficit, reconcileBatchSize, available);
                 const created = await spawn(requested, roomId, "normal");
+                reconcileFailures.delete(roomId);
+                reconcileRetryAt.delete(roomId);
                 console.log(JSON.stringify({
                     level: "info",
                     event: "bot_population_reconciled",
@@ -621,7 +670,7 @@ const reconcileMinimumBots = async (): Promise<void> => {
                     },
                 }));
             } catch (error) {
-                warnBotPopulationRetry(roomId, error);
+                deferBotPopulationRetry(roomId, error);
             }
         }));
     } catch (error) {
@@ -642,6 +691,8 @@ const server = createServer(async (request, response) => {
                 minimumBotsPerRoom,
                 reconciliationPending,
                 discoveredRooms: discoveredRooms.size,
+                tacticalBotBrainEnabled,
+                lightweightCombatEnabled,
             });
         }
         if (!controlTokenMatches(request.headers.authorization, controlToken)) {
@@ -719,6 +770,12 @@ const server = createServer(async (request, response) => {
             const body = await readJson(request);
             const id = body.id ? String(body.id) : undefined;
             const roomId = body.room ? String(body.room) : undefined;
+            const requestedCount = body.count === undefined ? undefined : Number(body.count);
+            if (requestedCount !== undefined && (
+                !Number.isInteger(requestedCount) || requestedCount < 1 || requestedCount > 500
+            )) {
+                throw new Error("invalid_bot_count");
+            }
             if (!id) {
                 for (const job of jobs.values()) {
                     if (job.state === "running" && (!roomId || job.roomId === roomId)) job.state = "cancelled";
@@ -727,11 +784,22 @@ const server = createServer(async (request, response) => {
             const selected = id
                 ? [bots.get(id)].filter((bot): bot is SurvevProtocolBot => Boolean(bot))
                 : [...bots.values()].filter((bot) => !roomId || bot.roomId === roomId);
-            selected.forEach((bot) => {
+            const removableCount = requestedCount === undefined
+                ? selected.length
+                : Math.min(
+                    requestedCount,
+                    Math.max(0, selected.length - (roomId ? minimumBotsPerRoom : 0)),
+                );
+            const removed = selected.slice(Math.max(0, selected.length - removableCount));
+            removed.forEach((bot) => {
                 bot.stop();
                 bots.delete(bot.id);
             });
-            return reply(response, 200, { killed: selected.length });
+            return reply(response, 200, {
+                killed: removed.length,
+                remaining: selected.length - removed.length,
+                minimumBotsPerRoom,
+            });
         }
         return reply(response, 404, { error: "not_found" });
     } catch (error) {

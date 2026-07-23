@@ -1,6 +1,8 @@
 x-control-environment: &control-environment
   REQUIRE_CONTROL_TOKEN: "true"
   OPS_CONTROL_TOKEN: "${OPS_CONTROL_TOKEN:-demo-game-local-control-token}"
+  OPSIA_SNAPSHOT_INTERVAL_MS: "${OPSIA_SNAPSHOT_INTERVAL_MS:-5000}"
+  OPSIA_BOT_STARTER_GUN: "${OPSIA_BOT_STARTER_GUN:-hk416}"
 x-session-gateway-environment: &session-gateway-environment
   SESSION_GATEWAY_SHARED_SECRET: "${SESSION_GATEWAY_SHARED_SECRET:-demo-game-local-gateway-secret-change-me-32-bytes}"
 
@@ -109,6 +111,9 @@ services:
     environment:
       <<: *control-environment
       ORCHESTRATOR_URL: http://room-orchestrator:8082
+      ADMISSION_OVERLOAD_THRESHOLD_REQUESTS: "${ADMISSION_OVERLOAD_THRESHOLD_REQUESTS:-35}"
+      ADMISSION_OVERLOAD_WINDOW_MS: "${ADMISSION_OVERLOAD_WINDOW_MS:-1000}"
+      ADMISSION_OVERLOAD_EXIT_CODE: "${ADMISSION_OVERLOAD_EXIT_CODE:-70}"
       PUBLIC_ROOM_URLS: "room-0=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-0/,room-1=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-1/,room-2=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-2/,room-3=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-3/,room-4=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-4/"
     ports: ["8081:8081"]
     depends_on: { room-orchestrator: { condition: service_started } }
@@ -118,7 +123,9 @@ services:
       <<: *control-environment
       OPSIA_ROOM_DIRECTORY_URL: http://room-orchestrator:8082
       SESSION_GATEWAY_INTERNAL_URL: http://session-gateway:8083
-      OPSIA_MIN_BOTS_PER_ROOM: "${OPSIA_MIN_BOTS_PER_ROOM:-10}"
+      OPSIA_MIN_BOTS_PER_ROOM: "${OPSIA_MIN_BOTS_PER_ROOM:-1}"
+      OPSIA_BOT_TACTICAL_BRAIN: "${OPSIA_BOT_TACTICAL_BRAIN:-false}"
+      OPSIA_BOT_LIGHTWEIGHT_COMBAT: "${OPSIA_BOT_LIGHTWEIGHT_COMBAT:-true}"
     ports: ["8084:8084"]
     depends_on: { room-orchestrator: { condition: service_started }, session-gateway: { condition: service_started } }
   ops-console:
@@ -127,6 +134,7 @@ services:
       <<: *control-environment
       ORCHESTRATOR_URL: http://room-orchestrator:8082
       BOT_RUNNER_URL: http://bot-runner:8084
+      SESSION_GATEWAY_INTERNAL_URL: http://session-gateway:8083
       PUBLIC_ROOM_URLS: "room-0=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-0/,room-1=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-1/,room-2=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-2/,room-3=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-3/,room-4=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-4/"
     ports: ["8085:8085"]
     depends_on: { room-orchestrator: { condition: service_started }, bot-runner: { condition: service_started } }

@@ -44,6 +44,13 @@ export class ClientBarn {
         for (let i = 0; i < this.clients.length; i++) {
             const client = this.clients[i];
             if (client.socket.closed()) continue;
+            // OPSIA protocol bots make decisions from the shared brain
+            // snapshot endpoint and never render downstream world frames.
+            // Preserve the full stream for players and spectators only.
+            if (client.opsiaBot) {
+                client.msgsToSend.length = 0;
+                continue;
+            }
             client.sendMsgs();
         }
     }
@@ -102,6 +109,7 @@ export class ClientBarn {
         }
 
         const client = new Client(this.game, socket, joinData.userId, joinData.findGameIp);
+        client.opsiaBot = process.env.OPSIA_ROOM === "true" && joinMsg.bot;
         this.clients.push(client);
 
         if (joinData.spectator) {
@@ -138,6 +146,12 @@ export class ClientBarn {
 
         const player = this.game.playerBarn.addPlayer(client, joinMsg, joinData);
         client.player = player;
+        if (client.opsiaBot) {
+            player.equipOpsiaBotStarterWeapon();
+            const ready = new net.AliveCountsMsg();
+            this.game.modeManager.updateAliveCounts(ready.teamAliveCounts);
+            client.sendInstantMsg(net.MsgType.AliveCounts, ready);
+        }
 
         return client;
     }
@@ -310,6 +324,15 @@ export class ClientBarn {
         player.setGroupStatuses();
         player.questManager.flushProgress();
 
+        // Runner bots never reconnect after their WebSocket closes. Keeping an
+        // older bot in livingPlayers permanently consumes an infinite-room
+        // slot, so repeated +/- bot operations eventually make the room look
+        // full even when no bot is connected.
+        if (process.env.OPSIA_ROOM === "true" && player.bot) {
+            player.game.playerBarn.removePlayer(player);
+            return;
+        }
+
         if (
             process.env.OPSIA_ROOM === "true"
             && !player.bot
@@ -350,6 +373,7 @@ export class Client {
     socket: ClientSocket<Client>;
 
     disconnected = false;
+    opsiaBot = false;
 
     userId: string | null = null;
     ip: string;

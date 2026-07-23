@@ -30,6 +30,7 @@ export interface BotBrainPlayer {
     throwableWeapon?: string;
     throwableCount?: number;
     isBot?: boolean;
+    indoors?: boolean;
 }
 
 export interface BotBrainSnapshot {
@@ -1479,9 +1480,12 @@ const updateStuckState = (
         const moved = distance(state.lastX, state.lastY, self.x, self.y);
         if (state.lastMovementCommanded) {
             state.stuckSamples = moved < 1.1 ? state.stuckSamples + 1 : 0;
-            if (state.stuckSamples >= 4) {
+            // Room snapshots arrive every 750 ms. Two consecutive stationary
+            // samples are enough to distinguish a blocked bot from normal
+            // movement while avoiding the previous ~6 second wall-stall.
+            if (state.stuckSamples >= 2) {
                 state.stuckSamples = 0;
-                state.unstuckUntil = now + 1_100 + random() * 650;
+                state.unstuckUntil = now + 1_800 + random() * 900;
                 const blockedAngle = state.lastMoveAngle ?? state.wanderAngle;
                 const escapeAngles = [
                     blockedAngle + state.strafeSign * Math.PI / 2,
@@ -1505,6 +1509,285 @@ const formationOffset = (sessionId: string): number => {
     let hash = 0;
     for (let index = 0; index < sessionId.length; index++) hash = (hash * 31 + sessionId.charCodeAt(index)) | 0;
     return ((Math.abs(hash) % 1_001) / 1_000 - 0.5) * 0.36;
+};
+
+/**
+ * Linear-time combat for high bot counts. This intentionally skips the full
+ * navigation, flank, and spatial-index work while retaining visible looting,
+ * gun fights, reloading, and crate attacks.
+ */
+export const decideLightweightCombatIntent = (
+    snapshot: BotBrainSnapshot | undefined,
+    sessionId: string,
+    state: BotBrainState,
+    now = Date.now(),
+    random: () => number = Math.random,
+): BotIntent => {
+    const snapshotIsFresh = snapshot && now - snapshot.capturedAt <= snapshotFreshnessMs;
+    const self = snapshotIsFresh
+        ? snapshot.players.find((player) => player.sessionId === sessionId && player.connected)
+        : undefined;
+    if (!snapshotIsFresh || !self || !self.alive) {
+        if (now >= state.decisionUntil) {
+            state.wanderAngle = random() * Math.PI * 2;
+            state.decisionUntil = now + 550 + random() * 500;
+        }
+        return finishIntent(
+            state,
+            {
+                mode: "wander",
+                moveAngle: state.wanderAngle,
+                aimAngle: state.wanderAngle,
+                aimDistance: 48,
+                shoot: false,
+                interact: false,
+                reload: false,
+            },
+            "force",
+            now,
+            random,
+        );
+    }
+
+    if (snapshot.capturedAt !== state.lastSnapshotAt) {
+        if (state.lastX !== undefined && state.lastY !== undefined && state.lastMovementCommanded) {
+            const moved = distance(state.lastX, state.lastY, self.x, self.y);
+            // A doorway stall is visible one snapshot sooner through the
+            // authoritative indoors flag. Outdoors we retain the two-sample
+            // guard so normal movement pauses do not trigger false escapes.
+            const stuckDistance = self.indoors ? 1.35 : 0.8;
+            const requiredStuckSamples = self.indoors ? 1 : 2;
+            state.stuckSamples = moved < stuckDistance ? state.stuckSamples + 1 : 0;
+            if (state.stuckSamples >= requiredStuckSamples) {
+                state.stuckSamples = 0;
+                state.unstuckUntil = now + 950 + random() * 450;
+                state.wanderAngle = (state.lastMoveAngle ?? state.wanderAngle)
+                    + state.strafeSign * (Math.PI * 0.62 + (random() - 0.5) * 0.55);
+                state.strafeSign = state.strafeSign === 1 ? -1 : 1;
+                if (state.targetLootId !== undefined) state.lootLockedUntil = now + 3_000;
+                if (state.targetBreakableId !== undefined) state.breakableLockedUntil = now + 3_000;
+            }
+        }
+        state.lastX = self.x;
+        state.lastY = self.y;
+        state.lastSnapshotAt = snapshot.capturedAt;
+    }
+    if (now < state.unstuckUntil) {
+        return finishIntent(
+            state,
+            {
+                mode: "unstuck",
+                moveAngle: state.wanderAngle,
+                aimAngle: state.wanderAngle,
+                aimDistance: 48,
+                shoot: false,
+                interact: false,
+                reload: false,
+            },
+            "force",
+            now,
+            random,
+        );
+    }
+
+    let enemy: Target | undefined;
+    for (const player of snapshot.players) {
+        if (
+            !player.connected
+            || !player.alive
+            || player.downed === true
+            || player.sessionId === sessionId
+            || player.teamId === self.teamId
+        ) continue;
+        const targetDistance = distance(self.x, self.y, player.x, player.y);
+        if (!enemy || targetDistance < enemy.distance) enemy = { player, distance: targetDistance };
+    }
+
+    const activeKind = weaponKind(self.weapon);
+    const gunSlots = tacticalGunSlots(self);
+    const loadedGun = gunSlots.find((slot) => slot.ammo > 0);
+    const storedGun = loadedGun ?? gunSlots[0];
+    const activeGunHasAmmo = activeKind === "gun" && self.ammo > 0;
+    if (enemy && enemy.distance <= 300 && (activeGunHasAmmo || storedGun)) {
+        state.targetLootId = undefined;
+        state.targetBreakableId = undefined;
+        const profile = weaponProfile(self.weapon);
+        const shouldEquip = activeKind !== "gun"
+            ? storedGun?.equip
+            : self.ammo <= 0 && loadedGun && loadedGun.slot !== self.activeSlot
+            ? loadedGun.equip
+            : undefined;
+        const shouldReload = activeKind === "gun" && self.ammo <= 0 && shouldEquip === undefined;
+        const travelSeconds = Number.isFinite(profile.projectileSpeed)
+            ? Math.min(0.45, enemy.distance / Math.max(1, profile.projectileSpeed))
+            : 0;
+        const targetAngle = angleTo(
+            self.x,
+            self.y,
+            enemy.player.x + enemy.player.vx * travelSeconds,
+            enemy.player.y + enemy.player.vy * travelSeconds,
+        );
+        if (now >= state.nextStrafeFlipAt) {
+            state.strafeSign = state.strafeSign === 1 ? -1 : 1;
+            state.nextStrafeFlipAt = now + 750 + random() * 550;
+        }
+        const preferredRange = profile.kind === "gun" ? profile.preferredRange : 90;
+        const moveAngle = enemy.distance > preferredRange * 1.25
+            ? targetAngle
+            : enemy.distance < preferredRange * 0.55
+            ? targetAngle + Math.PI
+            : targetAngle + state.strafeSign * Math.PI / 2;
+        const canShoot = activeGunHasAmmo
+            && profile.kind === "gun"
+            && enemy.distance <= profile.effectiveRange;
+        return finishIntent(
+            state,
+            {
+                mode: "combat",
+                moveAngle,
+                aimAngle: targetAngle,
+                aimDistance: Math.min(64, Math.max(18, enemy.distance)),
+                shoot: canShoot,
+                interact: false,
+                reload: shouldReload,
+                equip: shouldEquip,
+                forceShootStart: canShoot,
+            },
+            "force",
+            now,
+            random,
+        );
+    }
+
+    const activeDefinition = GameObjectDefs.typeToDefSafe(self.weapon);
+    const wantedAmmo = activeDefinition?.type === "gun" ? activeDefinition.ammo : undefined;
+    let lootTarget: BotBrainLoot | undefined;
+    let lootDistance = Number.POSITIVE_INFINITY;
+    const needsGun = gunSlots.length === 0 && activeKind !== "gun";
+    const needsAmmo = activeKind === "gun" && self.ammo <= 0 && gunSlots.every((slot) => slot.reserve <= 0);
+    for (const loot of snapshot.loot ?? []) {
+        if (!(needsGun && loot.kind === "gun") && !(needsAmmo && loot.kind === "ammo" && loot.type === wantedAmmo)) {
+            continue;
+        }
+        const candidateDistance = distance(self.x, self.y, loot.x, loot.y);
+        if (candidateDistance < lootDistance) {
+            lootTarget = loot;
+            lootDistance = candidateDistance;
+        }
+    }
+    const lootTemporarilyBlocked = Boolean(
+        lootTarget && now < state.lootLockedUntil && lootTarget.id === state.targetLootId
+    );
+    if (lootTarget && lootDistance <= 96 && !lootTemporarilyBlocked) {
+        state.targetLootId = lootTarget.id;
+        state.targetBreakableId = undefined;
+        const lootAngle = angleTo(self.x, self.y, lootTarget.x, lootTarget.y);
+        return finishIntent(
+            state,
+            {
+                mode: "loot",
+                moveAngle: lootAngle,
+                aimAngle: lootAngle,
+                aimDistance: Math.min(64, Math.max(12, lootDistance)),
+                shoot: false,
+                interact: lootDistance <= 2.2,
+                reload: false,
+            },
+            "force",
+            now,
+            random,
+        );
+    }
+
+    let crate: BotBrainObstacle | undefined;
+    let crateDistance = Number.POSITIVE_INFINITY;
+    for (const obstacle of snapshot.obstacles ?? []) {
+        if (!obstacle.destructible || !obstacle.containsLoot || obstacle.health <= 0) continue;
+        if (now < state.breakableLockedUntil && obstacle.id === state.targetBreakableId) continue;
+        const candidateDistance = distance(self.x, self.y, obstacle.x, obstacle.y);
+        if (candidateDistance < crateDistance) {
+            crate = obstacle;
+            crateDistance = candidateDistance;
+        }
+    }
+    if (crate && crateDistance <= 190) {
+        state.targetBreakableId = crate.id;
+        state.targetLootId = undefined;
+        const crateAngle = angleTo(self.x, self.y, crate.x, crate.y);
+        const perimeterDistance = Math.max(0, crateDistance - Math.max(crate.width, crate.height) / 2);
+        const activeGunSlot = gunSlots.find((slot) => slot.slot === self.activeSlot);
+        const shouldReloadGun = activeKind === "gun"
+            && self.ammo <= 0
+            && (activeGunSlot?.reserve ?? 0) > 0;
+        const canShootCrate = activeKind === "gun" && self.ammo > 0 && perimeterDistance <= 58;
+        const shouldEquipMelee = activeKind !== "melee"
+            && !shouldReloadGun
+            && !(activeKind === "gun" && self.ammo > 0)
+            && perimeterDistance <= 20;
+        // Fists reach 1.35 units forward with a 0.9 radius collider. Using the
+        // broader player-combat distance made bots stop 3-5 units from crates.
+        const canStrike = activeKind === "melee" && perimeterDistance <= 2.25;
+        return finishIntent(
+            state,
+            {
+                mode: "break",
+                moveAngle: crateAngle,
+                aimAngle: crateAngle,
+                aimDistance: Math.min(64, Math.max(8, crateDistance)),
+                shoot: canShootCrate || canStrike,
+                interact: false,
+                reload: shouldReloadGun,
+                equip: shouldEquipMelee ? "melee" : undefined,
+                forceShootStart: canShootCrate || canStrike,
+            },
+            canShootCrate || canStrike || shouldEquipMelee || shouldReloadGun ? "stop" : "force",
+            now,
+            random,
+        );
+    }
+
+    if (lootTarget && lootDistance <= 520 && !lootTemporarilyBlocked) {
+        state.targetLootId = lootTarget.id;
+        state.targetBreakableId = undefined;
+        const lootAngle = angleTo(self.x, self.y, lootTarget.x, lootTarget.y);
+        return finishIntent(
+            state,
+            {
+                mode: "loot",
+                moveAngle: lootAngle,
+                aimAngle: lootAngle,
+                aimDistance: Math.min(64, Math.max(12, lootDistance)),
+                shoot: false,
+                interact: lootDistance <= 2.2,
+                reload: false,
+            },
+            "force",
+            now,
+            random,
+        );
+    }
+
+    state.targetLootId = undefined;
+    state.targetBreakableId = undefined;
+    if (now >= state.decisionUntil) {
+        state.wanderAngle = random() * Math.PI * 2;
+        state.decisionUntil = now + 700 + random() * 650;
+    }
+    return finishIntent(
+        state,
+        {
+            mode: "wander",
+            moveAngle: state.wanderAngle,
+            aimAngle: enemy ? angleTo(self.x, self.y, enemy.player.x, enemy.player.y) : state.wanderAngle,
+            aimDistance: enemy ? Math.min(64, Math.max(18, enemy.distance)) : 48,
+            shoot: false,
+            interact: false,
+            reload: activeKind === "gun" && self.ammo <= 0,
+        },
+        "force",
+        now,
+        random,
+    );
 };
 
 export const decideBotIntent = (
@@ -1543,7 +1826,11 @@ export const decideBotIntent = (
         state.targetMemoryUntil = 0;
         if (now >= state.decisionUntil) {
             state.wanderAngle = random() * Math.PI * 2;
-            state.decisionUntil = now + 1_500 + random() * 2_000;
+            // The lightweight high-population mode has no world snapshot.
+            // Re-pick a heading about once per second so a bot that reaches a
+            // wall quickly finds an open direction instead of pushing against
+            // the same obstacle for several seconds.
+            state.decisionUntil = now + 550 + random() * 500;
         }
         return finishIntent(
             state,
@@ -2110,7 +2397,9 @@ export const decideBotIntent = (
                 interact: withinPickupRange,
                 reload: false,
             },
-            withinPickupRange ? "stop" : "force",
+            // Keep crossing the pickup circle while interacting. Stopping on
+            // its edge made some watched bots appear frozen beside loot.
+            "force",
             now,
             random,
         );

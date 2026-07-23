@@ -7,6 +7,7 @@ import type {
   FailureScenarioState,
   GameRoom,
   OpsEvent,
+  RemoveBotsResult,
   RoomCommand,
 } from "./control-plane.js";
 
@@ -135,6 +136,10 @@ export const controlPlaneClient = {
     });
   },
 
+  async resetRoom(roomId: string): Promise<void> {
+    await request(roomPath(roomId, "/reset"), { method: "POST" });
+  },
+
   async addBots(
     roomId: string,
     input: AddBotsInput,
@@ -158,8 +163,11 @@ export const controlPlaneClient = {
     );
   },
 
-  async removeBots(roomId: string): Promise<void> {
-    await request(roomPath(roomId, "/bots"), { method: "DELETE" });
+  async removeBots(roomId: string, count: number): Promise<RemoveBotsResult> {
+    return request<RemoveBotsResult>(roomPath(roomId, "/bots"), {
+      method: "DELETE",
+      body: JSON.stringify({ count }),
+    });
   },
 
   async setJoinLocked(roomId: string, locked: boolean): Promise<void> {

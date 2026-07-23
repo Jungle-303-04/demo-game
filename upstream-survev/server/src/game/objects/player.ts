@@ -1385,7 +1385,7 @@ export class Player extends BaseGameObject {
         this.name = name;
         this.client = client;
         this.isMobile = isMobile;
-        this.bot = Config.debug.allowBots && isBot;
+        this.bot = (Config.debug.allowBots || process.env.OPSIA_ROOM === "true") && isBot;
 
         this.questManager.quests = (questIds ?? []).map((id) => ({
             id,
@@ -1458,6 +1458,25 @@ export class Player extends BaseGameObject {
         this.recalculateScale();
     }
 
+    equipOpsiaBotStarterWeapon(): void {
+        if (process.env.OPSIA_ROOM !== "true" || !this.bot) return;
+        const starterWeapon = process.env.OPSIA_BOT_STARTER_GUN?.trim() || "hk416";
+        const starterDefinition = GameObjectDefs.typeToDefSafe(starterWeapon);
+        if (starterDefinition?.type !== "gun") return;
+        const ammoStats = this.weaponManager.getAmmoStats(starterDefinition);
+        this.weaponManager.setWeapon(GameConfig.WeaponSlot.Primary, starterWeapon, ammoStats.maxClip);
+        if (this.invManager.isValid(starterDefinition.ammo)) {
+            this.invManager.give(
+                starterDefinition.ammo,
+                Math.min(ammoStats.maxClip * 3, this.invManager.getMaxCapacity(starterDefinition.ammo)),
+            );
+        }
+        this.weaponManager.setCurWeapIndex(GameConfig.WeaponSlot.Primary, true);
+        this.inventoryDirty = true;
+        this.weapsDirty = true;
+        this.setDirty();
+    }
+
     update(dt: number): void {
         if (this.dead) {
             if (process.env.OPSIA_INFINITE === "true" && this.opsiaRespawnTicker >= 0) {
@@ -1468,6 +1487,7 @@ export class Player extends BaseGameObject {
                     this.health = GameConfig.player.health;
                     this.boost = 0;
                     this.timeAlive = 0;
+                    this.equipOpsiaBotStarterWeapon();
                     const spawn = this.game.map.getSpawnPos(this.group, this.team);
                     this.pos.x = spawn.x;
                     this.pos.y = spawn.y;

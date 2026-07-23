@@ -338,9 +338,19 @@ test("admission saturation exposes the failure metric and cleanup only stops the
     },
   };
   const calls: string[] = [];
+  let admissionHealthy = true;
   installFetch(context, (url, init) => {
     calls.push(`${init?.method ?? "GET"} ${url}`);
     if (url === "http://bots/bots") return json({ bots: [], minimumBotsPerRoom: 10 });
+    if (url === "http://api-server/ops/failure/admission-overload/arm") {
+      return json({ armed: true, thresholdRequests: 35, windowMs: 1_000 });
+    }
+    if (url === "http://api-server/ops/failure/admission-overload/disarm") {
+      return json({ armed: false, thresholdRequests: 35, windowMs: 1_000 });
+    }
+    if (url === "http://api-server/healthz") {
+      return admissionHealthy ? json({ status: "ok" }) : json({ error: "unavailable" }, 503);
+    }
     return json({ error: `unexpected_url:${url}` }, 500);
   });
 
@@ -356,6 +366,8 @@ test("admission saturation exposes the failure metric and cleanup only stops the
   const started = await controller.start(record, room, "admission-storm", true);
   assert.equal(started.evidence?.successRatePercent, 100);
   assert.equal(started.evidence?.failureRatePercent, 0);
+  assert.equal(started.evidence?.failureTarget, "api-server");
+  assert.equal(started.evidence?.recoveryOwner, "external-service");
   assert.equal(controller.admissionFailureRates().get("room-0"), 0);
 
   loadStatus = {
@@ -377,12 +389,21 @@ test("admission saturation exposes the failure metric and cleanup only stops the
   assert.equal(controller.admissionFailureRates().get("room-0"), 27.5);
   assert.equal(stopped, false);
 
+  admissionHealthy = false;
+  const failedServer = await controller.getState([room], true);
+  assert.equal(failedServer.rooms[0]?.active?.evidence?.admissionServerStatus, "unreachable");
+  assert.equal(failedServer.rooms[0]?.active?.evidence?.phase, "server_failed");
+  assert.equal(failedServer.rooms[0]?.active?.evidence?.existingSessionsExpected, "unaffected");
+
   const stoppedResult = await controller.recover(record, room, "admission-storm");
   assert.equal(stoppedResult.status, "completed");
   assert.equal(stoppedResult.evidence?.failureRatePercent, 27.5);
   assert.equal(stoppedResult.evidence?.loadStopped, true);
+  assert.equal(stoppedResult.evidence?.recoveryPerformed, false);
   assert.equal(stopped, true);
   assert.equal(controller.admissionFailureRates().has("room-0"), false);
+  assert.ok(calls.includes("POST http://api-server/ops/failure/admission-overload/arm"));
+  assert.ok(calls.includes("POST http://api-server/ops/failure/admission-overload/disarm"));
   assert.ok(calls.every((call) => !call.includes("/scale")));
 });
 

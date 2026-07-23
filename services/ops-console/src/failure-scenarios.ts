@@ -123,6 +123,7 @@ export class FailureScenarioController {
   >();
 
   private readonly admissionLoad: AdmissionLoadService;
+  private readonly admissionEndpoint: string;
 
   constructor(
     private readonly orchestrator: string,
@@ -131,7 +132,8 @@ export class FailureScenarioController {
     admissionEndpoint = process.env.API_SERVER_URL ?? "http://api-server:8081",
     admissionLoad?: AdmissionLoadService,
   ) {
-    this.admissionLoad = admissionLoad ?? new AdmissionLoadController({ endpoint: admissionEndpoint, now });
+    this.admissionEndpoint = admissionEndpoint.replace(/\/+$/, "");
+    this.admissionLoad = admissionLoad ?? new AdmissionLoadController({ endpoint: this.admissionEndpoint, now });
   }
 
   async getState(
@@ -142,7 +144,7 @@ export class FailureScenarioController {
     const roomsById = new Map(rooms.map((room) => [room.id, room]));
     await Promise.all([...this.activeRuns.entries()].map(async ([roomId, run]) => {
       if (run.scenarioId === "admission-storm") {
-        this.syncAdmissionRun(roomId, run);
+        await this.syncAdmissionRun(roomId, run);
         return;
       }
       if (run.scenarioId === "bot-surge") {
@@ -282,17 +284,38 @@ export class FailureScenarioController {
             activeRoomId !== room.id && active.scenarioId === "admission-storm")) {
             throw new Error("admission_load_already_running");
           }
-          const load = this.admissionLoad.start(room.id);
+          const armed = await fetchJson<{
+            armed: boolean;
+            thresholdRequests: number;
+            windowMs: number;
+          }>(`${this.admissionEndpoint}/ops/failure/admission-overload/arm`, { method: "POST" }, 3_000);
+          let load: AdmissionLoadStatus;
+          try {
+            load = this.admissionLoad.start(room.id);
+          } catch (error) {
+            await fetchJson(
+              `${this.admissionEndpoint}/ops/failure/admission-overload/disarm`,
+              { method: "POST" },
+              2_000,
+            ).catch(() => undefined);
+            throw error;
+          }
           run.jobId = load.jobId;
           run.status = "active";
           run.evidence = {
             ...this.admissionEvidence(load),
-            failureThresholdPercent: 20,
+            failureMode: "process-exit-on-real-admission-load",
+            failureTarget: "api-server",
+            overloadArmed: armed.armed,
+            overloadThresholdRequests: armed.thresholdRequests,
+            overloadWindowMs: armed.windowMs,
+            existingSessionsExpected: "unaffected",
+            recoveryOwner: "external-service",
           };
           return this.started(
             room.id,
             run,
-            "중앙 입장 API의 실제 성공률을 보며 요청량을 증가시키고 있습니다.",
+            "신규 입장 요청을 증가시켜 입장 API 프로세스 장애를 유도하고 있습니다.",
           );
         }
         case "process-crash": {
@@ -331,13 +354,14 @@ export class FailureScenarioController {
 
   async recover(
     record: RegistryRoom,
-    room: AdminRoom,
+    room: AdminRoom | undefined,
     scenarioId: FailureScenarioId,
   ): Promise<FailureScenarioActionResult> {
     this.expireAutomaticRuns();
-    const run = this.activeRuns.get(room.id);
+    const roomId = record.roomId;
+    const run = this.activeRuns.get(roomId);
     if (!run) {
-      return this.completed(room.id, scenarioId, "이미 안전 상태입니다.", { idempotent: true });
+      return this.completed(roomId, scenarioId, "이미 안전 상태입니다.", { idempotent: true });
     }
     if (run.scenarioId !== scenarioId) throw scenarioConflict(run);
 
@@ -345,31 +369,40 @@ export class FailureScenarioController {
       case "admission-lock":
         run.status = "recovering";
         await this.setJoinLocked(record, false);
-        return this.completeRun(room.id, run, "신규 플레이어 입장을 다시 허용했습니다.", { joinLocked: false });
+        return this.completeRun(roomId, run, "신규 플레이어 입장을 다시 허용했습니다.", { joinLocked: false });
       case "bot-surge":
       case "malicious-input": {
         run.status = "recovering";
         if (run.jobId || run.jobIds?.length) {
           const cleanup = await this.cleanupBotJobs(run);
-          return this.completeRun(room.id, run, "시나리오가 만든 봇만 제거했습니다.", cleanup);
+          return this.completeRun(roomId, run, "시나리오가 만든 봇만 제거했습니다.", cleanup);
         }
-        return this.completeRun(room.id, run, "정리할 시나리오 봇이 없습니다.", { killed: 0 });
+        return this.completeRun(roomId, run, "정리할 시나리오 봇이 없습니다.", { killed: 0 });
       }
       case "admission-storm": {
         if (!run.jobId) throw new Error("admission_load_job_not_found");
         const stopped = this.admissionLoad.stop(run.jobId);
-        return this.completeRun(room.id, run, "신규 입장 부하를 중단했습니다.", {
+        const overloadDisarmed = await fetchJson(
+          `${this.admissionEndpoint}/ops/failure/admission-overload/disarm`,
+          { method: "POST" },
+          2_000,
+        ).then(() => true, () => false);
+        return this.completeRun(roomId, run, "신규 입장 부하만 중단했습니다. 서버 복구는 외부 서비스가 담당합니다.", {
           ...this.admissionEvidence(stopped),
           loadStopped: true,
+          overloadDisarmed,
+          recoveryPerformed: false,
+          recoveryOwner: "external-service",
         });
       }
       case "process-crash": {
         run.status = "recovering";
         await this.assertRoomRuntimeRecovered(record);
-        return this.completeRun(room.id, run, "게임 process와 snapshot 연결이 정상 복구됐습니다.");
+        return this.completeRun(roomId, run, "게임 process와 snapshot 연결이 정상 복구됐습니다.");
       }
       case "pod-failure": {
         run.status = "recovering";
+        if (!room) throw new Error("pod_failure_room_state_required");
         if (room.status !== "running" || !room.podHealthy) {
           throw new UpstreamError(
             409,
@@ -378,7 +411,7 @@ export class FailureScenarioController {
           );
         }
         await this.assertRoomRuntimeRecovered(record);
-        return this.completeRun(room.id, run, "교체된 Pod와 snapshot 연결이 정상 복구됐습니다.");
+        return this.completeRun(roomId, run, "교체된 Pod와 snapshot 연결이 정상 복구됐습니다.");
       }
     }
   }
@@ -611,7 +644,7 @@ export class FailureScenarioController {
     }
   }
 
-  private syncAdmissionRun(roomId: string, run: MutableRun): void {
+  private async syncAdmissionRun(roomId: string, run: MutableRun): Promise<void> {
     if (!run.jobId) return;
     const status = this.admissionLoad.status(run.jobId);
     if (!status) {
@@ -620,6 +653,18 @@ export class FailureScenarioController {
       return;
     }
     run.evidence = this.admissionEvidence(status, run.evidence);
+    const health = await fetchJson<{ status?: string }>(
+      `${this.admissionEndpoint}/healthz`,
+      undefined,
+      600,
+    ).catch(() => undefined);
+    run.evidence = {
+      ...run.evidence,
+      admissionServerStatus: health?.status === "ok" ? "healthy" : "unreachable",
+      existingSessionsExpected: "unaffected",
+      recoveryOwner: "external-service",
+      ...(health ? {} : { phase: "server_failed", incidentTriggered: true }),
+    };
     run.status = status.phase === "failed" ? "failed" : "active";
     if (status.phase === "safety_timeout") {
       this.completeRun(roomId, run, "안전 제한 시간에 도달해 장애 부하만 중단했습니다. 서비스 복구로 처리하지 않습니다.", {

@@ -13,6 +13,8 @@ spec:
           env:
             - { name: OPSIA_ROOM_DIRECTORY_URL, value: http://room-orchestrator:8082 }
             - { name: SESSION_GATEWAY_INTERNAL_URL, value: http://session-gateway:8083 }
+            - { name: OPSIA_BOT_TACTICAL_BRAIN, value: "false" }
+            - { name: OPSIA_BOT_LIGHTWEIGHT_COMBAT, value: "true" }
             - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
             - name: OPS_CONTROL_TOKEN
               valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }

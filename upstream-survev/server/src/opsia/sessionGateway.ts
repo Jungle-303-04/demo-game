@@ -46,6 +46,9 @@ interface GatewaySocketData {
     spectator: boolean;
     spectateSessionId?: string;
     closed: boolean;
+    latencyProbeSentAt?: number;
+    latencySamplesMs: number[];
+    latencyMs?: number;
 }
 
 interface UpstreamConnection {
@@ -182,6 +185,7 @@ const parseRoutes = (): GatewayRoomRoute[] => {
 
 const registry = new FencedGatewayRoomRegistry(parseRoutes());
 const sessions = new Map<string, GatewaySession>();
+const downstreamSockets = new Map<string, UwsWebSocket<GatewaySocketData>>();
 const roomPreparations = new Map<string, RoomPreparation>();
 const roomVerifications = new Map<string, RoomVerification>();
 const roomCutoverOperations = new Map<string, RoomCutoverOperation>();
@@ -1009,6 +1013,40 @@ const metricsText = (): string => [
 
 const app = App();
 
+const LATENCY_PROBE_INTERVAL_MS = 2_000;
+const LATENCY_PROBE_TIMEOUT_MS = 5_000;
+const LATENCY_MEDIAN_WINDOW = 5;
+
+const recordLatencySample = (data: GatewaySocketData, latencyMs: number): void => {
+    data.latencySamplesMs.push(Math.max(0, Math.round(latencyMs)));
+    if (data.latencySamplesMs.length > LATENCY_MEDIAN_WINDOW) data.latencySamplesMs.shift();
+    const sorted = data.latencySamplesMs.slice().sort((left, right) => left - right);
+    const middle = Math.floor(sorted.length / 2);
+    data.latencyMs = sorted.length % 2 === 0
+        ? Math.round((sorted[middle - 1]! + sorted[middle]!) / 2)
+        : sorted[middle]!;
+};
+
+const probeDownstreamLatency = (socket: UwsWebSocket<GatewaySocketData>): void => {
+    const data = socket.getUserData();
+    const now = Date.now();
+    if (data.closed || (
+        data.latencyProbeSentAt !== undefined
+        && now - data.latencyProbeSentAt < LATENCY_PROBE_TIMEOUT_MS
+    )) return;
+    data.latencyProbeSentAt = now;
+    try {
+        socket.ping("opsia-latency");
+    } catch {
+        data.latencyProbeSentAt = undefined;
+    }
+};
+
+const latencyProbeTimer = setInterval(() => {
+    for (const socket of downstreamSockets.values()) probeDownstreamLatency(socket);
+}, LATENCY_PROBE_INTERVAL_MS);
+latencyProbeTimer.unref();
+
 app.get("/healthz", (response) => replyJson(response, 200, {
     status: "ok",
     rooms: registry.list().length,
@@ -1040,6 +1078,22 @@ app.get("/internal/rooms", (response, request) => {
         })),
         verifications: [...roomVerifications.values()].map(roomVerificationView),
         operations: [...roomCutoverOperations.values()].map(operationView),
+    });
+});
+
+app.get("/internal/latencies", (response, request) => {
+    if (!authorized(request.getHeader("authorization"))) return replyJson(response, 401, { error: "unauthorized" });
+    replyJson(response, 200, {
+        sessions: [...downstreamSockets.values()]
+            .map((socket) => socket.getUserData())
+            .filter((data) => !data.closed && data.latencyMs !== undefined)
+            .map((data) => ({
+                roomId: data.roomId,
+                sessionId: data.sessionId,
+                latencyMs: data.latencyMs,
+                sampleCount: data.latencySamplesMs.length,
+                spectator: data.spectator,
+            })),
     });
 });
 
@@ -1257,6 +1311,7 @@ app.ws<GatewaySocketData>("/play/*", {
                 spectator: query.get("spectator") === "1",
                 spectateSessionId: query.get("target") ?? undefined,
                 closed: false,
+                latencySamplesMs: [],
             },
             request.getHeader("sec-websocket-key"),
             request.getHeader("sec-websocket-protocol"),
@@ -1273,7 +1328,9 @@ app.ws<GatewaySocketData>("/play/*", {
         }
         const session = new GatewaySession(socket, data);
         sessions.set(data.id, session);
+        downstreamSockets.set(data.id, socket);
         metrics.connections++;
+        probeDownstreamLatency(socket);
         void session.start(route).catch(() => {
             if (!data.closed) {
                 try {
@@ -1291,9 +1348,16 @@ app.ws<GatewaySocketData>("/play/*", {
     message(socket, payload) {
         sessions.get(socket.getUserData().id)?.receive(payload);
     },
+    pong(socket) {
+        const data = socket.getUserData();
+        if (data.latencyProbeSentAt === undefined) return;
+        recordLatencySample(data, Date.now() - data.latencyProbeSentAt);
+        data.latencyProbeSentAt = undefined;
+    },
     close(socket) {
         const data = socket.getUserData();
         data.closed = true;
+        downstreamSockets.delete(data.id);
         sessions.get(data.id)?.stop();
         if (sessions.delete(data.id)) {
             metrics.connections = Math.max(0, metrics.connections - 1);

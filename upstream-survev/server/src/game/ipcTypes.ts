@@ -60,6 +60,18 @@ export interface OpsiaSnapshotData {
         y: number;
         count: number;
     }>;
+    obstacles: Array<{
+        id: number;
+        type: string;
+        kind: "tree" | "rock" | "wall" | "obstacle";
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        destructible: boolean;
+        containsLoot: boolean;
+        health: number;
+    }>;
     players: Array<{
         sessionId: string;
         nickname: string;
@@ -78,6 +90,7 @@ export interface OpsiaSnapshotData {
         bandages?: number;
         healthkits?: number;
         isBot: boolean;
+        indoors: boolean;
         connected: boolean;
     }>;
     tickP95Ms: number;

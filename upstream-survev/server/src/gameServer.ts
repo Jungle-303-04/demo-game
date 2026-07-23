@@ -569,7 +569,27 @@ app.get("/ops/snapshot", (res, req) => {
         res.writeStatus("503 Service Unavailable").end(JSON.stringify({ error: "ops_snapshot_pending" }));
         return;
     }
-    const responseSnapshot = req.getQuery("brain") === "1"
+    const brainMode = req.getQuery("brain");
+    const responseSnapshot = brainMode === "lite"
+        ? {
+            capturedAt: snapshot.capturedAt,
+            map: {
+                width: snapshot.map.width,
+                height: snapshot.map.height,
+                objects: [],
+                navigation: [],
+            },
+            zone: snapshot.zone,
+            loot: snapshot.loot,
+            // Crates are the only collision objects the lightweight combat
+            // brain needs. Omitting the thousands of static walls keeps bot
+            // decisions responsive while still allowing loot-box attacks.
+            obstacles: snapshot.obstacles.filter((obstacle) =>
+                obstacle.destructible && obstacle.containsLoot && obstacle.health > 0
+            ),
+            players: snapshot.players,
+        }
+        : brainMode === "1"
         ? {
             ...snapshot,
             map: {

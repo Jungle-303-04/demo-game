@@ -114,6 +114,60 @@ interface BotJobResponse {
   error?: string;
 }
 
+interface BotRunnerState {
+  bots: Array<{
+    sessionId: string;
+    roomId: string;
+    connected: boolean;
+  }>;
+}
+
+const connectedRoomBots = (state: BotRunnerState, roomId: string) =>
+  state.bots.filter((bot) => bot.roomId === roomId && bot.connected);
+
+const resetRoomAndRestoreBots = async (roomId: string): Promise<Record<string, unknown>> => {
+  const room = await roomRecord(roomId);
+  const before = await fetchJson<BotRunnerState>(`${botRunner}/bots`, undefined, 5_000);
+  const originalBots = connectedRoomBots(before, roomId);
+  const originalSessions = new Set(originalBots.map((bot) => bot.sessionId));
+  const result = await jsonRequest<Record<string, unknown>>(
+    `${room.endpoint}/ops/end`,
+    "POST",
+    undefined,
+    8_000,
+  );
+
+  // A logical map reset closes every old protocol socket. Wait for those
+  // exact sessions to disappear before restoring the previous population.
+  let after = await fetchJson<BotRunnerState>(`${botRunner}/bots`, undefined, 5_000);
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const oldConnectionRemains = connectedRoomBots(after, roomId)
+      .some((bot) => originalSessions.has(bot.sessionId));
+    if (!oldConnectionRemains) break;
+    await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
+    after = await fetchJson<BotRunnerState>(`${botRunner}/bots`, undefined, 5_000);
+  }
+
+  const currentBots = connectedRoomBots(after, roomId).length;
+  const restoreCount = Math.max(0, originalBots.length - currentBots);
+  if (restoreCount > 0) {
+    await jsonRequest(`${botRunner}/bots/spawn`, "POST", {
+      room: roomId,
+      count: restoreCount,
+      mode: "normal",
+    }, 60_000);
+  }
+  recordEvent(
+    "ROOM_RESET",
+    room.roomId,
+    "game-server",
+    `맵 초기화 완료 · 봇 ${originalBots.length}명 복구`,
+    "warning",
+    { restoredBots: restoreCount, targetBots: originalBots.length },
+  );
+  return { ...result, restoredBots: restoreCount, targetBots: originalBots.length };
+};
+
 const botJob = async (roomId: string, jobId: string): Promise<BotJobResponse> => {
   const job = await fetchJson<BotJobResponse>(`${botRunner}/bots/jobs/${encodeURIComponent(jobId)}`);
   if (job.roomId !== roomId) throw new UpstreamError(404, { error: "bot_job_not_found" }, "bot_job_not_found");
@@ -270,6 +324,11 @@ const server = createServer(async (request, response) => {
       return send(response, 202, await commandRoom(commandMatch[1]!, String(body.command ?? "")));
     }
 
+    const resetMatch = url.pathname.match(/^\/api\/admin\/rooms\/(room-\d+)\/reset$/);
+    if (resetMatch && request.method === "POST") {
+      return send(response, 200, await resetRoomAndRestoreBots(resetMatch[1]!));
+    }
+
     const scenarioMatch = url.pathname.match(
       /^\/api\/admin\/rooms\/(room-\d+)\/scenarios\/([^/]+)\/(start|recover)$/,
     );
@@ -283,10 +342,18 @@ const server = createServer(async (request, response) => {
       const registryState = await getRegistryState(orchestrator);
       const record = registryState.rooms.find((candidate) => candidate.roomId === roomId);
       if (!record) return send(response, 404, { error: "room_not_found" });
-      const room = await adminRoom(roomId);
       const result = action === "start"
-        ? await failureScenarios.start(record, room, scenarioId, registryState.scalingAvailable)
-        : await failureScenarios.recover(record, room, scenarioId);
+        ? await failureScenarios.start(
+          record,
+          await adminRoom(roomId),
+          scenarioId,
+          registryState.scalingAvailable,
+        )
+        : await failureScenarios.recover(
+          record,
+          scenarioId === "pod-failure" ? await adminRoom(roomId) : undefined,
+          scenarioId,
+        );
       recordEvent(
         action === "start" ? "FAILURE_SCENARIO_STARTED" : "FAILURE_SCENARIO_RECOVERED",
         roomId,
@@ -307,14 +374,26 @@ const server = createServer(async (request, response) => {
         count: Number(body.count),
         intervalMs: Number(body.intervalMs ?? 300),
         mode: body.mode === "hack" ? "hack" : "normal",
-      });
+      }, 10_000);
       recordEvent("BOT_LOAD_STARTED", roomId, "load-generator", `LoadBot ${job.total}명 투입 시작`, "info", { jobId: job.jobId });
       return send(response, 202, { jobId: job.jobId, accepted: job.total });
     }
     if (botsMatch && request.method === "DELETE") {
       const roomId = botsMatch[1]!;
-      const result = await jsonRequest<{ killed: number }>(`${botRunner}/bots/kill`, "POST", { room: roomId });
-      recordEvent("BOTS_REMOVED", roomId, "load-generator", `LoadBot ${result.killed}명 연결 종료`, "warning");
+      const body = await readJson(request);
+      const count = body.count === undefined ? undefined : Number(body.count);
+      const result = await jsonRequest<{ killed: number; remaining: number; minimumBotsPerRoom: number }>(
+        `${botRunner}/bots/kill`,
+        "POST",
+        { room: roomId, ...(count === undefined ? {} : { count }) },
+      );
+      recordEvent(
+        "BOTS_REMOVED",
+        roomId,
+        "load-generator",
+        `LoadBot ${result.killed}명 연결 종료 · ${result.remaining}명 유지`,
+        "warning",
+      );
       return send(response, 200, result);
     }
 
@@ -360,12 +439,9 @@ const server = createServer(async (request, response) => {
       return send(response, 200, await jsonRequest(`${orchestrator}/rooms`, "POST", await readJson(request)));
     }
     const end = url.pathname.match(/^\/api\/rooms\/(room-\d+)\/end$/);
-    if (request.method === "POST" && end) return send(response, 200, await commandRoom(end[1]!, "snapshot").then(async () => {
-      const room = await roomRecord(end[1]!);
-      const result = await jsonRequest<Record<string, unknown>>(`${room.endpoint}/ops/end`, "POST", undefined, 8_000);
-      recordEvent("ROOM_RESET", room.roomId, "game-server", "논리적 방 초기화 완료", "warning");
-      return result;
-    }));
+    if (request.method === "POST" && end) {
+      return send(response, 200, await resetRoomAndRestoreBots(end[1]!));
+    }
     if (request.method === "POST" && url.pathname === "/api/bots/spawn") return send(response, 201, await jsonRequest(`${botRunner}/bots/spawn`, "POST", await readJson(request), 30_000));
     if (request.method === "POST" && url.pathname === "/api/bots/kill") return send(response, 200, await jsonRequest(`${botRunner}/bots/kill`, "POST", await readJson(request)));
     if (request.method === "GET" && url.pathname === "/api/bots") return send(response, 200, await fetchJson(`${botRunner}/bots`));

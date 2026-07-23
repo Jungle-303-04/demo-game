@@ -128,6 +128,14 @@ interface BotSummary {
   connected: boolean;
 }
 
+interface GatewayLatencySummary {
+  roomId: string;
+  sessionId: string;
+  latencyMs: number;
+  sampleCount: number;
+  spectator: boolean;
+}
+
 export interface AdminPlayer {
   id: string;
   name: string;
@@ -218,6 +226,7 @@ export interface AdminRoom {
     inputAccepted: number;
     inputRejected: number;
     admissionFailureRatePercent?: number;
+    resourceSampleCount?: number;
   };
 }
 
@@ -251,6 +260,62 @@ export async function fetchJson<T>(
 }
 
 const clamp = (value: number, min = 0, max = 100) => Math.min(max, Math.max(min, value));
+const RESOURCE_MEDIAN_WINDOW = 9;
+const RESOURCE_SMOOTHING_ALPHA = 0.2;
+
+interface ResourceSampleHistory {
+  capturedAt: number;
+  cpuPercent: number[];
+  memoryMb: number[];
+  smoothedCpuPercent?: number;
+  smoothedMemoryMb?: number;
+}
+
+const resourceSampleHistories = new Map<string, ResourceSampleHistory>();
+
+const median = (values: number[]): number => {
+  const sorted = values.slice().sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1]! + sorted[middle]!) / 2
+    : sorted[middle]!;
+};
+
+const stabilizedResourceMetrics = (
+  roomId: string,
+  capturedAt: number,
+  cpuPercent: number,
+  memoryMb: number,
+): { cpuPercent: number; memoryMb: number; sampleCount: number } => {
+  let history = resourceSampleHistories.get(roomId);
+  if (!history || capturedAt < history.capturedAt) {
+    history = { capturedAt: 0, cpuPercent: [], memoryMb: [] };
+    resourceSampleHistories.set(roomId, history);
+  }
+  if (capturedAt > 0 && capturedAt !== history.capturedAt) {
+    history.capturedAt = capturedAt;
+    history.cpuPercent.push(cpuPercent);
+    history.memoryMb.push(memoryMb);
+    if (history.cpuPercent.length > RESOURCE_MEDIAN_WINDOW) history.cpuPercent.shift();
+    if (history.memoryMb.length > RESOURCE_MEDIAN_WINDOW) history.memoryMb.shift();
+    if (history.cpuPercent.length >= RESOURCE_MEDIAN_WINDOW) {
+      const medianCpu = median(history.cpuPercent);
+      const medianMemory = median(history.memoryMb);
+      history.smoothedCpuPercent = history.smoothedCpuPercent === undefined
+        ? medianCpu
+        : history.smoothedCpuPercent + (medianCpu - history.smoothedCpuPercent) * RESOURCE_SMOOTHING_ALPHA;
+      history.smoothedMemoryMb = history.smoothedMemoryMb === undefined
+        ? medianMemory
+        : history.smoothedMemoryMb + (medianMemory - history.smoothedMemoryMb) * RESOURCE_SMOOTHING_ALPHA;
+    }
+  }
+  return {
+    cpuPercent: history.smoothedCpuPercent ?? cpuPercent,
+    memoryMb: history.smoothedMemoryMb ?? memoryMb,
+    sampleCount: history.cpuPercent.length,
+  };
+};
+
 const screenY = (worldY: number, mapHeight: number): number =>
   clamp(mapHeight - worldY, 0, mapHeight);
 const screenRotation = (worldRotation?: number): number => {
@@ -313,8 +378,17 @@ export async function buildAdminRooms(
   compactMaps = false,
 ): Promise<AdminRoom[]> {
   const registryRooms = records ?? await listRegistryRooms(orchestrator);
-  const botResponse = await optionalJson<{ bots: BotSummary[] }>(`${botRunner}/bots`);
+  const sessionGateway = process.env.SESSION_GATEWAY_INTERNAL_URL ?? "http://session-gateway:8083";
+  const [botResponse, latencyResponse] = await Promise.all([
+    optionalJson<{ bots: BotSummary[] }>(`${botRunner}/bots`),
+    optionalJson<{ sessions: GatewayLatencySummary[] }>(`${sessionGateway}/internal/latencies`),
+  ]);
   const connectedBots = new Set((botResponse?.bots ?? []).filter((bot) => bot.connected).map((bot) => `${bot.roomId}:${bot.sessionId}`));
+  const latencyBySession = new Map(
+    (latencyResponse?.sessions ?? [])
+      .filter((session) => !session.spectator && Number.isFinite(session.latencyMs))
+      .map((session) => [`${session.roomId}:${session.sessionId}`, session.latencyMs]),
+  );
 
   return Promise.all(registryRooms.map(async (record): Promise<AdminRoom> => {
     const spec = record.spec ?? roomDefaults(record);
@@ -350,7 +424,7 @@ export async function buildAdminRooms(
         kills: player.score,
         weapon: player.weapon ?? "unknown",
         ammo: player.ammo ?? 0,
-        ping: 0,
+        ping: latencyBySession.get(`${record.roomId}:${player.sessionId}`) ?? -1,
         squad: factionMode ? (player.team === "red" ? "RED" : "BLUE") : "SOLO",
         color: factionMode
           ? (player.team === "red" ? "#ff7c72" : "#75a8ff")
@@ -374,6 +448,12 @@ export async function buildAdminRooms(
     const zone = snapshot?.zone;
     const currentPodName = summary?.podName ?? record.podName;
     const podRoomLabel = `game.opsia.dev/room-id=${record.roomId}`;
+    const resources = stabilizedResourceMetrics(
+      record.roomId,
+      capturedAt,
+      snapshot?.cpuPercent ?? summary?.cpuPercent ?? 0,
+      snapshot?.memoryMb ?? summary?.memoryMb ?? 0,
+    );
     return {
       id: record.roomId,
       roomId: record.roomId,
@@ -440,8 +520,8 @@ export async function buildAdminRooms(
         }
         : { x: 50, y: 50, radius: 45, nextX: 50, nextY: 50, nextRadius: 35 },
       metrics: {
-        cpuPercent: snapshot?.cpuPercent ?? summary?.cpuPercent ?? 0,
-        memoryMb: snapshot?.memoryMb ?? summary?.memoryMb ?? 0,
+        cpuPercent: resources.cpuPercent,
+        memoryMb: resources.memoryMb,
         memoryLimitMb: Number(process.env.GAME_MEMORY_LIMIT_MB ?? 2_048),
         networkInKbps: null,
         networkOutKbps: null,
@@ -451,6 +531,7 @@ export async function buildAdminRooms(
         telemetryLagMs,
         inputAccepted: snapshot?.inputAccepted ?? summary?.inputAccepted ?? 0,
         inputRejected: snapshot?.inputRejected ?? summary?.inputRejected ?? 0,
+        resourceSampleCount: resources.sampleCount,
       },
     };
   }));

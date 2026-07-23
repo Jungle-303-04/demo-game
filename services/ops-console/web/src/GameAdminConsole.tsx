@@ -21,11 +21,11 @@ import {
   ControlPlaneError,
   controlPlaneClient,
 } from "./control-plane-client.js";
-import { FailureScenarioPage } from "./FailureScenarioPage.js";
 
 type StyleWithVariables = CSSProperties & Record<`--${string}`, string | number>;
 type ConnectionState = "connecting" | "connected" | "degraded";
-type ConsolePage = "spectate" | "scenarios";
+type BorderMetricKey = "admission" | "tick" | "resources" | "latency";
+type HealthTone = "unknown" | "healthy" | "warning" | "danger";
 
 interface DocumentPictureInPictureController {
   requestWindow(options?: { width?: number; height?: number }): Promise<Window>;
@@ -43,11 +43,21 @@ type SpectatorFrameWindow = Window & {
 };
 
 const POLL_INTERVAL_MS = 400;
-const UI_ANIMATION_FRAME_MS = 1000 / 60;
 const BOT_BATCH_SIZE = 10;
-const ROOM_ID_LABEL_KEY = "game.opsia.dev/room-id";
+const MINIMUM_VISIBLE_BOTS = 1;
 const MAP_BACKGROUND_OPACITY_KEY = "opsia.map-background-opacity";
 const MAP_BACKGROUND_BLUR_KEY = "opsia.map-background-blur";
+
+const BORDER_METRIC_OPTIONS: ReadonlyArray<{
+  key: BorderMetricKey;
+  label: string;
+  threshold: string;
+}> = [
+  { key: "admission", label: "입장 실패율", threshold: "경고 5% · 장애 20%" },
+  { key: "tick", label: "틱 P95", threshold: "경고 8ms · 장애 16ms" },
+  { key: "resources", label: "CPU / 메모리", threshold: "CPU 70/90% · 메모리 75/90%" },
+  { key: "latency", label: "지연 P95", threshold: "경고 100ms · 장애 200ms" },
+];
 
 const OBJECT_COLORS: Record<MapLayoutTelemetry["objects"][number]["kind"], string> = {
   building: "#73563f",
@@ -68,10 +78,6 @@ function roomStableId(room: GameRoom) {
 
 function roomCurrentPodName(room: GameRoom) {
   return room.currentPodName || room.podName;
-}
-
-function roomPodLabel(room: GameRoom) {
-  return room.podRoomLabel || `${ROOM_ID_LABEL_KEY}=${roomStableId(room)}`;
 }
 
 function mapLayoutKey(map: MapLayoutTelemetry, seed: number) {
@@ -214,12 +220,6 @@ function errorMessage(error: unknown) {
   return "게임 서버 연결에 실패했습니다.";
 }
 
-function consolePageFromLocation(): ConsolePage {
-  return window.location.pathname.replace(/\/+$/, "") === "/scenarios"
-    ? "scenarios"
-    : "spectate";
-}
-
 function playerCounts(room: GameRoom) {
   const bots = room.players.filter((player) => player.isBot).length;
   return { bots, humans: room.players.length - bots };
@@ -236,125 +236,211 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-function cyclicOffset(index: number, selectedIndex: number, total: number) {
-  if (total <= 0) return 0;
-  let offset = index - selectedIndex;
-  const half = total / 2;
-  if (offset > half) offset -= total;
-  if (offset < -half) offset += total;
-  return offset;
-}
-
-type AdmissionTone = "healthy" | "warning" | "danger";
-
 const ADMISSION_WARNING_PERCENT = 5;
 const ADMISSION_INCIDENT_PERCENT = 20;
-const ADMISSION_CHART_MAX_PERCENT = 25;
-const TICK_CHART_BAR_BASE_Y = 50;
-const TICK_CHART_BAR_HEIGHT = 44;
-const TICK_HEALTHY_HUE = 145;
-const TICK_WARNING_HUE = 45;
-const TICK_DANGER_HUE = 6;
+const TICK_WARNING_MS = 8;
+const TICK_INCIDENT_MS = 16;
+const CPU_WARNING_PERCENT = 70;
+const CPU_INCIDENT_PERCENT = 90;
+const MEMORY_WARNING_PERCENT = 75;
+const MEMORY_INCIDENT_PERCENT = 90;
+const RESOURCE_STABLE_SAMPLE_COUNT = 9;
+const LATENCY_WARNING_MS = 100;
+const LATENCY_INCIDENT_MS = 200;
+const HEALTHY_HUE = 145;
+const WARNING_HUE = 45;
+const DANGER_HUE = 6;
+const UNKNOWN_HUE = 215;
 
 function smoothStep(progress: number) {
   const clamped = clamp(progress, 0, 1);
   return clamped * clamped * (3 - 2 * clamped);
 }
 
-function admissionFailureRateForRoom(room: GameRoom) {
-  return clamp(Number(room.metrics.admissionFailureRatePercent ?? 0), 0, 100);
+interface MetricSample {
+  hue: number;
+  label: string;
+  risk: number;
+  saturation: number;
+  tone: HealthTone;
+  unit: string;
+  valueText: string;
 }
 
-function admissionRiskProgress(failureRate: number) {
-  return smoothStep(failureRate / ADMISSION_INCIDENT_PERCENT);
+interface RoomBorderProfile {
+  ariaValue: string;
+  dominant: MetricSample;
+  label: string;
+  primary: MetricSample;
+  secondary?: MetricSample;
+  stateLabel: string;
+  tone: HealthTone;
 }
 
-function admissionHueFor(failureRate: number) {
-  if (failureRate < ADMISSION_WARNING_PERCENT) return TICK_HEALTHY_HUE;
-
-  const progress = smoothStep(
-    (failureRate - ADMISSION_WARNING_PERCENT)
-      / (ADMISSION_INCIDENT_PERCENT - ADMISSION_WARNING_PERCENT),
-  );
-  return Math.round(TICK_WARNING_HUE - progress * (TICK_WARNING_HUE - TICK_DANGER_HUE));
-}
-
-function admissionBarFillFor(failureRate: number) {
-  const progress = admissionRiskProgress(failureRate);
-  const alpha = (0.58 + progress * 0.18).toFixed(2);
-  return `hsl(${admissionHueFor(failureRate)} 60% 48% / ${alpha})`;
-}
-
-function admissionVisualStyleVars(failureRate: number): StyleWithVariables {
-  const progress = admissionRiskProgress(failureRate);
+function statusSurfaceStyleVars(profile: RoomBorderProfile): StyleWithVariables {
+  const right = profile.secondary ?? profile.primary;
   return {
-    "--bar-alpha": (0.58 + progress * 0.26).toFixed(2),
-    "--bar-hue": admissionHueFor(failureRate),
-    "--bar-shadow-alpha": (0.08 + progress * 0.16).toFixed(2),
-    fill: admissionBarFillFor(failureRate),
+    "--status-left-hue": profile.primary.hue,
+    "--status-left-saturation": `${profile.primary.saturation}%`,
+    "--status-right-hue": right.hue,
+    "--status-right-saturation": `${right.saturation}%`,
+    "--tick-border-alpha": (0.2 + profile.dominant.risk * 0.0032).toFixed(2),
+    "--tick-glow-alpha": (0.08 + profile.dominant.risk * 0.0027).toFixed(2),
+    "--tick-hue": profile.dominant.hue,
+    "--tick-risk": profile.dominant.risk,
+    "--tick-saturation": `${profile.dominant.saturation}%`,
+    "--tick-soft-alpha": (0.08 + profile.dominant.risk * 0.0021).toFixed(2),
   };
 }
 
-function tickSurfaceStyleVars(tickHue: number, tickRisk: number): StyleWithVariables {
-  return {
-    "--tick-border-alpha": (0.2 + tickRisk * 0.0032).toFixed(2),
-    "--tick-glow-alpha": (0.08 + tickRisk * 0.0027).toFixed(2),
-    "--tick-hue": tickHue,
-    "--tick-risk": tickRisk,
-    "--tick-soft-alpha": (0.08 + tickRisk * 0.0021).toFixed(2),
-  };
-}
-
-function admissionTone(failureRate: number): AdmissionTone {
-  if (failureRate >= ADMISSION_INCIDENT_PERCENT) return "danger";
-  if (failureRate >= ADMISSION_WARNING_PERCENT) return "warning";
+function healthTone(value: number, warning: number, incident: number): HealthTone {
+  if (value >= incident) return "danger";
+  if (value >= warning) return "warning";
   return "healthy";
 }
 
-function admissionChartBarTopY(failureRate: number) {
-  return TICK_CHART_BAR_BASE_Y
-    - clamp(failureRate / ADMISSION_CHART_MAX_PERCENT, 0, 1) * TICK_CHART_BAR_HEIGHT;
+function healthHue(value: number, warning: number, incident: number) {
+  if (value < warning) return HEALTHY_HUE;
+  const progress = smoothStep((value - warning) / (incident - warning));
+  return Math.round(WARNING_HUE - progress * (WARNING_HUE - DANGER_HUE));
 }
 
-function admissionToneLabel(tone: AdmissionTone) {
-  return tone === "danger" ? "장애 · 입장 실패율" :
-    tone === "warning" ? "주의 · 입장 실패율" :
-      "정상 · 입장 실패율";
-}
-
-function roomLoadProfile(room: GameRoom, index: number, _nowMs = Date.now()) {
-  const admissionFailureRate = admissionFailureRateForRoom(room);
-  const rejected = Math.max(0, Math.round(room.metrics.inputRejected));
-  const telemetryLag = clamp(Math.round(room.metrics.telemetryLagMs), 0, 9_999);
-  const cpu = clamp(Math.round(room.metrics.cpuPercent), 0, 100);
-  const redisOps = clamp(Math.round(room.metrics.redisOpsPerSecond ?? room.players.length * 2 + index * 9), 0, 999);
-  const admissionRisk = Math.round(admissionRiskProgress(admissionFailureRate) * 100);
-  const admissionToneValue = admissionTone(admissionFailureRate);
-  const admissionLabel = admissionToneLabel(admissionToneValue);
-  const admissionHue = admissionHueFor(admissionFailureRate);
-  const admissionSeries = Array.from({ length: 14 }, () => admissionFailureRate);
-  const pathFor = (series: number[]) => series
-    .map((value, point) => {
-      const x = (point / (series.length - 1)) * 100;
-      const y = admissionChartBarTopY(value);
-      return `${point === 0 ? "M" : "L"} ${x.toFixed(1)} ${y.toFixed(1)}`;
-    })
-    .join(" ");
-  const linePath = pathFor(admissionSeries);
+function metricSample(
+  label: string,
+  value: number,
+  warning: number,
+  incident: number,
+  unit: string,
+  precision: number,
+): MetricSample {
+  const tone = healthTone(value, warning, incident);
   return {
-    admissionFailureRate,
-    admissionHue,
-    admissionLabel,
-    admissionRisk,
-    admissionTone: admissionToneValue,
-    bars: admissionSeries,
-    cpu,
-    fillPath: `${linePath} L 100 52 L 0 52 Z`,
-    linePath,
-    redisOps,
-    rejected,
-    telemetryLag,
+    hue: healthHue(value, warning, incident),
+    label,
+    risk: Math.round(smoothStep(value / incident) * 100),
+    saturation: 76,
+    tone,
+    unit,
+    valueText: value.toFixed(precision),
   };
+}
+
+function unknownMetricSample(label: string, unit: string): MetricSample {
+  return {
+    hue: UNKNOWN_HUE,
+    label,
+    risk: 0,
+    saturation: 5,
+    tone: "unknown",
+    unit,
+    valueText: "—",
+  };
+}
+
+const TONE_RANK: Record<HealthTone, number> = {
+  unknown: -1,
+  healthy: 0,
+  warning: 1,
+  danger: 2,
+};
+
+function borderProfile(
+  label: string,
+  primary: MetricSample,
+  secondary?: MetricSample,
+): RoomBorderProfile {
+  const dominant = secondary && TONE_RANK[secondary.tone] > TONE_RANK[primary.tone]
+    ? secondary
+    : primary;
+  const tone = dominant.tone;
+  const stateLabel = tone === "danger"
+    ? "장애"
+    : tone === "warning"
+      ? "주의"
+      : tone === "unknown"
+        ? "데이터 없음"
+        : "정상";
+  const ariaValue = secondary
+    ? `${primary.label} ${primary.valueText}${primary.unit} / ${secondary.label} ${secondary.valueText}${secondary.unit}`
+    : `${primary.label} ${primary.valueText}${primary.unit}`;
+  return { ariaValue, dominant, label, primary, secondary, stateLabel, tone };
+}
+
+function percentile95(values: number[]) {
+  const sorted = values.slice().sort((left, right) => left - right);
+  return sorted[Math.max(0, Math.ceil(sorted.length * 0.95) - 1)] ?? 0;
+}
+
+function roomBorderProfile(room: GameRoom, metric: BorderMetricKey): RoomBorderProfile {
+  switch (metric) {
+    case "tick":
+      return borderProfile("틱 P95", metricSample(
+        "틱 P95",
+        clamp(Number(room.metrics.tickP95Ms ?? 0), 0, 999),
+        TICK_WARNING_MS,
+        TICK_INCIDENT_MS,
+        "ms",
+        1,
+      ));
+    case "resources": {
+      if ((room.metrics.resourceSampleCount ?? RESOURCE_STABLE_SAMPLE_COUNT) < RESOURCE_STABLE_SAMPLE_COUNT) {
+        return {
+          ...borderProfile(
+            "CPU / 메모리",
+            unknownMetricSample("CPU", "%"),
+            unknownMetricSample("메모리", "%"),
+          ),
+          stateLabel: "수집 중",
+        };
+      }
+      const memoryLimitMb = Math.max(1, Number(room.metrics.memoryLimitMb ?? 0));
+      return borderProfile(
+        "CPU / 메모리",
+        metricSample(
+          "CPU",
+          clamp(Number(room.metrics.cpuPercent ?? 0), 0, 100),
+          CPU_WARNING_PERCENT,
+          CPU_INCIDENT_PERCENT,
+          "%",
+          0,
+        ),
+        metricSample(
+          "메모리",
+          clamp((Number(room.metrics.memoryMb ?? 0) / memoryLimitMb) * 100, 0, 100),
+          MEMORY_WARNING_PERCENT,
+          MEMORY_INCIDENT_PERCENT,
+          "%",
+          0,
+        ),
+      );
+    }
+    case "latency": {
+      const latencyPings = room.players
+        .filter((player) => Number.isFinite(player.ping) && player.ping >= 0)
+        .map((player) => player.ping);
+      const latencyLabel = "전체 접속 지연 P95";
+      const sample = latencyPings.length > 0
+        ? metricSample(
+            latencyLabel,
+            clamp(percentile95(latencyPings), 0, 999),
+            LATENCY_WARNING_MS,
+            LATENCY_INCIDENT_MS,
+            "ms",
+            0,
+          )
+        : unknownMetricSample(latencyLabel, "ms");
+      return borderProfile(latencyLabel, sample);
+    }
+    default:
+      return borderProfile("입장 실패율", metricSample(
+        "입장 실패율",
+        clamp(Number(room.metrics.admissionFailureRatePercent ?? 0), 0, 100),
+        ADMISSION_WARNING_PERCENT,
+        ADMISSION_INCIDENT_PERCENT,
+        "%",
+        1,
+      ));
+  }
 }
 
 function isSnapshotReady(room: GameRoom) {
@@ -363,27 +449,6 @@ function isSnapshotReady(room: GameRoom) {
     room.mapLayout.width > 0 &&
     room.mapLayout.height > 0
   );
-}
-
-function useAnimationFrameNow(enabled: boolean) {
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  const lastFrameRef = useRef(0);
-
-  useEffect(() => {
-    if (!enabled) return undefined;
-    let animationFrame = 0;
-    const update = (timestamp: number) => {
-      if (timestamp - lastFrameRef.current >= UI_ANIMATION_FRAME_MS) {
-        lastFrameRef.current = timestamp;
-        setNowMs(Date.now());
-      }
-      animationFrame = window.requestAnimationFrame(update);
-    };
-    animationFrame = window.requestAnimationFrame(update);
-    return () => window.cancelAnimationFrame(animationFrame);
-  }, [enabled]);
-
-  return nowMs;
 }
 
 function PlayerMarkers({
@@ -513,9 +578,8 @@ function LiveRoomMiniMap({ room }: { room: GameRoom }) {
 }
 
 function ServerBlock({
-  animationNow,
+  borderMetric,
   room,
-  ordinal,
   onJoin,
   onSpectate,
   onScenario,
@@ -523,9 +587,8 @@ function ServerBlock({
   scenarioDisabled,
   scenarioPending,
 }: {
-  animationNow: number;
+  borderMetric: BorderMetricKey;
   room: GameRoom;
-  ordinal: number;
   onJoin: () => void;
   onSpectate: () => void;
   onScenario: () => void;
@@ -535,13 +598,13 @@ function ServerBlock({
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const profile = roomLoadProfile(room, ordinal - 1, animationNow);
+  const profile = roomBorderProfile(room, borderMetric);
   const displayName = roomDisplayName(room);
   const stableRoomId = roomStableId(room);
   const currentPodName = roomCurrentPodName(room);
   const menuId = `server-block-menu-${room.id}`;
   const style = {
-    ...tickSurfaceStyleVars(profile.admissionHue, profile.admissionRisk),
+    ...statusSurfaceStyleVars(profile),
   } as StyleWithVariables;
 
   useEffect(() => {
@@ -569,12 +632,12 @@ function ServerBlock({
 
   return (
     <article
-      aria-label={`${displayName}, ${currentPodName}, 입장 실패율 ${profile.admissionFailureRate.toFixed(1)}%`}
-      className={`server-block is-${profile.admissionTone}`}
+      aria-label={`${displayName}, ${currentPodName}, ${profile.ariaValue}`}
+      className={`server-block is-${profile.tone}`}
       style={style}
     >
       <div className="server-block-tick">
-        <span>{profile.admissionLabel}</span>
+        <span>{profile.stateLabel} · {profile.label}</span>
       </div>
       <div className="server-block-menu" ref={menuRef}>
         <button
@@ -612,8 +675,16 @@ function ServerBlock({
         <div className="server-block-name" title={currentPodName}>
           {currentPodName}
         </div>
-        <strong className="server-block-tick-value">
-          {profile.admissionFailureRate.toFixed(1)}<small>%</small>
+        <strong className={`server-block-tick-value${profile.secondary ? " is-paired" : ""}`}>
+          {profile.secondary ? (
+            <>
+              <span>{profile.primary.valueText}<small>{profile.primary.unit}</small></span>
+              <em>/</em>
+              <span>{profile.secondary.valueText}<small>{profile.secondary.unit}</small></span>
+            </>
+          ) : (
+            <>{profile.primary.valueText}<small>{profile.primary.unit}</small></>
+          )}
         </strong>
       </div>
       <div className="server-block-meta">
@@ -702,6 +773,7 @@ function JoinRoomDialog({
 function RoomDirectory({
   rooms,
   connection,
+  borderMetric,
   onJoinRoom,
   onOpenRoom,
   onRunAdmissionStorm,
@@ -711,6 +783,7 @@ function RoomDirectory({
 }: {
   rooms: GameRoom[];
   connection: ConnectionState;
+  borderMetric: BorderMetricKey;
   onJoinRoom: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
   onRunAdmissionStorm: (roomId: string) => void;
@@ -718,8 +791,6 @@ function RoomDirectory({
   admissionActiveRoomId: string | null;
   scenarioPendingRoomId: string | null;
 }) {
-  const animationNow = useAnimationFrameNow(rooms.length > 0);
-
   if (rooms.length === 0) {
     return (
       <section className="empty-state" role="status">
@@ -736,27 +807,26 @@ function RoomDirectory({
         data-room-count={Math.min(rooms.length, 6)}
         aria-label="실시간 게임 서버"
       >
-        {rooms.map((room, index) => {
+        {rooms.map((room) => {
           const admissionActive = admissionActiveRoomId === room.id;
           const admissionRunningElsewhere = Boolean(
             admissionActiveRoomId && admissionActiveRoomId !== room.id,
           );
           return (
             <ServerBlock
-              animationNow={animationNow}
+              borderMetric={borderMetric}
               key={room.id}
               onJoin={() => onJoinRoom(room.id)}
               onSpectate={() => onOpenRoom(room.id)}
               onScenario={() => admissionActive
                 ? onStopAdmissionStorm(room.id)
                 : onRunAdmissionStorm(room.id)}
-              ordinal={index + 1}
               room={room}
               scenarioActionLabel={admissionActive
-                ? "입장 부하 중단"
+                ? "장애 부하 중단"
                 : admissionRunningElsewhere
-                  ? "입장 부하 실행 중"
-                  : "장애 실행"}
+                  ? "입장 서버 장애 중"
+                  : "입장 서버 장애"}
               scenarioDisabled={admissionRunningElsewhere}
               scenarioPending={scenarioPendingRoomId === room.id}
             />
@@ -1018,8 +1088,11 @@ function RoomViewer({
   room,
   selectedPlayer,
   botPending,
+  resetPending,
   onBack,
   onAddBots,
+  onRemoveBots,
+  onResetRoom,
   onSelectPlayer,
   onClearPlayer,
   onError,
@@ -1027,8 +1100,11 @@ function RoomViewer({
   room: GameRoom;
   selectedPlayer?: PlayerTelemetry;
   botPending: boolean;
+  resetPending: boolean;
   onBack: () => void;
   onAddBots: () => void;
+  onRemoveBots: () => void;
+  onResetRoom: () => void;
   onSelectPlayer: (playerId: string) => void;
   onClearPlayer: () => void;
   onError: (message: string) => void;
@@ -1038,12 +1114,11 @@ function RoomViewer({
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [pipSession, setPipSession] = useState<PictureInPictureSession | null>(null);
   const [isInlinePip, setIsInlinePip] = useState(false);
-  const [spectatorViewCount, setSpectatorViewCount] = useState<SpectatorViewCount>(4);
+  const [spectatorViewCount, setSpectatorViewCount] = useState<SpectatorViewCount>(1);
   const { bots, humans } = playerCounts(room);
+  const connectedPlayers = bots + humans;
   const displayName = roomDisplayName(room);
-  const stableRoomId = roomStableId(room);
   const currentPodName = roomCurrentPodName(room);
-  const podRoomLabel = roomPodLabel(room);
   const alivePlayers = useMemo(
     () =>
       room.players
@@ -1222,6 +1297,13 @@ function RoomViewer({
     : [];
   const liveStage = (
     <div className={`world-stage${isInlinePip ? " is-inline-pip" : ""}`} ref={stageRef}>
+      <div
+        aria-label={`${currentPodName}, 접속 인원 ${connectedPlayers}명`}
+        className="room-view-overlay"
+      >
+        <strong>{currentPodName}</strong>
+        <span>{connectedPlayers}명 접속</span>
+      </div>
       {selectedPlayer ? (
         spectatorViewCount === 1 ? (
           <PlayerSpectatorView player={selectedPlayer} room={room} />
@@ -1250,25 +1332,28 @@ function RoomViewer({
           <span>{room.map}</span>
           <strong>{selectedPlayer ? `${visibleSpectators.length}명 관전` : displayName}</strong>
         </div>
-        <dl className="room-toolbar-identity" aria-label={`${displayName} room identity`}>
-          <div>
-            <dt>Room ID</dt>
-            <dd>{stableRoomId}</dd>
-          </div>
-          <div>
-            <dt>Current Pod</dt>
-            <dd title={currentPodName}>{currentPodName}</dd>
-          </div>
-          <div>
-            <dt>Pod Label</dt>
-            <dd title={podRoomLabel}>{podRoomLabel}</dd>
-          </div>
-        </dl>
         <div className="room-actions">
           <span>사용자 <strong>{humans}</strong></span>
           <span>봇 <strong>{bots}</strong></span>
-          <button disabled={botPending} onClick={onAddBots} type="button">
+          <button disabled={botPending || resetPending} onClick={onAddBots} type="button">
             {botPending ? "투입 중" : `봇 +${BOT_BATCH_SIZE}`}
+          </button>
+          <button
+            className="remove-bots-button"
+            disabled={botPending || resetPending || bots <= MINIMUM_VISIBLE_BOTS}
+            onClick={onRemoveBots}
+            type="button"
+          >
+            {botPending ? "조정 중" : `봇 -${BOT_BATCH_SIZE}`}
+          </button>
+          <button
+            className="reset-map-button"
+            disabled={botPending || resetPending}
+            onClick={onResetRoom}
+            title="상자와 맵 상태를 처음부터 다시 생성합니다"
+            type="button"
+          >
+            {resetPending ? "리셋 중…" : "맵 리셋"}
           </button>
           <div className="spectator-count-switch" aria-label="동시 관전 화면 수">
             {([1, 4] as const).map((count) => (
@@ -1311,7 +1396,7 @@ function RoomViewer({
 /** The UI renders only authoritative control-plane snapshots and live players. */
 export function GameAdminConsole() {
   const [rooms, setRooms] = useState<GameRoom[]>([]);
-  const [activePage, setActivePage] = useState<ConsolePage>(consolePageFromLocation);
+  const [borderMetric, setBorderMetric] = useState<BorderMetricKey>("admission");
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState("");
@@ -1319,6 +1404,7 @@ export function GameAdminConsole() {
   const [connection, setConnection] = useState<ConnectionState>("connecting");
   const [error, setError] = useState("");
   const [botPending, setBotPending] = useState(false);
+  const [resetPendingRoomId, setResetPendingRoomId] = useState<string | null>(null);
   const [scenarioPendingRoomId, setScenarioPendingRoomId] = useState<string | null>(null);
   const [admissionActiveRoomId, setAdmissionActiveRoomId] = useState<string | null>(null);
   const requestPendingRef = useRef(false);
@@ -1375,7 +1461,6 @@ export function GameAdminConsole() {
 
   useEffect(() => {
     const handlePopState = () => {
-      setActivePage(consolePageFromLocation());
       setSelectedRoomId(null);
       setJoiningRoomId(null);
       setSelectedPlayerId("");
@@ -1411,6 +1496,42 @@ export function GameAdminConsole() {
     }
   }
 
+  async function removeBots() {
+    if (!selectedRoom || botPending) return;
+    const removableBots = Math.min(
+      BOT_BATCH_SIZE,
+      Math.max(0, playerCounts(selectedRoom).bots - MINIMUM_VISIBLE_BOTS),
+    );
+    if (removableBots < 1) return;
+    setBotPending(true);
+    setError("");
+    try {
+      await controlPlaneClient.removeBots(selectedRoom.id, removableBots);
+      await refresh(true);
+    } catch (removeError) {
+      setError(errorMessage(removeError));
+    } finally {
+      setBotPending(false);
+    }
+  }
+
+  async function resetMap() {
+    if (!selectedRoom || resetPendingRoomId || botPending) return;
+    if (!window.confirm("이 방의 상자와 맵 상태를 초기화할까요? 현재 봇 수는 자동으로 복구됩니다.")) return;
+    const roomId = selectedRoom.id;
+    setResetPendingRoomId(roomId);
+    setError("");
+    try {
+      await controlPlaneClient.resetRoom(roomId);
+      setSelectedPlayerId("");
+      await refresh(true);
+    } catch (resetError) {
+      setError(errorMessage(resetError));
+    } finally {
+      setResetPendingRoomId(null);
+    }
+  }
+
   async function startAdmissionStorm(roomId: string) {
     if (scenarioPendingRoomId) return;
     setScenarioPendingRoomId(roomId);
@@ -1442,15 +1563,10 @@ export function GameAdminConsole() {
     }
   }
 
-  function navigateTo(page: ConsolePage, roomId?: string) {
-    const pathname = page === "scenarios" ? "/scenarios" : "/";
-    const nextUrl = roomId && page === "scenarios"
-      ? `${pathname}?room=${encodeURIComponent(roomId)}`
-      : pathname;
-    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
-      window.history.pushState({ consolePage: page, roomId }, "", nextUrl);
+  function showRoomDirectory() {
+    if (`${window.location.pathname}${window.location.search}` !== "/") {
+      window.history.pushState({}, "", "/");
     }
-    setActivePage(page);
     setSelectedRoomId(null);
     setJoiningRoomId(null);
     setSelectedPlayerId("");
@@ -1465,12 +1581,12 @@ export function GameAdminConsole() {
   }
 
   return (
-    <main className={`console-shell ${activePage === "spectate" && selectedRoom ? "is-room-open" : ""} ${activePage === "spectate" && !selectedRoom ? "is-room-directory" : ""} ${activePage === "scenarios" ? "is-scenario-page" : ""}`}>
+    <main className={`console-shell ${selectedRoom ? "is-room-open" : "is-room-directory"}`}>
       <header className="console-topbar">
         <button
           aria-label="실시간 게임 방 목록"
           className="console-brand"
-          onClick={() => navigateTo("spectate")}
+          onClick={showRoomDirectory}
           type="button"
         >
           <span className="brand-mark">O</span>
@@ -1480,30 +1596,20 @@ export function GameAdminConsole() {
           <span>게임 서버</span>
           <strong>{rooms.length} ROOMS</strong>
         </span>
-        <nav className="console-nav" aria-label="운영 콘솔 화면">
-          <a
-            aria-current={activePage === "spectate" ? "page" : undefined}
-            href="/"
-            onClick={(event) => {
-              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-              event.preventDefault();
-              navigateTo("spectate");
-            }}
-          >
-            관전
-          </a>
-          <a
-            aria-current={activePage === "scenarios" ? "page" : undefined}
-            href="/scenarios"
-            onClick={(event) => {
-              if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-              event.preventDefault();
-              navigateTo("scenarios");
-            }}
-          >
-            장애 시나리오
-          </a>
-        </nav>
+        <div className="border-metric-tabs" role="tablist" aria-label="방 테두리 상태 기준">
+          {BORDER_METRIC_OPTIONS.map((option) => (
+            <button
+              aria-selected={borderMetric === option.key}
+              key={option.key}
+              onClick={() => setBorderMetric(option.key)}
+              role="tab"
+              title={option.threshold}
+              type="button"
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
         <div className={`live-status is-${connection}`}>
           <i />
           <span>{connection === "connected" ? "LIVE" : connection === "connecting" ? "연결 중" : "연결 오류"}</span>
@@ -1518,16 +1624,13 @@ export function GameAdminConsole() {
         </div>
       )}
 
-      {activePage === "scenarios" ? (
-        <FailureScenarioPage
-          connection={connection}
-          onError={setError}
-          rooms={rooms}
-        />
-      ) : selectedRoom ? (
+      {selectedRoom ? (
         <RoomViewer
           botPending={botPending}
+          resetPending={resetPendingRoomId === selectedRoom.id}
           onAddBots={() => void addBots()}
+          onRemoveBots={() => void removeBots()}
+          onResetRoom={() => void resetMap()}
           onBack={() => {
             setSelectedRoomId(null);
             setSelectedPlayerId("");
@@ -1548,6 +1651,7 @@ export function GameAdminConsole() {
       ) : (
         <RoomDirectory
           admissionActiveRoomId={admissionActiveRoomId}
+          borderMetric={borderMetric}
           connection={connection}
           onJoinRoom={setJoiningRoomId}
           onOpenRoom={openRoomForSpectating}

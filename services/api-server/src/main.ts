@@ -1,10 +1,28 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readControlToken } from "../../control-plane-auth.js";
+import { controlTokenMatches, readControlToken } from "../../control-plane-auth.js";
+import { AdmissionOverloadFuse } from "./admission-overload.js";
 import { HttpRoomDirectory, Matchmaker } from "./matchmaker.js";
 
 const port = Number(process.env.PORT ?? 8081);
 const log = (event: { level: string; event: string; [key: string]: unknown }) => process.stdout.write(`${JSON.stringify(event)}\n`);
 const controlToken = readControlToken();
+const overloadExitCode = Number.parseInt(process.env.ADMISSION_OVERLOAD_EXIT_CODE ?? "70", 10);
+if (!Number.isInteger(overloadExitCode) || overloadExitCode < 1 || overloadExitCode > 255) {
+  throw new Error("admission_overload_exit_code_invalid");
+}
+const overloadFuse = new AdmissionOverloadFuse({
+  thresholdRequests: Number.parseInt(process.env.ADMISSION_OVERLOAD_THRESHOLD_REQUESTS ?? "35", 10),
+  windowMs: Number.parseInt(process.env.ADMISSION_OVERLOAD_WINDOW_MS ?? "1000", 10),
+  onTrip: (status) => {
+    log({
+      level: "error",
+      event: "admission_server_overload_failure",
+      detail: { ...status, exitCode: overloadExitCode, recoveryOwner: "external-service" },
+    });
+    const exitTimer = setTimeout(() => process.exit(overloadExitCode), 25);
+    exitTimer.unref();
+  },
+});
 const matchmaker = new Matchmaker(
   new HttpRoomDirectory(process.env.ORCHESTRATOR_URL ?? "http://room-orchestrator:8082", controlToken),
   Number(process.env.MAX_FIND_GAME_PER_SECOND ?? 25),
@@ -36,9 +54,34 @@ const publicRoomUrl = (roomId: string, ordinal: number, fallbackOrigin: string):
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   try {
-    if (request.method === "GET" && url.pathname === "/healthz") return send(response, 200, { status: "ok" });
-    if (request.method === "GET" && url.pathname === "/metrics") { response.writeHead(200, { "content-type": matchmaker.registry.contentType }); return response.end(await matchmaker.registry.metrics()); }
+    if (request.method === "GET" && url.pathname === "/healthz") {
+      return send(response, 200, { status: "ok", admissionOverload: overloadFuse.status() });
+    }
+    if (request.method === "GET" && url.pathname === "/metrics") {
+      const overload = overloadFuse.status();
+      response.writeHead(200, { "content-type": matchmaker.registry.contentType });
+      return response.end(`${await matchmaker.registry.metrics()}\n# TYPE admission_overload_armed gauge\nadmission_overload_armed ${overload.armed ? 1 : 0}\n# TYPE admission_overload_recent_requests gauge\nadmission_overload_recent_requests ${overload.recentRequests}\n# TYPE admission_overload_threshold_requests gauge\nadmission_overload_threshold_requests ${overload.thresholdRequests}\n`);
+    }
+    if (request.method === "POST" && url.pathname === "/ops/failure/admission-overload/arm") {
+      if (!controlTokenMatches(request.headers.authorization, controlToken)) {
+        response.setHeader("www-authenticate", "Bearer realm=\"demo-game-control\"");
+        return send(response, 401, { error: "unauthorized" });
+      }
+      const status = overloadFuse.arm();
+      log({ level: "warn", event: "admission_overload_armed", detail: status });
+      return send(response, 200, status);
+    }
+    if (request.method === "POST" && url.pathname === "/ops/failure/admission-overload/disarm") {
+      if (!controlTokenMatches(request.headers.authorization, controlToken)) {
+        response.setHeader("www-authenticate", "Bearer realm=\"demo-game-control\"");
+        return send(response, 401, { error: "unauthorized" });
+      }
+      const status = overloadFuse.disarm();
+      log({ level: "info", event: "admission_overload_disarmed", detail: status });
+      return send(response, 200, status);
+    }
     if (request.method === "POST" && url.pathname === "/api/find-game") {
+      overloadFuse.observeRequest();
       const body = await readJson(request); const sessionId = String(body.sessionId ?? ""); const nickname = String(body.nickname ?? "");
       if (!sessionId) return send(response, 400, { error: "sessionId_required" });
       const room = await matchmaker.findGame(sessionId, nickname);

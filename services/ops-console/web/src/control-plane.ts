@@ -74,6 +74,7 @@ export interface RoomMetrics {
   redisOpsPerSecond: number | null;
   telemetryLagMs: number;
   admissionFailureRatePercent?: number;
+  resourceSampleCount?: number;
 }
 
 export interface GameRoom {
@@ -185,6 +186,12 @@ export interface AddBotsResult {
   accepted: number;
 }
 
+export interface RemoveBotsResult {
+  killed: number;
+  remaining: number;
+  minimumBotsPerRoom: number;
+}
+
 export interface ControlPlaneCapabilities {
   scalingAvailable: boolean;
   maxRooms: number;
@@ -205,9 +212,10 @@ export interface GameControlPlane {
   createRoom(input: CreateRoomInput): Promise<GameRoom>;
   updateRoom(roomId: string, input: CreateRoomInput): Promise<GameRoom>;
   commandRoom(roomId: string, command: RoomCommand): Promise<void>;
+  resetRoom(roomId: string): Promise<void>;
   addBots(roomId: string, input: AddBotsInput): Promise<AddBotsResult>;
   cancelBotLoad(roomId: string, jobId: string): Promise<void>;
-  removeBots(roomId: string): Promise<void>;
+  removeBots(roomId: string, count: number): Promise<RemoveBotsResult>;
   setJoinLocked(roomId: string, locked: boolean): Promise<void>;
 }
 

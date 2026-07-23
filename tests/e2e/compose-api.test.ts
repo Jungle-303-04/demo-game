@@ -136,9 +136,9 @@ const connectedRoomBots = (inventory: BotInventory, roomId: string): BotSummary[
 const waitForBaselineBots = async (roomIds: string[]): Promise<BotInventory> => waitForCondition(
   "baseline_bots",
   getBotInventory,
-  (inventory) => inventory.minimumBotsPerRoom === 10 && roomIds.every((roomId) => {
+  (inventory) => inventory.minimumBotsPerRoom === 1 && roomIds.every((roomId) => {
     const bots = connectedRoomBots(inventory, roomId);
-    return bots.length === 10 && bots.every((bot) => bot.mode === "normal");
+    return bots.length === 1 && bots.every((bot) => bot.mode === "normal");
   }),
   45_000,
   300,
@@ -150,7 +150,7 @@ const roomScenario = (state: ScenarioState, roomId: string): ScenarioRoomState =
   return room;
 };
 
-test("compose starts five actual survev rooms, discovers them for 50 protocol bots, and exposes playerBarn snapshots", { skip: !enabled }, async () => {
+test("compose starts five actual survev rooms, discovers their baseline protocol bots, and exposes playerBarn snapshots", { skip: !enabled }, async () => {
   await waitFor(`${opsUrl}/healthz`);
   await waitFor("http://localhost:8084/healthz");
   await waitFor("http://localhost:8083/healthz");
@@ -236,8 +236,8 @@ test("compose starts five actual survev rooms, discovers them for 50 protocol bo
   assert.deepEqual(initialScenarios.capabilities, { podFailure: false });
   for (const roomId of roomIds) {
     const state = roomScenario(initialScenarios, roomId);
-    assert.equal(state.minimumBotsPerRoom, 10);
-    assert.equal(state.normalBots, 10);
+    assert.equal(state.minimumBotsPerRoom, 1);
+    assert.equal(state.normalBots, 1);
     assert.equal(state.hackBots, 0);
     assert.equal(state.active, undefined);
   }
@@ -316,7 +316,7 @@ test("compose starts five actual survev rooms, discovers them for 50 protocol bo
       const room = state.rooms.find((candidate) => candidate.roomId === "room-0");
       return room?.active?.scenarioId === "bot-surge"
         && room.active.status === "active"
-        && room.normalBots >= 35;
+        && room.normalBots >= 26;
     },
     20_000,
   );

@@ -19,6 +19,9 @@ spec:
           env:
             - { name: ORCHESTRATOR_URL, value: http://management-server:8082 }
             - { name: MAX_FIND_GAME_PER_SECOND, value: "25" }
+            - { name: ADMISSION_OVERLOAD_THRESHOLD_REQUESTS, value: "35" }
+            - { name: ADMISSION_OVERLOAD_WINDOW_MS, value: "1000" }
+            - { name: ADMISSION_OVERLOAD_EXIT_CODE, value: "70" }
             - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
             - name: OPS_CONTROL_TOKEN
               valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
