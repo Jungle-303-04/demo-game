@@ -24,6 +24,7 @@ const harness = (options: {
   gatewayContinuous?: boolean;
   cutoverResponseLost?: boolean;
   originalAnnotations?: Record<string, string>;
+  candidateChecksumMismatchOnce?: boolean;
 } = {}): Harness => {
   const calls: Harness["calls"] = [];
   let rolloutPatched = false;
@@ -38,6 +39,7 @@ const harness = (options: {
   let oldChecksum = retainedOldChecksum;
   let oldTick = 100;
   let candidateTick = 100;
+  let candidateSeedAttempts = 0;
   const oldPod = {
     metadata: {
       name: "game-room-1-old",
@@ -151,6 +153,20 @@ const harness = (options: {
       });
     }
     if (url === "http://10.0.0.12:8001/ops/handoff/seed") {
+      candidateSeedAttempts++;
+      if (options.candidateChecksumMismatchOnce && candidateSeedAttempts === 2) {
+        return json({
+          role: "candidate",
+          roomId: "room-1",
+          ready: false,
+          phase: "blocked",
+          roomEpoch: 41,
+          serverTick: candidateTick,
+          checksum: candidateChecksum,
+          caughtUp: false,
+          reason: "candidate_checksum_mismatch",
+        });
+      }
       candidateChecksum = String(body?.expectedChecksum);
       candidateTick = Number(body?.targetTick);
       return json({
@@ -163,6 +179,9 @@ const harness = (options: {
         checksum: candidateChecksum,
         caughtUp: true,
       });
+    }
+    if (url === "http://10.0.0.11:8001/ops/snapshot/save") {
+      return json({ status: "saved" });
     }
     if (url === "http://10.0.0.12:8001/ops/handoff/promote") {
       candidateActive = true;
@@ -334,6 +353,22 @@ test("candidate identity is derived from the observed Pod image", async () => {
   const target = await driver.resolveTarget({ roomId: "room-1", revision: "new" });
 
   await assert.rejects(driver.scheduleCandidate(target, "op-rollout"), /candidate_pod_image_mismatch/);
+});
+
+test("journal catch-up retries a snapshot checksum race", async () => {
+  const { driver, calls } = harness({ candidateChecksumMismatchOnce: true });
+  const target = await driver.resolveTarget({ roomId: "room-1", revision: "new" });
+  const candidate = await driver.scheduleCandidate(target, "op-rollout");
+  const seeded = await driver.seedSnapshot(target, candidate);
+  const caughtUp = await driver.catchUpJournal(target, candidate, seeded.snapshotTick);
+
+  assert.deepEqual(caughtUp, {
+    activeTick: 100,
+    candidateTick: 100,
+    lagTicks: 0,
+    checksum,
+  });
+  assert.equal(calls.filter((call) => call.url === "http://10.0.0.12:8001/ops/handoff/seed").length, 3);
 });
 
 test("live handoff schedules and verifies the exact Canary-approved runtime digest", async () => {
