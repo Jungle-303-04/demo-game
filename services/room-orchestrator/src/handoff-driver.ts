@@ -114,6 +114,7 @@ export interface KubernetesRoomHandoffDriverOptions {
   gameImageRepository?: string;
   gamePort?: number;
   requestTimeoutMs?: number;
+  postVerificationTimeoutMs?: number;
   candidateTimeoutMs?: number;
   catchUpTimeoutMs?: number;
   pollIntervalMs?: number;
@@ -169,6 +170,7 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
   private readonly gameImageRepository: string;
   private readonly gamePort: number;
   private readonly requestTimeoutMs: number;
+  private readonly postVerificationTimeoutMs: number;
   private readonly candidateTimeoutMs: number;
   private readonly catchUpTimeoutMs: number;
   private readonly pollIntervalMs: number;
@@ -189,6 +191,7 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
       ?? "ghcr.io/jungle-303-04/demo-game/game-server");
     this.gamePort = options.gamePort ?? 8001;
     this.requestTimeoutMs = options.requestTimeoutMs ?? 5_000;
+    this.postVerificationTimeoutMs = options.postVerificationTimeoutMs ?? 12_000;
     this.candidateTimeoutMs = options.candidateTimeoutMs ?? 120_000;
     this.catchUpTimeoutMs = options.catchUpTimeoutMs ?? 30_000;
     this.pollIntervalMs = options.pollIntervalMs ?? 500;
@@ -670,7 +673,7 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
   async verify(candidate: RoomCandidate, expectedChecksum: string): Promise<PostVerificationResult> {
     const context = this.contextFor(candidate);
     const expectedEpoch = context.committedEpoch ?? context.target.currentEpoch + 1;
-    const deadline = Date.now() + this.requestTimeoutMs;
+    const deadline = Date.now() + this.postVerificationTimeoutMs;
     let result: PostVerificationResult = {
       healthy: false,
       sessionContinuity: false,

@@ -27,6 +27,7 @@ const harness = (options: {
   originalAnnotations?: Record<string, string>;
   candidateChecksumMismatchOnce?: boolean;
   requestTimeoutMs?: number;
+  postVerificationTimeoutMs?: number;
 } = {}): Harness => {
   const calls: Harness["calls"] = [];
   let rolloutPatched = false;
@@ -300,6 +301,7 @@ const harness = (options: {
       fetchImpl,
       sleep: async () => undefined,
       requestTimeoutMs: options.requestTimeoutMs,
+      postVerificationTimeoutMs: options.postVerificationTimeoutMs,
       candidateTimeoutMs: options.candidateTimeoutMs ?? 1_000,
       pollIntervalMs: 1,
     }),
@@ -522,7 +524,7 @@ test("a lost cutover response is reconciled from the Gateway operation record", 
 });
 
 test("post-cutover verification rejects a cached route when live session continuity is false", async () => {
-  const { driver } = harness({ gatewayContinuous: false, requestTimeoutMs: 5 });
+  const { driver } = harness({ gatewayContinuous: false, postVerificationTimeoutMs: 5 });
   const target = await driver.resolveTarget({ roomId: "room-1", revision: "new" });
   const candidate = await driver.scheduleCandidate(target, "op-rollout");
   await driver.freezeGateway({ operationId: "op-rollout", roomId: "room-1", expectedEpoch: 41 });
