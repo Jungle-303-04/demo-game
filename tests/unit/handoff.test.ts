@@ -125,6 +125,24 @@ test("authority is fenced before Gateway cutover and the final release checksum 
   assert.equal(result.checksum, finalChecksum);
 });
 
+test("post-cutover verification accepts a live checksum newer than the fenced checkpoint", async () => {
+  const fencedChecksum = "sha256:fenced";
+  const liveChecksum = "sha256:advanced";
+  const transport = new MemoryOperationEventTransport();
+  const coordinator = new RoomHandoffCoordinator(driver({
+    async activateCandidate() { return { checksum: fencedChecksum }; },
+    async verify() {
+      return { healthy: true, sessionContinuity: true, stateChecksum: liveChecksum };
+    },
+  }), new OperationEventPublisher(transport));
+
+  const result = await coordinator.handoff(target, "op-checksum-advanced");
+
+  assert.equal(result.checksum, fencedChecksum);
+  const verified = transport.events.find((event) => event.subject === "RoomPostVerificationCompleted");
+  assert.equal(verified?.payload.state_checksum, liveChecksum);
+});
+
 test("checksum mismatch blocks gateway cutover and preserves the active room", async () => {
   let cutoverCalls = 0;
   let abortCalls = 0;

@@ -30,6 +30,7 @@ const harness = (options: {
   postVerificationTimeoutMs?: number;
   releaseChecksumConflictOnce?: boolean;
   gatewayInitialEpoch?: number;
+  candidateChecksumAdvancesAfterPromotion?: boolean;
 } = {}): Harness => {
   const calls: Harness["calls"] = [];
   let rolloutPatched = false;
@@ -122,6 +123,10 @@ const harness = (options: {
       });
     }
     if (url === "http://10.0.0.12:8001/ops/handoff/status") {
+      if (candidateActive && options.candidateChecksumAdvancesAfterPromotion) {
+        candidateChecksum = latestCandidateChecksum;
+        candidateTick = 120;
+      }
       return json({
         role: candidateActive ? "active" : "candidate",
         roomId: "room-1",
@@ -625,4 +630,36 @@ test("post-cutover verification waits for live session continuity to settle", as
     calls.filter((call) => call.url === "http://gateway:8083/internal/rooms").length,
     2,
   );
+});
+
+test("cutover and verification accept a valid live checksum that advances after promotion", async () => {
+  const { driver } = harness({
+    candidateChecksumAdvancesAfterPromotion: true,
+    gatewayContinuousAfterReads: 2,
+  });
+  const target = await driver.resolveTarget({ roomId: "room-1", revision: "new" });
+  const candidate = await driver.scheduleCandidate(target, "op-rollout");
+  await driver.freezeGateway({ operationId: "op-rollout", roomId: "room-1", expectedEpoch: 41 });
+  const authority = await driver.activateCandidate({
+    target,
+    candidate,
+    roomEpoch: 42,
+    checksum,
+  });
+
+  await driver.cutoverGateway({
+    operationId: "op-rollout",
+    roomId: "room-1",
+    endpoint: candidate.endpoint,
+    expectedEpoch: 41,
+    nextEpoch: 42,
+    revision: "new",
+    checksum: authority.checksum,
+  });
+  const verification = await driver.verify(candidate, authority.checksum);
+
+  assert.equal(authority.checksum, retainedOldChecksum);
+  assert.equal(verification.healthy, true);
+  assert.equal(verification.sessionContinuity, true);
+  assert.equal(verification.stateChecksum, latestCandidateChecksum);
 });

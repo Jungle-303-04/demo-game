@@ -314,7 +314,11 @@ export class RoomHandoffCoordinator {
 
       stage = "verify";
       const verification = await this.driver.verify(candidate, candidateChecksum);
-      if (!verification.healthy || !verification.sessionContinuity || verification.stateChecksum !== candidateChecksum) {
+      // activateCandidate already fenced the exact promotion checkpoint. A
+      // healthy Active immediately advances its live snapshot checksum, so the
+      // post-cutover proof validates authority/epoch and Gateway continuity
+      // while recording (rather than pinning) the current checksum.
+      if (!verification.healthy || !verification.sessionContinuity) {
         throw new Error("post_cutover_verification_failed");
       }
       await this.events.publish(context, "RoomPostVerificationCompleted", {

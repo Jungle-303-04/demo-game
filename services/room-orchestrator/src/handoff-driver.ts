@@ -478,11 +478,14 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
     const context = this.contextByRoom.get(input.roomId);
     if (!context || context.operationId !== input.operationId) throw new Error("handoff_context_not_found");
     const authority = await this.handoffStatus(input.endpoint);
-    const checksumMatched = authority.role === "active"
+    const checksumMatched = context.checksum === input.checksum
+      && context.committedEpoch === input.nextEpoch;
+    const caughtUp = checksumMatched
+      && authority.role === "active"
       && authority.ready
       && authority.roomEpoch === input.nextEpoch
-      && authority.checksum === input.checksum;
-    const caughtUp = checksumMatched && authority.caughtUp === true;
+      && Boolean(authority.checksum && checksumPattern.test(authority.checksum))
+      && authority.caughtUp === true;
     if (!checksumMatched || !caughtUp) throw new Error("cutover_authority_proof_failed");
     const result = await this.gatewayCutover({ ...input, checksumMatched, caughtUp });
     context.checksum = input.checksum;
@@ -674,6 +677,8 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
   async verify(candidate: RoomCandidate, expectedChecksum: string): Promise<PostVerificationResult> {
     const context = this.contextFor(candidate);
     const expectedEpoch = context.committedEpoch ?? context.target.currentEpoch + 1;
+    const transferProofMatches = context.checksum === expectedChecksum
+      && context.committedEpoch === expectedEpoch;
     const deadline = Date.now() + this.postVerificationTimeoutMs;
     let result: PostVerificationResult = {
       healthy: false,
@@ -702,14 +707,15 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
         && verification.liveSessions === expectedSessions
         && verification.upstreamSessions === expectedSessions;
       result = {
-        healthy: status.role === "active"
+        healthy: transferProofMatches
+          && status.role === "active"
           && status.ready
           && status.roomEpoch === expectedEpoch
-          && status.checksum === expectedChecksum,
+          && Boolean(status.checksum && checksumPattern.test(status.checksum)),
         sessionContinuity,
         stateChecksum: status.checksum ?? "unavailable",
       };
-      if (result.healthy && result.sessionContinuity && result.stateChecksum === expectedChecksum) return result;
+      if (result.healthy && result.sessionContinuity) return result;
       if (Date.now() < deadline) await this.sleep(Math.min(this.pollIntervalMs, 100));
     } while (Date.now() < deadline);
     return result;
