@@ -27,6 +27,10 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   const failureScenarioUi = await readFile(join(process.cwd(), "services/ops-console/web/src/FailureScenarioPage.tsx"), "utf8");
   const controlPlaneClient = await readFile(join(process.cwd(), "services/ops-console/web/src/control-plane-client.ts"), "utf8");
   const opsConsoleServer = await readFile(join(process.cwd(), "services/ops-console/src/main.ts"), "utf8");
+  const roomOrchestrator = await readFile(
+    join(process.cwd(), "services/room-orchestrator/src/main.ts"),
+    "utf8",
+  );
   const failureScenarios = await readFile(join(process.cwd(), "services/ops-console/src/failure-scenarios.ts"), "utf8");
   const botRunner = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRunner.ts"), "utf8");
   const botRouting = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRouting.ts"), "utf8");
@@ -194,6 +198,11 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.doesNotMatch(adminUi, /withControlPlaneAdminTokenRetry|관리자 토큰/);
   assert.doesNotMatch(failureScenarioUi, /withControlPlaneAdminTokenRetry|관리자 토큰/);
   assert.doesNotMatch(opsConsoleServer, /OPS_ADMIN_TOKEN|REQUIRE_ADMIN_TOKEN|admin_token_required|timingSafeEqual/);
+  assert.match(roomOrchestrator, /const existingRoomIds = new Set/);
+  assert.ok(
+    roomOrchestrator.indexOf("`${gatewayEndpoint}/internal/rooms`")
+      < roomOrchestrator.indexOf("`${gatewayEndpoint}/internal/rooms/${encodeURIComponent(workload.roomId)}/register`"),
+  );
   assert.match(failureScenarios, /const ADMISSION_STORM_REQUESTS = 90/);
   assert.match(failureScenarios, /pod_failure_requires_kubernetes/);
   assert.match(failureScenarios, /\/bots\/jobs\/\$\{encodeURIComponent\(run\.jobId\)\}\/cleanup/);
