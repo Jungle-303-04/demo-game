@@ -28,6 +28,7 @@ const harness = (options: {
   candidateChecksumMismatchOnce?: boolean;
   requestTimeoutMs?: number;
   postVerificationTimeoutMs?: number;
+  releaseChecksumConflictOnce?: boolean;
 } = {}): Harness => {
   const calls: Harness["calls"] = [];
   let rolloutPatched = false;
@@ -44,6 +45,7 @@ const harness = (options: {
   let oldTick = 100;
   let candidateTick = 100;
   let candidateSeedAttempts = 0;
+  let releaseAttempts = 0;
   const oldPod = {
     metadata: {
       name: "game-room-1-old",
@@ -131,6 +133,10 @@ const harness = (options: {
       });
     }
     if (url === "http://10.0.0.11:8001/ops/handoff/release") {
+      releaseAttempts++;
+      if (options.releaseChecksumConflictOnce && releaseAttempts === 1) {
+        return json({ error: "authority_release_checksum_conflict" }, 409);
+      }
       oldActive = false;
       return json({
         role: "candidate",
@@ -378,6 +384,25 @@ test("journal catch-up retries a snapshot checksum race", async () => {
     checksum,
   });
   assert.equal(calls.filter((call) => call.url === "http://10.0.0.12:8001/ops/handoff/seed").length, 3);
+});
+
+test("authority transfer retries a release checksum race", async () => {
+  const { driver, calls } = harness({ releaseChecksumConflictOnce: true });
+  const target = await driver.resolveTarget({ roomId: "room-1", revision: "new" });
+  const candidate = await driver.scheduleCandidate(target, "op-rollout");
+
+  const authority = await driver.activateCandidate({
+    target,
+    candidate,
+    roomEpoch: 42,
+    checksum,
+  });
+
+  assert.equal(authority.checksum, retainedOldChecksum);
+  assert.equal(
+    calls.filter((call) => call.url === "http://10.0.0.11:8001/ops/handoff/release").length,
+    2,
+  );
 });
 
 test("live handoff schedules and verifies the exact Canary-approved runtime digest", async () => {

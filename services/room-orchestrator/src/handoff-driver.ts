@@ -752,10 +752,25 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
       if (oldStatus.roomEpoch !== input.target.currentEpoch) {
         throw new Error("active_epoch_changed_before_authority_transfer");
       }
-      const released = await this.controlJson<HandoffStatus>(`${input.target.activeEndpoint}/ops/handoff/release`, {
-        method: "POST",
-        body: { expectedEpoch: input.target.currentEpoch, expectedChecksum: input.checksum },
-      });
+      const deadline = Date.now() + this.requestTimeoutMs;
+      let expectedReleaseChecksum = input.checksum;
+      let released: HandoffStatus | undefined;
+      do {
+        try {
+          released = await this.controlJson<HandoffStatus>(`${input.target.activeEndpoint}/ops/handoff/release`, {
+            method: "POST",
+            body: { expectedEpoch: input.target.currentEpoch, expectedChecksum: expectedReleaseChecksum },
+          });
+          break;
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== "authority_release_checksum_conflict"
+            || Date.now() >= deadline) throw error;
+          await this.sleep(Math.min(this.pollIntervalMs, 100));
+          const refreshed = await this.pollActiveSnapshot(input.target.activeEndpoint, input.target.currentEpoch);
+          expectedReleaseChecksum = refreshed.checksum!;
+        }
+      } while (Date.now() < deadline);
+      if (!released) throw new Error("authority_release_checksum_conflict");
       if (released.role !== "candidate"
         || !released.checksum
         || !checksumPattern.test(released.checksum)
