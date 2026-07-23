@@ -541,6 +541,20 @@ function roomServiceUrl(room: GameRoom) {
   return url;
 }
 
+function roomQrServiceUrl(room: GameRoom) {
+  const configuredOrigin = import.meta.env.VITE_GAME_ORIGIN?.trim();
+  const url = new URL(room.serviceUrl, configuredOrigin || window.location.origin);
+  const loopbackHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
+  if (
+    !configuredOrigin &&
+    loopbackHosts.has(url.hostname) &&
+    !loopbackHosts.has(window.location.hostname)
+  ) {
+    url.hostname = window.location.hostname;
+  }
+  return url;
+}
+
 function ActualGameMap({
   room,
   interactive = false,
@@ -714,7 +728,8 @@ function JoinRoomDialog({
   onDismiss: () => void;
 }) {
   const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const joinUrl = roomServiceUrl(room).toString();
+  const directJoinUrl = roomServiceUrl(room).toString();
+  const qrJoinUrl = roomQrServiceUrl(room).toString();
   const titleId = `join-room-title-${room.id}`;
   const descriptionId = `join-room-description-${room.id}`;
   const displayName = roomDisplayName(room);
@@ -751,7 +766,7 @@ function JoinRoomDialog({
         <p className="join-dialog-description" id={descriptionId}>
           QR 코드를 스캔하면 이 방의 게임 화면으로 이동합니다.
         </p>
-        <div className="join-dialog-qr">
+        <div className="join-dialog-qr" data-join-url={qrJoinUrl}>
           <QRCodeSVG
             bgColor="#ffffff"
             fgColor="#080a0d"
@@ -759,12 +774,12 @@ function JoinRoomDialog({
             marginSize={4}
             size={1024}
             title={`${displayName} 참가 QR 코드`}
-            value={joinUrl}
+            value={qrJoinUrl}
           />
         </div>
         <a
           className="join-dialog-new-tab"
-          href={joinUrl}
+          href={directJoinUrl}
           onClick={() => dialogRef.current?.close()}
           rel="noopener noreferrer"
           target="_blank"

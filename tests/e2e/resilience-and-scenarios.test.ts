@@ -14,7 +14,9 @@ test("pod replacement is wired to the actual survev Game process snapshot and re
   assert.match(processSource, /game\.snapshotOpsia/);
   assert.match(runtime, /room:\$\{opsiaRoomId\(\)\}:snapshot/);
   assert.match(runtime, /room:\$\{opsiaRoomId\(\)\}:lease/);
-  assert.match(client, /localStorage\.getItem\("opsia-survev-session"\)/);
+  assert.match(client, /sessionStorage\.getItem\("opsia-survev-session"\)/);
+  assert.match(client, /sessionStorage\.setItem\("opsia-survev-session", this\.sessionId\)/);
+  assert.doesNotMatch(client, /localStorage\.(?:getItem|setItem)\("opsia-survev-session"/);
 });
 
 test("scenario 01 speed-hack: real protocol flood emits an input event and strict rollout is image-only", async () => {

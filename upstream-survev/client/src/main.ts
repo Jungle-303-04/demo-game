@@ -114,13 +114,14 @@ export class Application {
             return null;
         }
     })();
-    // A stable browser token is sent only to the real survev game-server's
-    // reconnect adapter. It is not an account and is never used by Opsia.
+    // A stable per-tab token is sent only to the real survev game-server's
+    // reconnect adapter. sessionStorage keeps reload reconnects stable without
+    // making two participant tabs fight over the same live session.
     // Broadcast tabs deliberately use an ephemeral identity so changing a
     // watched player never collides with an active participant session.
     sessionId = this.opsiaWatch
         ? `watch-${helpers.random64()}`
-        : localStorage.getItem("opsia-survev-session") || helpers.random64();
+        : sessionStorage.getItem("opsia-survev-session") || helpers.random64();
     contextListener = function(e: MouseEvent) {
         e.preventDefault();
     };
@@ -190,7 +191,7 @@ export class Application {
                 : "Survev player spectator";
         }
         if (!this.opsiaWatch) {
-            localStorage.setItem("opsia-survev-session", this.sessionId);
+            sessionStorage.setItem("opsia-survev-session", this.sessionId);
         }
         this.account = new Account(this.config);
         this.loadoutMenu = new LoadoutMenu(this.account, this.localization);
