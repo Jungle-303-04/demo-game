@@ -510,7 +510,7 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.match(canary, /OPSIA_REDIS_KEY_PREFIX, value: "room:canary-room:"/);
   assert.match(canary, /REDIS_URL, value: redis:\/\/cache:6379\/1/);
   assert.match(canary, /OPSIA_ROOM_ENDPOINTS, value: "canary-room=http:\/\/game-room-canary:8001"/);
-  assert.match(canary, /OPSIA_MIN_BOTS_PER_ROOM, value: "10"/);
+  assert.match(canary, /OPSIA_MIN_BOTS_PER_ROOM, value: "0"/);
   assert.match(canary, /limits: \{ cpu: "3", memory: 4Gi \}/);
   assert.match(canary, /opsia\.dev\/public: disabled/);
   assert.match(canary, /game\.opsia\.dev\/room-id: canary-room/);
