@@ -6,6 +6,7 @@ import {
 import { createRoomJournalEntry, parseRoomJournalEntry, RoomStateJournal } from "../../server/src/opsia/journal.ts";
 import {
     BoundedSnapshotWriter,
+    checksumOrderedValue,
     createSnapshotEnvelope,
     parseSnapshotEnvelope,
     readSnapshotRuntimeConfig,
@@ -67,6 +68,13 @@ describe("snapshot envelope", () => {
         expect(() => parseSnapshotEnvelope<TestSnapshot>(JSON.stringify(tampered))).toThrow(
             "snapshot_checksum_mismatch",
         );
+    });
+
+    it("hashes deterministic ordered projections without coercing unsupported numbers", () => {
+        expect(checksumOrderedValue({ schemaVersion: 4, world: { tick: 7 }, players: [] }))
+            .toMatch(/^[a-f\d]{64}$/);
+        expect(() => checksumOrderedValue({ value: Number.NaN }))
+            .toThrow("snapshot_contains_non_finite_number");
     });
 
     it("rejects a configured interval below the independently validated minimum", () => {

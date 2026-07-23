@@ -21,7 +21,7 @@ import {
 import { RoomStateJournal } from "./journal.ts";
 import {
     BoundedSnapshotWriter,
-    checksumValue,
+    checksumOrderedValue,
     type GameSnapshotEnvelope,
     parseSnapshotEnvelope,
     readSnapshotRuntimeConfig,
@@ -1094,7 +1094,7 @@ const materialStateChecksum = (
     world: LooseWorldState,
     players: LoosePlayerState[],
 ): string =>
-    checksumValue({
+    checksumOrderedValue({
         schemaVersion: 4,
         roomId,
         mapName,

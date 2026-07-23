@@ -180,6 +180,25 @@ const canonicalJson = (value: unknown): string => {
 export const checksumValue = (value: unknown): string =>
     createHash("sha256").update(canonicalJson(value)).digest("hex");
 
+/**
+ * Hashes a projection whose property order is fixed by its constructor.
+ * This avoids recursively sorting a multi-megabyte live-world snapshot while
+ * retaining strict rejection of values JSON would otherwise coerce.
+ */
+export const checksumOrderedValue = (value: unknown): string => {
+    const serialized = JSON.stringify(value, (_key, current: unknown) => {
+        if (typeof current === "number" && !Number.isFinite(current)) {
+            throw new Error("snapshot_contains_non_finite_number");
+        }
+        if (typeof current === "bigint" || typeof current === "function" || typeof current === "symbol") {
+            throw new Error("snapshot_contains_unsupported_value");
+        }
+        return current;
+    });
+    if (serialized === undefined) throw new Error("snapshot_contains_unsupported_value");
+    return createHash("sha256").update(serialized).digest("hex");
+};
+
 const envelopeContent = <T>(envelope: Omit<GameSnapshotEnvelope<T>, "checksum">) => ({
     kind: envelope.kind,
     schemaVersion: envelope.schemaVersion,
