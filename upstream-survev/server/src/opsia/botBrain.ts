@@ -1485,7 +1485,7 @@ const updateStuckState = (
             // movement while avoiding the previous ~6 second wall-stall.
             if (state.stuckSamples >= 2) {
                 state.stuckSamples = 0;
-                state.unstuckUntil = now + 1_800 + random() * 900;
+                state.unstuckUntil = now + 1_100 + random() * 650;
                 const blockedAngle = state.lastMoveAngle ?? state.wanderAngle;
                 const escapeAngles = [
                     blockedAngle + state.strafeSign * Math.PI / 2,

@@ -867,11 +867,14 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
   }
 
   private async listRoomPods(roomId: string): Promise<KubernetesPod[]> {
-    const selector = encodeURIComponent(`opsia.dev/fleet=live,game.opsia.dev/room-id=${roomId}`);
+    const selector = encodeURIComponent("opsia.dev/fleet=live");
     const body = await this.kubeJson<{ items?: KubernetesPod[] }>(
       `/api/v1/namespaces/${this.options.namespace}/pods?labelSelector=${selector}`,
     );
-    return body.items ?? [];
+    return (body.items ?? []).filter((pod) => {
+      const labels = pod.metadata?.labels;
+      return (labels?.["game.opsia.dev/room-id"] ?? labels?.["opsia.dev/room-id"]) === roomId;
+    });
   }
 
   private async patchDeployment(

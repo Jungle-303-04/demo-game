@@ -804,7 +804,7 @@ describe("Opsia protocol bot brain", () => {
         expect(intent.mode).toBe("unstuck");
         expect(intent.moving).toBe(true);
         expect(state.strafeSign).toBe(-1);
-        expect(state.unstuckUntil).toBe(3_150);
+        expect(state.unstuckUntil).toBe(2_325);
     });
 
     test("falls back to non-shooting wander on a stale room snapshot", () => {
