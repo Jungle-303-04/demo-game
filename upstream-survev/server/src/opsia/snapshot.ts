@@ -214,6 +214,15 @@ const envelopeContent = <T>(envelope: Omit<GameSnapshotEnvelope<T>, "checksum">)
     payload: envelope.payload,
 });
 
+const envelopeChecksum = (content: ReturnType<typeof envelopeContent>): string => {
+    const payload = content.payload;
+    const ordered = typeof payload === "object"
+        && payload !== null
+        && "stateChecksumAlgorithm" in payload
+        && payload.stateChecksumAlgorithm === "ordered-json-sha256";
+    return ordered ? checksumOrderedValue(content) : checksumValue(content);
+};
+
 export const createSnapshotEnvelope = <T extends { schemaVersion: number }>(
     payload: T,
     context: SnapshotEnvelopeContext,
@@ -245,7 +254,7 @@ export const createSnapshotEnvelope = <T extends { schemaVersion: number }>(
         checksumAlgorithm: "sha256",
         payload,
     };
-    return { ...unsigned, checksum: checksumValue(envelopeContent(unsigned)) };
+    return { ...unsigned, checksum: envelopeChecksum(envelopeContent(unsigned)) };
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -295,7 +304,7 @@ export const verifySnapshotEnvelope = <T extends { schemaVersion: number }>(
 
     const envelope = value as unknown as GameSnapshotEnvelope<T>;
     const { checksum, ...unsigned } = envelope;
-    const calculated = checksumValue(envelopeContent(unsigned));
+    const calculated = envelopeChecksum(envelopeContent(unsigned));
     const suppliedBytes = Buffer.from(checksum, "hex");
     const calculatedBytes = Buffer.from(calculated, "hex");
     if (suppliedBytes.length !== calculatedBytes.length || !timingSafeEqual(suppliedBytes, calculatedBytes)) {

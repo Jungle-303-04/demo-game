@@ -77,6 +77,20 @@ describe("snapshot envelope", () => {
             .toThrow("snapshot_contains_non_finite_number");
     });
 
+    it("keeps ordered large-snapshot envelopes tamper evident", () => {
+        const envelope = createSnapshotEnvelope({
+            schemaVersion: 4 as const,
+            stateChecksumAlgorithm: "ordered-json-sha256",
+            stateChecksum: "a".repeat(64),
+            world: { marker: 1 },
+        }, request(1).context);
+        const tampered = structuredClone(envelope);
+        tampered.payload.world.marker = 2;
+
+        expect(() => parseSnapshotEnvelope(JSON.stringify(tampered)))
+            .toThrow("snapshot_checksum_mismatch");
+    });
+
     it("rejects a configured interval below the independently validated minimum", () => {
         expect(() =>
             readSnapshotRuntimeConfig({
