@@ -2133,14 +2133,16 @@ export class OpsiaSnapshotStore {
             } else {
                 this.pendingPlayers = [];
             }
-            snapshot.players.sort((a, b) => a.sessionId.localeCompare(b.sessionId));
-            snapshot.stateChecksum = materialStateChecksum(
-                snapshot.roomId,
-                snapshot.mapName,
-                snapshot.mapSeed,
-                snapshot.world,
-                snapshot.players,
-            );
+            if (this.pendingPlayers.length > 0) {
+                snapshot.players.sort((a, b) => a.sessionId.localeCompare(b.sessionId));
+                snapshot.stateChecksum = materialStateChecksum(
+                    snapshot.roomId,
+                    snapshot.mapName,
+                    snapshot.mapSeed,
+                    snapshot.world,
+                    snapshot.players,
+                );
+            }
             this.snapshotTick = Math.max(this.snapshotTick + 1, normalizedServerTick);
             return {
                 context: {

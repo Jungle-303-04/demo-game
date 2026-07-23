@@ -159,26 +159,50 @@ export const readSnapshotRuntimeConfig = (env: NodeJS.ProcessEnv = process.env):
     };
 };
 
-const canonicalJson = (value: unknown): string => {
-    if (value === null || typeof value === "boolean" || typeof value === "string") return JSON.stringify(value);
+type HashSink = Pick<ReturnType<typeof createHash>, "update">;
+
+const updateCanonicalHash = (hash: HashSink, value: unknown): void => {
+    if (value === null || typeof value === "boolean" || typeof value === "string") {
+        hash.update(JSON.stringify(value));
+        return;
+    }
     if (typeof value === "number") {
         if (!Number.isFinite(value)) throw new Error("snapshot_contains_non_finite_number");
-        return JSON.stringify(value);
+        hash.update(JSON.stringify(value));
+        return;
     }
-    if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item)).join(",")}]`;
+    if (Array.isArray(value)) {
+        hash.update("[");
+        value.forEach((item, index) => {
+            if (index > 0) hash.update(",");
+            updateCanonicalHash(hash, item);
+        });
+        hash.update("]");
+        return;
+    }
     if (typeof value === "object") {
         const record = value as Record<string, unknown>;
         const fields = Object.keys(record)
             .filter((key) => record[key] !== undefined)
-            .sort()
-            .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`);
-        return `{${fields.join(",")}}`;
+            .sort();
+        hash.update("{");
+        fields.forEach((key, index) => {
+            if (index > 0) hash.update(",");
+            hash.update(JSON.stringify(key));
+            hash.update(":");
+            updateCanonicalHash(hash, record[key]);
+        });
+        hash.update("}");
+        return;
     }
     throw new Error("snapshot_contains_unsupported_value");
 };
 
-export const checksumValue = (value: unknown): string =>
-    createHash("sha256").update(canonicalJson(value)).digest("hex");
+export const checksumValue = (value: unknown): string => {
+    const hash = createHash("sha256");
+    updateCanonicalHash(hash, value);
+    return hash.digest("hex");
+};
 
 const envelopeContent = <T>(envelope: Omit<GameSnapshotEnvelope<T>, "checksum">) => ({
     kind: envelope.kind,
