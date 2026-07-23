@@ -16,7 +16,7 @@ test("adaptive admission load keeps the same load while the live failure metric 
   let requests = 0;
   const sessionIds = new Set<string>();
   const controller = new AdmissionLoadController({
-    endpoint: "http://api-server:8081",
+    endpoint: "http://demo-game-gateway",
     initialRps: 10,
     rampStepRps: 10,
     rampIntervalMs: 500,
@@ -26,7 +26,7 @@ test("adaptive admission load keeps the same load while the live failure metric 
     requestTimeoutMs: 500,
     fetchImpl: async (input, init) => {
       requests += 1;
-      assert.equal(String(input), "http://api-server:8081/api/find-game");
+      assert.equal(String(input), "http://demo-game-gateway/api/find-game");
       assert.equal(init?.method, "POST");
       assert.equal(new Headers(init?.headers).get("connection"), "close");
       const target = JSON.parse(String(init?.body)) as { sessionId?: string };
@@ -55,4 +55,44 @@ test("adaptive admission load keeps the same load while the live failure metric 
   assert.equal(controller.stop(started.jobId).phase, "stopped");
   assert.ok(requests > 10);
   assert.equal(sessionIds.size, requests);
+});
+
+test("maximum admission pressure continues through the login gateway until failures begin", async () => {
+  let failing = false;
+  let requests = 0;
+  const controller = new AdmissionLoadController({
+    endpoint: "http://demo-game-gateway",
+    initialRps: 10,
+    rampStepRps: 10,
+    rampIntervalMs: 500,
+    maximumRps: 10,
+    metricWindowMs: 1_000,
+    safetyTtlMs: 10_000,
+    requestTimeoutMs: 500,
+    fetchImpl: async (input) => {
+      requests += 1;
+      assert.equal(String(input), "http://demo-game-gateway/api/find-game");
+      return failing
+        ? new Response(JSON.stringify({ error: "gateway_unavailable" }), { status: 502 })
+        : new Response(JSON.stringify({ room: { roomId: "room-0" } }), { status: 200 });
+    },
+  });
+
+  const started = controller.start("room-0");
+  await waitUntil(() => requests >= 8);
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  const atMaximum = controller.status(started.jobId)!;
+  assert.equal(atMaximum.phase, "ramping");
+  assert.equal(atMaximum.targetRps, 10);
+  assert.equal(atMaximum.incidentTriggered, false);
+
+  const requestsAtMaximum = requests;
+  await waitUntil(() => requests > requestsAtMaximum);
+  failing = true;
+  await waitUntil(() => controller.status(started.jobId)?.incidentTriggered === true);
+  const failed = controller.status(started.jobId)!;
+  assert.equal(failed.phase, "saturated");
+  assert.equal(failed.saturationReason, "failure_threshold");
+  assert.ok(failed.failureRatePercent >= 20);
+  assert.equal(controller.stop(started.jobId).phase, "stopped");
 });

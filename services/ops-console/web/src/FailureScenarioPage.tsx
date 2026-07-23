@@ -20,6 +20,7 @@ import {
   ControlPlaneError,
   controlPlaneClient,
 } from "./control-plane-client.js";
+import { compactPodName } from "./room-display.js";
 
 type ConnectionState = "connecting" | "connected" | "degraded";
 type ScenarioTone = "warning" | "danger" | "critical";
@@ -54,6 +55,10 @@ function roomStableId(room: GameRoom) {
 
 function roomCurrentPodName(room: GameRoom) {
   return room.currentPodName || room.podName;
+}
+
+function roomPodDisplayName(room: GameRoom) {
+  return compactPodName(roomCurrentPodName(room));
 }
 
 function roomPodLabel(room: GameRoom) {
@@ -503,7 +508,7 @@ export function FailureScenarioPage({
                   </div>
                   <div>
                     <dt>Current Pod</dt>
-                    <dd title={roomCurrentPodName(selectedRoom)}>{roomCurrentPodName(selectedRoom)}</dd>
+                    <dd title={roomCurrentPodName(selectedRoom)}>{roomPodDisplayName(selectedRoom)}</dd>
                   </div>
                   <div>
                     <dt>Pod Label</dt>

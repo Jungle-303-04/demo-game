@@ -25,6 +25,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   const player = await readFile(join(process.cwd(), "upstream-survev/server/src/game/objects/player.ts"), "utf8");
   const adminUi = await readFile(join(process.cwd(), "services/ops-console/web/src/GameAdminConsole.tsx"), "utf8");
   const failureScenarioUi = await readFile(join(process.cwd(), "services/ops-console/web/src/FailureScenarioPage.tsx"), "utf8");
+  const roomDisplay = await readFile(join(process.cwd(), "services/ops-console/web/src/room-display.ts"), "utf8");
   const controlPlaneClient = await readFile(join(process.cwd(), "services/ops-console/web/src/control-plane-client.ts"), "utf8");
   const opsConsoleServer = await readFile(join(process.cwd(), "services/ops-console/src/main.ts"), "utf8");
   const opsConsoleAdmin = await readFile(join(process.cwd(), "services/ops-console/src/admin.ts"), "utf8");
@@ -207,6 +208,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.doesNotMatch(failureScenarioUi, /withControlPlaneAdminTokenRetry|관리자 토큰/);
   assert.doesNotMatch(opsConsoleServer, /OPS_ADMIN_TOKEN|REQUIRE_ADMIN_TOKEN|admin_token_required|timingSafeEqual/);
   assert.match(failureScenarios, /new AdmissionLoadController/);
+  assert.match(failureScenarios, /process\.env\.ADMISSION_GATEWAY_URL/);
   assert.doesNotMatch(failureScenarios, /api-server\/scale/);
   assert.match(failureScenarioUi, /function AdmissionCapacityPanel/);
   assert.match(failureScenarioUi, /failureRatePercent/);
@@ -305,9 +307,12 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /room\.roomName \|\| room\.name/);
   assert.match(adminUi, /room\.roomId \|\| room\.id/);
   assert.match(adminUi, /room\.currentPodName \|\| room\.podName/);
+  assert.match(roomDisplay, /\/-\[a-z0-9\]\{8,10\}-\[a-z0-9\]\{5\}\$\//);
+  assert.match(adminUi, /compactPodName\(roomCurrentPodName\(room\)\)/);
+  assert.match(failureScenarioUi, /compactPodName\(roomCurrentPodName\(room\)\)/);
   assert.match(adminUi, /className="server-block-meta"/);
   assert.match(adminUi, /className="room-view-overlay"/);
-  assert.match(adminUi, /<strong>\{currentPodName\}<\/strong>/);
+  assert.match(adminUi, /<strong title=\{currentPodName\}>\{podDisplayName\}<\/strong>/);
   assert.doesNotMatch(adminUi, /className="room-toolbar-identity"/);
   assert.match(failureScenarioUi, /className="scenario-room-identity"/);
   assert.match(adminCss, /\.room-identity/);
@@ -353,7 +358,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(serverBlock, /profile\.secondary\.valueText/);
   assert.match(serverBlock, /className="server-block-name"/);
   assert.match(serverBlock, /server-block-tick-value\$\{profile\.secondary \? " is-paired" : ""\}/);
-  assert.match(serverBlock, /\{currentPodName\}/);
+  assert.match(serverBlock, /\{podDisplayName\}/);
   assert.match(serverBlock, /className="server-block-meta"/);
   assert.match(serverBlock, /className="server-block-connections"/);
   assert.match(serverBlock, /\{displayName\}/);

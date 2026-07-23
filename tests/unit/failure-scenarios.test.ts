@@ -367,6 +367,7 @@ test("admission saturation exposes the failure metric and cleanup only stops the
   assert.equal(started.evidence?.successRatePercent, 100);
   assert.equal(started.evidence?.failureRatePercent, 0);
   assert.equal(started.evidence?.failureTarget, "api-server");
+  assert.equal(started.evidence?.loadPath, "login-gateway");
   assert.equal(started.evidence?.recoveryOwner, "external-service");
   assert.equal(controller.admissionFailureRates().get("room-0"), 0);
 

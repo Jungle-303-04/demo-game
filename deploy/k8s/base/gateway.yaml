@@ -11,6 +11,14 @@ data:
         return 200 'ok';
       }
 
+      location = /api/find-game {
+        proxy_pass http://api-server.sandbox.svc.cluster.local:8081;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      }
+
       location / {
         return 308 https://$host$request_uri;
       }

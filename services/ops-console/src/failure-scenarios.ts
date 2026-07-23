@@ -131,9 +131,13 @@ export class FailureScenarioController {
     private readonly now: () => number = Date.now,
     admissionEndpoint = process.env.API_SERVER_URL ?? "http://api-server:8081",
     admissionLoad?: AdmissionLoadService,
+    admissionLoadEndpoint = process.env.ADMISSION_GATEWAY_URL ?? admissionEndpoint,
   ) {
     this.admissionEndpoint = admissionEndpoint.replace(/\/+$/, "");
-    this.admissionLoad = admissionLoad ?? new AdmissionLoadController({ endpoint: this.admissionEndpoint, now });
+    this.admissionLoad = admissionLoad ?? new AdmissionLoadController({
+      endpoint: admissionLoadEndpoint,
+      now,
+    });
   }
 
   async getState(
@@ -306,6 +310,7 @@ export class FailureScenarioController {
             ...this.admissionEvidence(load),
             failureMode: "process-exit-on-real-admission-load",
             failureTarget: "api-server",
+            loadPath: "login-gateway",
             overloadArmed: armed.armed,
             overloadThresholdRequests: armed.thresholdRequests,
             overloadWindowMs: armed.windowMs,

@@ -257,8 +257,10 @@ export class AdmissionLoadController implements AdmissionLoadService {
       return;
     }
     if (job.targetRps >= job.maximumRps) {
-      job.phase = "saturated";
-      job.saturationReason = "maximum_load";
+      // Reaching the configured ceiling is not the incident. Keep applying
+      // maximum pressure until the live admission path actually starts
+      // failing or an operator explicitly recovers the scenario.
+      job.nextRampAtMs = this.now() + this.rampIntervalMs;
       return;
     }
     job.targetRps = Math.min(job.maximumRps, job.targetRps + this.rampStepRps);

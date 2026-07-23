@@ -21,6 +21,7 @@ import {
   ControlPlaneError,
   controlPlaneClient,
 } from "./control-plane-client.js";
+import { compactPodName } from "./room-display.js";
 
 type StyleWithVariables = CSSProperties & Record<`--${string}`, string | number>;
 type ConnectionState = "connecting" | "connected" | "degraded";
@@ -78,6 +79,10 @@ function roomStableId(room: GameRoom) {
 
 function roomCurrentPodName(room: GameRoom) {
   return room.currentPodName || room.podName;
+}
+
+function roomPodDisplayName(room: GameRoom) {
+  return compactPodName(roomCurrentPodName(room));
 }
 
 function mapLayoutKey(map: MapLayoutTelemetry, seed: number) {
@@ -602,6 +607,7 @@ function ServerBlock({
   const displayName = roomDisplayName(room);
   const stableRoomId = roomStableId(room);
   const currentPodName = roomCurrentPodName(room);
+  const podDisplayName = roomPodDisplayName(room);
   const menuId = `server-block-menu-${room.id}`;
   const style = {
     ...statusSurfaceStyleVars(profile),
@@ -632,7 +638,7 @@ function ServerBlock({
 
   return (
     <article
-      aria-label={`${displayName}, ${currentPodName}, ${profile.ariaValue}`}
+      aria-label={`${displayName}, ${podDisplayName}, ${profile.ariaValue}`}
       className={`server-block is-${profile.tone}`}
       style={style}
     >
@@ -673,7 +679,7 @@ function ServerBlock({
       </div>
       <div className="server-block-primary">
         <div className="server-block-name" title={currentPodName}>
-          {currentPodName}
+          {podDisplayName}
         </div>
         <strong className={`server-block-tick-value${profile.secondary ? " is-paired" : ""}`}>
           {profile.secondary ? (
@@ -1119,6 +1125,7 @@ function RoomViewer({
   const connectedPlayers = bots + humans;
   const displayName = roomDisplayName(room);
   const currentPodName = roomCurrentPodName(room);
+  const podDisplayName = roomPodDisplayName(room);
   const alivePlayers = useMemo(
     () =>
       room.players
@@ -1298,10 +1305,10 @@ function RoomViewer({
   const liveStage = (
     <div className={`world-stage${isInlinePip ? " is-inline-pip" : ""}`} ref={stageRef}>
       <div
-        aria-label={`${currentPodName}, 접속 인원 ${connectedPlayers}명`}
+        aria-label={`${podDisplayName}, 접속 인원 ${connectedPlayers}명`}
         className="room-view-overlay"
       >
-        <strong>{currentPodName}</strong>
+        <strong title={currentPodName}>{podDisplayName}</strong>
         <span>{connectedPlayers}명 접속</span>
       </div>
       {selectedPlayer ? (

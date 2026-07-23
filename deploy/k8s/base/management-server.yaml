@@ -75,6 +75,7 @@ spec:
             - { name: ORCHESTRATOR_URL, value: http://127.0.0.1:8082 }
             - { name: BOT_RUNNER_URL, value: http://127.0.0.1:8084 }
             - { name: API_SERVER_URL, value: http://api-server:8081 }
+            - { name: ADMISSION_GATEWAY_URL, value: http://demo-game-gateway }
             - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
             - name: OPS_CONTROL_TOKEN
               valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
