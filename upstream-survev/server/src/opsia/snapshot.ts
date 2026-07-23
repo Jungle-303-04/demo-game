@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 
 export const SNAPSHOT_ENVELOPE_SCHEMA_VERSION = 1 as const;
-export const DEFAULT_SNAPSHOT_INTERVAL_MS = 1_000;
+export const DEFAULT_SNAPSHOT_INTERVAL_MS = 2_000;
 export const DEFAULT_MIN_SNAPSHOT_INTERVAL_MS = 250;
 export const ABSOLUTE_MIN_SNAPSHOT_INTERVAL_MS = 100;
 export const DEFAULT_SNAPSHOT_TIMEOUT_MS = 750;

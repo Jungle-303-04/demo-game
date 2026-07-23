@@ -566,6 +566,12 @@ let lastOpsiaSnapshotAt = Date.now();
 let lastOpsiaSaveAt = 0;
 let opsiaServerTick = 0;
 const opsiaSnapshotIntervalMs = opsiaEnabled() ? readSnapshotRuntimeConfig().intervalMs : 1_000;
+const opsiaTelemetryIntervalMs = Number(process.env.OPSIA_TELEMETRY_INTERVAL_MS ?? 2_000);
+if (!Number.isSafeInteger(opsiaTelemetryIntervalMs)
+    || opsiaTelemetryIntervalMs < 500
+    || opsiaTelemetryIntervalMs > 60_000) {
+    throw new Error("opsia_telemetry_interval_ms_invalid");
+}
 let opsiaTickWindowStartedAt = performance.now();
 let opsiaTickSamples: number[] = [];
 setGameInterval(() => {
@@ -576,7 +582,7 @@ setGameInterval(() => {
         const now = Date.now();
         const tickMs = performance.now() - startedAt;
         opsiaTickSamples.push(tickMs);
-        if (now - lastOpsiaSnapshotAt >= 500) {
+        if (now - lastOpsiaSnapshotAt >= opsiaTelemetryIntervalMs) {
             lastOpsiaSnapshotAt = now;
             const sampledAt = performance.now();
             const elapsedMs = Math.max(1, sampledAt - opsiaTickWindowStartedAt);
