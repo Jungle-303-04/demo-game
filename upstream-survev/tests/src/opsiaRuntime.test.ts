@@ -1,18 +1,19 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Game, JoinTokenData } from "../../server/src/game/game.ts";
 import type { Player } from "../../server/src/game/objects/player.ts";
-import { DamageType, TeamMode } from "../../shared/gameConfig.ts";
-import { createGame } from "./gameTestHelpers.ts";
 import { RoomStateJournal } from "../../server/src/opsia/journal.ts";
 import {
-    type LooseGameSnapshot,
-    OpsiaSnapshotStore,
     lastProcessedGatewayInput,
+    type LooseGameSnapshot,
+    makeOpsSnapshot,
+    OpsiaSnapshotStore,
     recordProcessedGatewayInput,
     restoreGame,
     restorePlayer,
     serializeGame,
 } from "../../server/src/opsia/runtime.ts";
+import { DamageType, TeamMode } from "../../shared/gameConfig.ts";
+import { createGame } from "./gameTestHelpers.ts";
 
 const originalRoomId = process.env.ROOM_ID;
 const originalRedisUrl = process.env.REDIS_URL;
@@ -47,6 +48,26 @@ const fakeGame = (): Game => ({
 } as unknown as Game);
 
 describe("Opsia recovery ownership", () => {
+    it("projects live colliders and removes destroyed crates from bot navigation", () => {
+        const game = createGame(TeamMode.Solo, "main");
+        game.map.regenerate(517_204);
+        const breakable = game.map.obstacles.find((obstacle) =>
+            obstacle.layer === 0
+            && obstacle.collidable
+            && obstacle.destructible
+            && !obstacle.isDoor
+            && !obstacle.dead
+        )!;
+
+        const before = makeOpsSnapshot(game, 0, 20);
+        expect(before.obstacles.some((obstacle) => obstacle.id === breakable.__id)).toBe(true);
+        expect(before.obstacles.some((obstacle) => obstacle.containsLoot)).toBe(true);
+
+        breakable.dead = true;
+        const after = makeOpsSnapshot(game, 0, 20);
+        expect(after.obstacles.some((obstacle) => obstacle.id === breakable.__id)).toBe(false);
+    });
+
     it("persists the exact stable-session input ACK in the snapshot contract", () => {
         process.env.ROOM_ID = "room-input-ack";
         const game = fakeGame();

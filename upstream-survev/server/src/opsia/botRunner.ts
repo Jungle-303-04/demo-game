@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { GameConfig } from "../../../shared/gameConfig.ts";
 import * as net from "../../../shared/net/net.ts";
 import { type BotBrainSnapshot, createBotBrainState, decideBotIntent } from "./botBrain.ts";
-import { createBotInput } from "./botInput.ts";
+import { createBotInput, smoothBotAngle } from "./botInput.ts";
 import { botFindGameUrl, botWebsocketUrl, normalizeSessionGatewayUrl } from "./botRouting.ts";
 import { controlTokenMatches, readControlToken } from "./controlPlaneAuth.ts";
 
@@ -42,6 +42,47 @@ const SURGE_BOT_INPUT_INTERVAL_MS = 60;
 const SURGE_BOT_INPUTS_PER_INTERVAL = 3;
 const HACK_BOT_INPUT_INTERVAL_MS = 30;
 const BOT_JOIN_READY_GRACE_MS = 100;
+const botNamePrefixes = [
+    "Lucky",
+    "Silent",
+    "Jungle",
+    "Pixel",
+    "Mango",
+    "Neon",
+    "Rapid",
+    "Blue",
+    "Night",
+    "Tiny",
+] as const;
+const botNameSuffixes = [
+    "Fox",
+    "Raven",
+    "Tiger",
+    "Runner",
+    "Ace",
+    "Nova",
+    "Panda",
+    "Wolf",
+    "Scout",
+    "Rush",
+] as const;
+
+const stableNameHash = (value: string): number => {
+    let hash = 2_166_136_261;
+    for (let index = 0; index < value.length; index++) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16_777_619);
+    }
+    return hash >>> 0;
+};
+
+const humanLikeBotName = (sessionId: string): string => {
+    const hash = stableNameHash(sessionId);
+    const prefix = botNamePrefixes[hash % botNamePrefixes.length]!;
+    const suffix = botNameSuffixes[Math.floor(hash / botNamePrefixes.length) % botNameSuffixes.length]!;
+    const number = 10 + Math.floor(hash / (botNamePrefixes.length * botNameSuffixes.length)) % 90;
+    return hash % 3 === 0 ? `${prefix}${suffix}` : `${prefix}${suffix}${number}`;
+};
 type RoomAwareness = {
     snapshot?: BotBrainSnapshot;
     requestedAt: number;
@@ -87,10 +128,13 @@ class SurvevProtocolBot {
     private inputLoopStarted = false;
     private inputSeq = 0;
     private readySettled = false;
+    private readyError: Error | undefined;
     private readonly readyPromise: Promise<void>;
     private resolveReady!: () => void;
     private rejectReady!: (error: Error) => void;
     private readonly brain = createBotBrainState();
+    private smoothedMoveAngle: number | undefined;
+    private smoothedAimAngle: number | undefined;
 
     constructor(
         id: string,
@@ -99,12 +143,13 @@ class SurvevProtocolBot {
         mode: BotMode,
         match: NonNullable<FindGameResponse["res"]>[number],
         websocketUrl: string,
+        requestedNickname: string | undefined,
         private readonly roomEndpoint: string,
         private readonly onStopped: (id: string) => void,
     ) {
         this.id = id;
         this.sessionId = sessionId;
-        this.nickname = `OPSIA_${id.slice(-6)}`;
+        this.nickname = requestedNickname?.trim().slice(0, 16) || humanLikeBotName(sessionId);
         this.roomId = roomId;
         this.mode = mode;
         this.readyPromise = new Promise<void>((resolve, reject) => {
@@ -160,11 +205,11 @@ class SurvevProtocolBot {
                     wasClean: event.wasClean,
                 },
             }));
-            this.settleReady(new Error("bot_connection_closed"));
+            this.settleReady();
             this.stop();
         });
         this.ws.addEventListener("error", () => {
-            this.settleReady(new Error("bot_connection_failed"));
+            this.settleReady();
             this.stop();
         });
     }
@@ -189,6 +234,7 @@ class SurvevProtocolBot {
                     timeout = setTimeout(() => reject(new Error("bot_connection_timeout")), timeoutMs);
                 }),
             ]);
+            if (!this.connected) throw this.readyError ?? new Error("bot_connection_closed");
         } finally {
             if (timeout) clearTimeout(timeout);
         }
@@ -201,7 +247,7 @@ class SurvevProtocolBot {
         if (this.stopped) return;
         this.stopped = true;
         this.connected = false;
-        this.settleReady(new Error("bot_stopped"));
+        this.settleReady();
         if (this.readyGraceTimer) clearTimeout(this.readyGraceTimer);
         this.readyGraceTimer = undefined;
         if (this.timer) clearInterval(this.timer);
@@ -215,8 +261,12 @@ class SurvevProtocolBot {
     private settleReady(error?: Error): void {
         if (this.readySettled) return;
         this.readySettled = true;
-        if (error) this.rejectReady(error);
-        else this.resolveReady();
+        this.readyError = error;
+        // Keep the readiness promise fulfilled. Connection failures are
+        // surfaced by waitUntilConnected() after the promise settles, which
+        // prevents late WebSocket close events from becoming unhandled
+        // rejections that terminate the bot runner.
+        this.resolveReady();
     }
 
     private markConnected(): void {
@@ -257,8 +307,8 @@ class SurvevProtocolBot {
         const inputInterval = this.mode === "hack"
             ? HACK_BOT_INPUT_INTERVAL_MS
             : this.mode === "surge"
-                ? SURGE_BOT_INPUT_INTERVAL_MS
-                : NORMAL_BOT_INPUT_INTERVAL_MS;
+            ? SURGE_BOT_INPUT_INTERVAL_MS
+            : NORMAL_BOT_INPUT_INTERVAL_MS;
         this.timer = setInterval(() => this.sendInputs(), inputInterval);
     }
 
@@ -272,11 +322,31 @@ class SurvevProtocolBot {
     private sendInputs(): void {
         if (this.stopped || this.ws.readyState !== WebSocket.OPEN) return;
         requestRoomAwareness(this.roomId, this.roomEndpoint);
-        const intent = decideBotIntent(
+        const rawIntent = decideBotIntent(
             roomAwareness.get(this.roomId)?.snapshot,
             this.sessionId,
             this.brain,
         );
+        // The tactical brain may select a sharply different path whenever a
+        // fresh room snapshot arrives. Ease those discrete decisions across
+        // protocol ticks so watched bots turn like players instead of snapping
+        // between compass directions.
+        const moveStep = rawIntent.mode === "unstuck" ? 0.75 : 0.38;
+        this.smoothedMoveAngle = smoothBotAngle(
+            this.smoothedMoveAngle,
+            rawIntent.moveAngle,
+            moveStep,
+        );
+        this.smoothedAimAngle = smoothBotAngle(
+            this.smoothedAimAngle,
+            rawIntent.aimAngle,
+            0.52,
+        );
+        const intent = {
+            ...rawIntent,
+            moveAngle: this.smoothedMoveAngle,
+            aimAngle: this.smoothedAimAngle,
+        };
         const sendOne = () => {
             const input = createBotInput(intent);
             this.inputSeq = (this.inputSeq + 1) & 0xff;
@@ -288,24 +358,26 @@ class SurvevProtocolBot {
         const count = this.mode === "hack"
             ? 20
             : this.mode === "surge"
-                ? SURGE_BOT_INPUTS_PER_INTERVAL
-                : 1;
+            ? SURGE_BOT_INPUTS_PER_INTERVAL
+            : 1;
         for (let index = 0; index < count; index++) sendOne();
     }
 }
 
 const parseConfiguredRoomEndpoints = (configured = process.env.OPSIA_ROOM_ENDPOINTS ?? ""): Map<string, string> =>
-    new Map(configured.split(",").flatMap((entry) => {
-        const [roomId, endpoint] = entry.split("=").map((value) => value?.trim());
-        if (!roomId || !endpoint || !/^(?:room-\d+|canary-room)$/.test(roomId)) return [];
-        try {
-            const url = new URL(endpoint);
-            if (url.protocol !== "http:" && url.protocol !== "https:") return [];
-            return [[roomId, url.toString().replace(/\/$/, "")]];
-        } catch {
-            return [];
-        }
-    }));
+    new Map(
+        configured.split(",").flatMap((entry) => {
+            const [roomId, endpoint] = entry.split("=").map((value) => value?.trim());
+            if (!roomId || !endpoint || !/^(?:room-\d+|canary-room)$/.test(roomId)) return [];
+            try {
+                const url = new URL(endpoint);
+                if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+                return [[roomId, url.toString().replace(/\/$/, "")]];
+            } catch {
+                return [];
+            }
+        }),
+    );
 
 const roomDirectoryUrl = process.env.OPSIA_ROOM_DIRECTORY_URL?.trim().replace(/\/$/, "");
 const sessionGatewayUrl = normalizeSessionGatewayUrl(process.env.SESSION_GATEWAY_INTERNAL_URL);
@@ -336,7 +408,9 @@ const rooms = async (): Promise<Map<string, string>> => {
             };
             const next = new Map<string, string>();
             for (const room of payload.rooms ?? []) {
-                if (room.status === "inactive" || typeof room.roomId !== "string" || typeof room.endpoint !== "string") {
+                if (
+                    room.status === "inactive" || typeof room.roomId !== "string" || typeof room.endpoint !== "string"
+                ) {
                     continue;
                 }
                 const parsed = parseConfiguredRoomEndpoints(`${room.roomId}=${room.endpoint}`);
@@ -389,6 +463,7 @@ const spawn = async (
     requestedRoom: string | undefined,
     mode: BotMode,
     requestedSessionId?: string,
+    requestedNickname?: string,
 ): Promise<BotSummary[]> => {
     if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error("invalid_bot_count");
     const roomMap = await rooms();
@@ -428,6 +503,7 @@ const spawn = async (
             mode,
             match.res[0],
             botWebsocketUrl(roomId, match.res[0], sessionId, sessionGatewayUrl),
+            requestedNickname,
             endpoint,
             (stoppedId) => bots.delete(stoppedId),
         );
@@ -487,7 +563,13 @@ const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs
                     job.createdBotIds.push(...created.map((bot) => bot.id));
                     job.completed += 1;
                 })());
-                if (index < count - 1) await new Promise((resolve) => setTimeout(resolve, intervalMs));
+                // Surge bots must reach the same lobby before the game flips
+                // canJoin=false. Keep normal jobs paced, but launch the
+                // pressure cohort together so it becomes real connected
+                // players instead of a stream of rejected late joins.
+                if (mode !== "surge" && index < count - 1) {
+                    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+                }
             }
             await Promise.all(spawnTasks);
             if (job.state === "running") job.state = "completed";
@@ -610,8 +692,8 @@ const server = createServer(async (request, response) => {
             const mode: BotMode = body.mode === "hack"
                 ? "hack"
                 : body.mode === "surge"
-                    ? "surge"
-                    : "normal";
+                ? "surge"
+                : "normal";
             const roomId = String(body.room ?? "");
             const job = await startJob(Number(body.count), roomId, mode, Number(body.intervalMs ?? 300));
             return reply(response, 202, job);
@@ -621,14 +703,15 @@ const server = createServer(async (request, response) => {
             const mode: BotMode = body.mode === "hack"
                 ? "hack"
                 : body.mode === "surge"
-                    ? "surge"
-                    : "normal";
+                ? "surge"
+                : "normal";
             return reply(response, 201, {
                 bots: await spawn(
                     Number(body.count),
                     body.room ? String(body.room) : undefined,
                     mode,
                     body.sessionId ? String(body.sessionId) : undefined,
+                    body.nickname ? String(body.nickname) : undefined,
                 ),
             });
         }

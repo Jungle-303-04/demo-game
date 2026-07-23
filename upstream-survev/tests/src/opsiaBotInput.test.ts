@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { BotIntent } from "../../server/src/opsia/botBrain.ts";
-import { createBotInput } from "../../server/src/opsia/botInput.ts";
+import { createBotInput, smoothBotAngle } from "../../server/src/opsia/botInput.ts";
 import { GameConfig } from "../../shared/gameConfig.ts";
 
 const intent = (overrides: Partial<BotIntent> = {}): BotIntent => ({
@@ -16,6 +16,13 @@ const intent = (overrides: Partial<BotIntent> = {}): BotIntent => ({
 });
 
 describe("Opsia protocol bot input", () => {
+    test("eases sharp steering changes across the shortest turn", () => {
+        expect(smoothBotAngle(undefined, 1.2, 0.4)).toBeCloseTo(1.2);
+        expect(smoothBotAngle(0, Math.PI / 2, 0.4)).toBeCloseTo(0.4);
+        expect(smoothBotAngle(Math.PI - 0.1, -Math.PI + 0.1, 0.15)).toBeCloseTo(Math.PI + 0.05);
+        expect(smoothBotAngle(1, 1.2, 0.4)).toBeCloseTo(1.2);
+    });
+
     test("gates every movement key while resting without dropping aim or fire", () => {
         const input = createBotInput(intent({ moving: false }), () => 0.1);
 
@@ -52,6 +59,7 @@ describe("Opsia protocol bot input", () => {
         const mappings = [
             ["primary", GameConfig.Input.EquipPrimary],
             ["secondary", GameConfig.Input.EquipSecondary],
+            ["melee", GameConfig.Input.EquipMelee],
             ["throwable", GameConfig.Input.EquipThrowable],
             ["lastWeapon", GameConfig.Input.EquipLastWeap],
         ] as const;
