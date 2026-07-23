@@ -390,20 +390,16 @@ export class FailureScenarioController {
         if (!run.jobId) throw new Error("admission_load_job_not_found");
         run.status = "recovering";
         const stopped = this.admissionLoad.stop(run.jobId);
-        const admissionRecovered = await this.waitForAdmissionServer();
-        if (!admissionRecovered) {
+        const recoveryRequested = await this.requestAdmissionRecovery();
+        if (!recoveryRequested) {
           throw new UpstreamError(
             409,
             { error: "admission_recovery_not_ready" },
             "admission_recovery_not_ready",
           );
         }
-        const overloadDisarmed = await fetchJson(
-          `${this.admissionEndpoint}/ops/failure/admission-overload/disarm`,
-          { method: "POST" },
-          2_000,
-        ).then(() => true, () => false);
-        if (!overloadDisarmed) {
+        const admissionRecovered = await this.waitForAdmissionServer();
+        if (!admissionRecovered) {
           throw new UpstreamError(
             409,
             { error: "admission_recovery_not_ready" },
@@ -413,7 +409,7 @@ export class FailureScenarioController {
         return this.completeRun(roomId, run, "입장 부하를 중단하고 입장 서버 자동 복구를 확인했습니다.", {
           ...this.admissionEvidence(stopped),
           loadStopped: true,
-          overloadDisarmed,
+          overloadDisarmed: true,
           admissionServerStatus: "healthy",
           recoveryPerformed: true,
           recoveryVerified: true,
@@ -708,6 +704,21 @@ export class FailureScenarioController {
         600,
       ).catch(() => undefined);
       if (health?.status === "ok") return true;
+      if (attempt + 1 < ADMISSION_RECOVERY_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, ADMISSION_RECOVERY_POLL_MS));
+      }
+    }
+    return false;
+  }
+
+  private async requestAdmissionRecovery(): Promise<boolean> {
+    for (let attempt = 0; attempt < ADMISSION_RECOVERY_ATTEMPTS; attempt += 1) {
+      const recovered = await fetchJson<{ status?: string }>(
+        `${this.admissionEndpoint}/ops/failure/admission-overload/recover`,
+        { method: "POST" },
+        600,
+      ).catch(() => undefined);
+      if (recovered?.status === "ok") return true;
       if (attempt + 1 < ADMISSION_RECOVERY_ATTEMPTS) {
         await new Promise((resolve) => setTimeout(resolve, ADMISSION_RECOVERY_POLL_MS));
       }

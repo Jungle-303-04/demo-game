@@ -11,7 +11,7 @@ const waitUntil = async (predicate: () => boolean, timeoutMs = 5_000): Promise<v
   throw new Error("condition_timeout");
 };
 
-test("adaptive admission load keeps the same load while the live failure metric recovers", async () => {
+test("adaptive admission load keeps ramping to maximum after the failure threshold", async () => {
   let expandedCapacity = false;
   let requests = 0;
   const sessionIds = new Set<string>();
@@ -52,6 +52,7 @@ test("adaptive admission load keeps the same load while the live failure metric 
   const recoveredMetric = controller.status(started.jobId)!;
   assert.equal(recoveredMetric.phase, "saturated");
   assert.ok(recoveredMetric.successRatePercent >= 99);
+  assert.equal(recoveredMetric.targetRps, recoveredMetric.maximumRps);
   assert.equal(controller.stop(started.jobId).phase, "stopped");
   assert.ok(requests > 10);
   assert.equal(sessionIds.size, requests);
