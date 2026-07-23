@@ -22,15 +22,18 @@ const harness = (options: {
   candidateImage?: string;
   candidateImageId?: string;
   gatewayContinuous?: boolean;
+  gatewayContinuousAfterReads?: number;
   cutoverResponseLost?: boolean;
   originalAnnotations?: Record<string, string>;
   candidateChecksumMismatchOnce?: boolean;
+  requestTimeoutMs?: number;
 } = {}): Harness => {
   const calls: Harness["calls"] = [];
   let rolloutPatched = false;
   let gatewayEndpoint = "http://10.0.0.11:8001";
   let gatewayEpoch = 41;
   let gatewayOperationId = "op-rollout";
+  let gatewayReadCount = 0;
   let oldActive = true;
   let candidateActive = false;
   let oldEpoch = 41;
@@ -233,6 +236,7 @@ const harness = (options: {
       return json({ sessions: 3, unackedInputs: 2 });
     }
     if (url === "http://gateway:8083/internal/rooms") {
+      gatewayReadCount++;
       return json({
         rooms: [{ roomId: "room-1", endpoint: gatewayEndpoint, epoch: gatewayEpoch }],
         preparations: [],
@@ -243,7 +247,9 @@ const harness = (options: {
           expectedSessions: 3,
           liveSessions: 3,
           upstreamSessions: 3,
-          continuous: options.gatewayContinuous ?? true,
+          continuous: options.gatewayContinuousAfterReads === undefined
+            ? options.gatewayContinuous ?? true
+            : gatewayReadCount >= options.gatewayContinuousAfterReads,
         }] : [],
         operations: gatewayEpoch > 41 ? [{
           operationId: gatewayOperationId,
@@ -293,6 +299,7 @@ const harness = (options: {
       gameImageRepository: "repo/game-server",
       fetchImpl,
       sleep: async () => undefined,
+      requestTimeoutMs: options.requestTimeoutMs,
       candidateTimeoutMs: options.candidateTimeoutMs ?? 1_000,
       pollIntervalMs: 1,
     }),
@@ -515,7 +522,7 @@ test("a lost cutover response is reconciled from the Gateway operation record", 
 });
 
 test("post-cutover verification rejects a cached route when live session continuity is false", async () => {
-  const { driver } = harness({ gatewayContinuous: false });
+  const { driver } = harness({ gatewayContinuous: false, requestTimeoutMs: 5 });
   const target = await driver.resolveTarget({ roomId: "room-1", revision: "new" });
   const candidate = await driver.scheduleCandidate(target, "op-rollout");
   await driver.freezeGateway({ operationId: "op-rollout", roomId: "room-1", expectedEpoch: 41 });
@@ -539,4 +546,35 @@ test("post-cutover verification rejects a cached route when live session continu
 
   assert.equal(verification.healthy, true);
   assert.equal(verification.sessionContinuity, false);
+});
+
+test("post-cutover verification waits for live session continuity to settle", async () => {
+  const { driver, calls } = harness({ gatewayContinuousAfterReads: 2 });
+  const target = await driver.resolveTarget({ roomId: "room-1", revision: "new" });
+  const candidate = await driver.scheduleCandidate(target, "op-rollout");
+  await driver.freezeGateway({ operationId: "op-rollout", roomId: "room-1", expectedEpoch: 41 });
+  const authority = await driver.activateCandidate({
+    target,
+    candidate,
+    roomEpoch: 42,
+    checksum,
+  });
+  await driver.cutoverGateway({
+    operationId: "op-rollout",
+    roomId: "room-1",
+    endpoint: candidate.endpoint,
+    expectedEpoch: 41,
+    nextEpoch: 42,
+    revision: "new",
+    checksum: authority.checksum,
+  });
+
+  const verification = await driver.verify(candidate, authority.checksum);
+
+  assert.equal(verification.healthy, true);
+  assert.equal(verification.sessionContinuity, true);
+  assert.equal(
+    calls.filter((call) => call.url === "http://gateway:8083/internal/rooms").length,
+    2,
+  );
 });

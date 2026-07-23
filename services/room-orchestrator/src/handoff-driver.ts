@@ -669,35 +669,46 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
 
   async verify(candidate: RoomCandidate, expectedChecksum: string): Promise<PostVerificationResult> {
     const context = this.contextFor(candidate);
-    const [status, gateway] = await Promise.all([
-      this.handoffStatus(candidate.endpoint),
-      this.gatewayRooms(),
-    ]);
-    const route = gateway.rooms?.find((entry) => entry.roomId === context.target.roomId);
-    const verification = gateway.verifications?.find((entry) =>
-      entry.roomId === context.target.roomId && entry.operationId === context.operationId);
-    const operation = gateway.operations?.find((entry) =>
-      entry.roomId === context.target.roomId && entry.operationId === context.operationId);
     const expectedEpoch = context.committedEpoch ?? context.target.currentEpoch + 1;
-    const expectedSessions = verification?.expectedSessions ?? -1;
-    const sessionContinuity = trimSlash(route?.endpoint ?? "") === trimSlash(candidate.endpoint)
-      && route?.epoch === expectedEpoch
-      && operation?.status === "committed"
-      && operation.nextEpoch === expectedEpoch
-      && trimSlash(operation.endpoint ?? "") === trimSlash(candidate.endpoint)
-      && verification?.epoch === expectedEpoch
-      && verification.continuous === true
-      && expectedSessions >= 0
-      && verification.liveSessions === expectedSessions
-      && verification.upstreamSessions === expectedSessions;
-    return {
-      healthy: status.role === "active"
-        && status.ready
-        && status.roomEpoch === expectedEpoch
-        && status.checksum === expectedChecksum,
-      sessionContinuity,
-      stateChecksum: status.checksum ?? "unavailable",
+    const deadline = Date.now() + this.requestTimeoutMs;
+    let result: PostVerificationResult = {
+      healthy: false,
+      sessionContinuity: false,
+      stateChecksum: "unavailable",
     };
+    do {
+      const [status, gateway] = await Promise.all([
+        this.handoffStatus(candidate.endpoint),
+        this.gatewayRooms(),
+      ]);
+      const route = gateway.rooms?.find((entry) => entry.roomId === context.target.roomId);
+      const verification = gateway.verifications?.find((entry) =>
+        entry.roomId === context.target.roomId && entry.operationId === context.operationId);
+      const operation = gateway.operations?.find((entry) =>
+        entry.roomId === context.target.roomId && entry.operationId === context.operationId);
+      const expectedSessions = verification?.expectedSessions ?? -1;
+      const sessionContinuity = trimSlash(route?.endpoint ?? "") === trimSlash(candidate.endpoint)
+        && route?.epoch === expectedEpoch
+        && operation?.status === "committed"
+        && operation.nextEpoch === expectedEpoch
+        && trimSlash(operation.endpoint ?? "") === trimSlash(candidate.endpoint)
+        && verification?.epoch === expectedEpoch
+        && verification.continuous === true
+        && expectedSessions >= 0
+        && verification.liveSessions === expectedSessions
+        && verification.upstreamSessions === expectedSessions;
+      result = {
+        healthy: status.role === "active"
+          && status.ready
+          && status.roomEpoch === expectedEpoch
+          && status.checksum === expectedChecksum,
+        sessionContinuity,
+        stateChecksum: status.checksum ?? "unavailable",
+      };
+      if (result.healthy && result.sessionContinuity && result.stateChecksum === expectedChecksum) return result;
+      if (Date.now() < deadline) await this.sleep(Math.min(this.pollIntervalMs, 100));
+    } while (Date.now() < deadline);
+    return result;
   }
 
   async activateCandidate(input: {
