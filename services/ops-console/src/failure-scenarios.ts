@@ -103,6 +103,8 @@ const BOT_SURGE_TARGET_TICK_P95_MS = 60;
 const BOT_SURGE_RAMP_INTERVAL_MS = 3_000;
 const BOT_SURGE_HOLD_MS = 10_000;
 const MALICIOUS_BOT_COUNT = 3;
+const ADMISSION_RECOVERY_ATTEMPTS = 24;
+const ADMISSION_RECOVERY_POLL_MS = 250;
 
 export const isFailureScenarioId = (value: string): value is FailureScenarioId =>
   FAILURE_SCENARIO_IDS.some((scenarioId) => scenarioId === value);
@@ -386,18 +388,36 @@ export class FailureScenarioController {
       }
       case "admission-storm": {
         if (!run.jobId) throw new Error("admission_load_job_not_found");
+        run.status = "recovering";
         const stopped = this.admissionLoad.stop(run.jobId);
+        const admissionRecovered = await this.waitForAdmissionServer();
+        if (!admissionRecovered) {
+          throw new UpstreamError(
+            409,
+            { error: "admission_recovery_not_ready" },
+            "admission_recovery_not_ready",
+          );
+        }
         const overloadDisarmed = await fetchJson(
           `${this.admissionEndpoint}/ops/failure/admission-overload/disarm`,
           { method: "POST" },
           2_000,
         ).then(() => true, () => false);
-        return this.completeRun(roomId, run, "신규 입장 부하만 중단했습니다. 서버 복구는 외부 서비스가 담당합니다.", {
+        if (!overloadDisarmed) {
+          throw new UpstreamError(
+            409,
+            { error: "admission_recovery_not_ready" },
+            "admission_recovery_not_ready",
+          );
+        }
+        return this.completeRun(roomId, run, "입장 부하를 중단하고 입장 서버 자동 복구를 확인했습니다.", {
           ...this.admissionEvidence(stopped),
           loadStopped: true,
           overloadDisarmed,
-          recoveryPerformed: false,
-          recoveryOwner: "external-service",
+          admissionServerStatus: "healthy",
+          recoveryPerformed: true,
+          recoveryVerified: true,
+          recoveryOwner: "service-restart-policy",
         });
       }
       case "process-crash": {
@@ -678,6 +698,21 @@ export class FailureScenarioController {
         recoveryVerified: false,
       });
     }
+  }
+
+  private async waitForAdmissionServer(): Promise<boolean> {
+    for (let attempt = 0; attempt < ADMISSION_RECOVERY_ATTEMPTS; attempt += 1) {
+      const health = await fetchJson<{ status?: string }>(
+        `${this.admissionEndpoint}/healthz`,
+        undefined,
+        600,
+      ).catch(() => undefined);
+      if (health?.status === "ok") return true;
+      if (attempt + 1 < ADMISSION_RECOVERY_ATTEMPTS) {
+        await new Promise((resolve) => setTimeout(resolve, ADMISSION_RECOVERY_POLL_MS));
+      }
+    }
+    return false;
   }
 
   private admissionEvidence(
