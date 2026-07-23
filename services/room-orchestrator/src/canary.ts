@@ -427,6 +427,7 @@ export interface CanaryValidationOptions {
   maxSnapshotWriteDurationSeconds?: number;
   maxSnapshotFailuresTotal?: number;
   maxSnapshotTimeoutsTotal?: number;
+  minimumTickRate?: number;
   memoryPressureRatio?: number;
   maxMemoryRatio?: number;
 }
@@ -446,6 +447,7 @@ interface ResolvedCanaryValidationOptions {
   maxSnapshotWriteDurationSeconds: number;
   maxSnapshotFailuresTotal: number;
   maxSnapshotTimeoutsTotal: number;
+  minimumTickRate: number;
   memoryPressureRatio: number;
   maxMemoryRatio: number;
 }
@@ -466,6 +468,7 @@ const resolveOptions = (input: CanaryValidationOptions): ResolvedCanaryValidatio
     maxSnapshotWriteDurationSeconds: input.maxSnapshotWriteDurationSeconds ?? 2,
     maxSnapshotFailuresTotal: input.maxSnapshotFailuresTotal ?? 0,
     maxSnapshotTimeoutsTotal: input.maxSnapshotTimeoutsTotal ?? 0,
+    minimumTickRate: input.minimumTickRate ?? 60,
     memoryPressureRatio: input.memoryPressureRatio ?? 0.8,
     maxMemoryRatio: input.maxMemoryRatio ?? 0.9,
   };
@@ -497,6 +500,9 @@ const resolveOptions = (input: CanaryValidationOptions): ResolvedCanaryValidatio
   }
   if (!Number.isFinite(options.maxSnapshotWriteDurationSeconds) || options.maxSnapshotWriteDurationSeconds < 0) {
     throw new Error("canary_option_invalid:maxSnapshotWriteDurationSeconds");
+  }
+  if (!Number.isFinite(options.minimumTickRate) || options.minimumTickRate < 1 || options.minimumTickRate > 1_000) {
+    throw new Error("canary_option_invalid:minimumTickRate");
   }
   if (
     !Number.isFinite(options.memoryPressureRatio) || options.memoryPressureRatio <= 0 ||
@@ -575,6 +581,7 @@ interface MetricObservation {
   snapshotTimeoutsTotal?: number;
   snapshotCircuitOpen?: number;
   snapshotHandoffEnabled?: number;
+  tickRate?: number;
   memoryWorkingSetBytes?: number;
   memoryMetricName?: string;
 }
@@ -593,6 +600,7 @@ const metricObservation = (scrape: CanaryMetricsScrape, roomId: string): MetricO
     snapshotTimeoutsTotal: metricValue(samples, "game_snapshot_timeouts_total", roomId, false),
     snapshotCircuitOpen: metricValue(samples, "game_snapshot_circuit_open", roomId, false),
     snapshotHandoffEnabled: metricValue(samples, "game_snapshot_handoff_enabled", roomId, false),
+    tickRate: metricValue(samples, "game_tick_rate", roomId, false),
     memoryWorkingSetBytes: containerMemory ?? processMemory,
     memoryMetricName: containerMemory !== undefined
       ? "container_memory_working_set_bytes"
@@ -630,6 +638,7 @@ const requiredMetricNames: ReadonlyArray<[keyof MetricObservation, string]> = [
   ["snapshotTimeoutsTotal", "game_snapshot_timeouts_total"],
   ["snapshotCircuitOpen", "game_snapshot_circuit_open"],
   ["snapshotHandoffEnabled", "game_snapshot_handoff_enabled"],
+  ["tickRate", "game_tick_rate"],
   ["memoryWorkingSetBytes", "container_memory_working_set_bytes|process_resident_memory_bytes"],
 ];
 
@@ -1395,6 +1404,13 @@ export class CanaryValidationCoordinator {
         thresholdValue: 1,
         comparator: ">=",
         passed: minimum("snapshotHandoffEnabled") >= 1,
+      },
+      {
+        metricName: "game_tick_rate",
+        observedValue: minimum("tickRate"),
+        thresholdValue: this.options.minimumTickRate,
+        comparator: ">=",
+        passed: minimum("tickRate") >= this.options.minimumTickRate,
       },
       {
         metricName: "canary_memory_working_set_ratio",

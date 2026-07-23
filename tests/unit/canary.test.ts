@@ -68,6 +68,7 @@ const metricsBody = (overrides: Partial<Record<
   | "timeouts"
   | "circuit"
   | "handoff"
+  | "tickRate"
   | "memory",
   number
 >> = {}): string => {
@@ -79,6 +80,7 @@ const metricsBody = (overrides: Partial<Record<
     timeouts: 0,
     circuit: 0,
     handoff: 1,
+    tickRate: 100,
     memory: 1_000,
     ...overrides,
   };
@@ -90,6 +92,7 @@ const metricsBody = (overrides: Partial<Record<
     `game_snapshot_timeouts_total{room="canary-room"} ${values.timeouts}`,
     `game_snapshot_circuit_open{room="canary-room"} ${values.circuit}`,
     `game_snapshot_handoff_enabled{room="canary-room"} ${values.handoff}`,
+    `game_tick_rate{room="canary-room"} ${values.tickRate}`,
     `process_resident_memory_bytes ${values.memory}`,
   ].join("\n");
 };
@@ -190,6 +193,7 @@ test("healthy isolated canary is approved from real metric samples", async () =>
     "MetricGateEvaluated",
     "MetricGateEvaluated",
     "MetricGateEvaluated",
+    "MetricGateEvaluated",
     "PromotionApproved",
     "EvidenceBundleSealed",
   ]);
@@ -276,6 +280,22 @@ test("observed snapshot backlog and memory pressure block promotion", async () =
   assert.equal(transport.events.at(-2)?.subject, "PromotionBlocked");
   assert.equal(transport.events.at(-1)?.subject, "EvidenceBundleSealed");
   assert.ok(!transport.events.some((event) => event.subject === "PromotionApproved"));
+});
+
+test("observed game tick rate below 60 blocks promotion", async () => {
+  const fixture = sources({ metrics: metricsBody({ tickRate: 59.9 }) });
+  const transport = new MemoryOperationEventTransport();
+
+  const result = await coordinator(fixture, transport).validate(target, "op-canary-low-tick-rate");
+
+  assert.equal(result.approved, false);
+  assert.equal(result.reasonCode, "metric_gate_failed:game_tick_rate");
+  const tickRateGate = transport.events.find((event) =>
+    event.subject === "MetricGateEvaluated" && event.payload.metric_name === "game_tick_rate"
+  );
+  assert.equal(tickRateGate?.payload.observed_value, 59.9);
+  assert.equal(tickRateGate?.payload.threshold_value, 60);
+  assert.equal(tickRateGate?.payload.passed, false);
 });
 
 test("actual Kubernetes OOMKilled container status blocks without scraping or fabricated failure", async () => {
@@ -506,6 +526,8 @@ test("game metrics expose actual authoritative process RSS for the memory gate",
   );
   assert.match(gameServer, /name: "process_resident_memory_bytes"/);
   assert.match(gameServer, /Math\.round\(snapshot\.memoryMb \* 1024 \* 1024\)/);
+  assert.match(gameServer, /name: "game_tick_rate"/);
+  assert.match(gameServer, /this\.tickRate\.labels\(snapshot\.roomId\)\.set\(snapshot\.tickRate\)/);
 });
 
 test("Kubernetes adapter correlates deployment and Pod labels and preserves OOM Event UID", async () => {

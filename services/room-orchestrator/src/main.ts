@@ -50,6 +50,10 @@ const port = Number(process.env.PORT ?? 8082);
 const controlToken = readControlToken();
 const maxRooms = Number(process.env.MAX_ROOMS ?? ROOM_PROFILES.length);
 if (!Number.isInteger(maxRooms) || maxRooms < 1 || maxRooms > 100) throw new Error("invalid_max_rooms");
+const canaryBotCount = Number(process.env.CANARY_VALIDATION_BOT_COUNT ?? 100);
+if (!Number.isSafeInteger(canaryBotCount) || canaryBotCount < 1 || canaryBotCount > 500) {
+  throw new Error("invalid_canary_validation_bot_count");
+}
 const desiredRoomIds = (process.env.DESIRED_ROOM_PROFILES
   ?? ROOM_PROFILES.map((_, ordinal) => `room-${ordinal}`).join(","))
   .split(",")
@@ -131,7 +135,7 @@ const canaryCoordinator = canaryRollout && kubernetesApiServer && controlToken
       process.env.CANARY_BOT_RUNNER_URL ?? `http://${CANARY_BOT_SERVICE_NAME}:8084`,
       controlToken,
     ),
-  }, {}, undefined, opsiaWorkspaceId, opsiaClusterId, process.env.NAMESPACE ?? "sandbox")
+  }, { botCount: canaryBotCount }, undefined, opsiaWorkspaceId, opsiaClusterId, process.env.NAMESPACE ?? "sandbox")
   : undefined;
 
 type HandoffOperationStatus = "queued" | "running" | "completed" | "failed";

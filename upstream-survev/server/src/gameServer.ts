@@ -113,6 +113,12 @@ class OpsiaMetrics {
         labelNames: ["room"] as const,
         registers: [this.registry],
     });
+    private readonly tickRate = new Gauge({
+        name: "game_tick_rate",
+        help: "observed authoritative game updates per second over the latest telemetry window",
+        labelNames: ["room"] as const,
+        registers: [this.registry],
+    });
     private readonly online = new Gauge({
         name: "players_online",
         help: "players in the real survev playerBarn",
@@ -206,6 +212,7 @@ class OpsiaMetrics {
 
     observe(snapshot: OpsiaSnapshotData): void {
         this.tickP95.labels(snapshot.roomId).set(snapshot.tickP95Ms);
+        this.tickRate.labels(snapshot.roomId).set(snapshot.tickRate);
         this.online.labels(snapshot.roomId).set(snapshot.players.filter((player) => player.connected).length);
         this.processResidentMemory.labels(snapshot.roomId).set(Math.round(snapshot.memoryMb * 1024 * 1024));
         this.alive.labels(snapshot.roomId).set(

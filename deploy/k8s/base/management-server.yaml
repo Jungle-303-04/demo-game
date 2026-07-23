@@ -31,6 +31,7 @@ spec:
             - { name: GAME_IMAGE_REPOSITORY, value: "ghcr.io/jungle-303-04/demo-game/game-server" }
             - { name: CANARY_GAME_ENDPOINT, value: "http://game-room-canary:8001" }
             - { name: CANARY_BOT_RUNNER_URL, value: "http://game-room-canary-bot:8084" }
+            - { name: CANARY_VALIDATION_BOT_COUNT, value: "100" }
             - { name: REQUIRE_CANARY_APPROVAL, value: "true" }
             - name: OPSIA_EVENT_ENDPOINT
               valueFrom: { configMapKeyRef: { name: ops-policy, key: opsiaEventEndpoint } }
