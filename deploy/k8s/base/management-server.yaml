@@ -57,7 +57,7 @@ spec:
           env:
             - { name: OPSIA_ROOM_DIRECTORY_URL, value: http://127.0.0.1:8082 }
             - { name: SESSION_GATEWAY_INTERNAL_URL, value: http://session-gateway:8083 }
-            - { name: OPSIA_MIN_BOTS_PER_ROOM, value: "20" }
+            - { name: OPSIA_MIN_BOTS_PER_ROOM, value: "60" }
             - { name: OPSIA_BOT_TACTICAL_BRAIN, value: "false" }
             - { name: OPSIA_BOT_LIGHTWEIGHT_COMBAT, value: "true" }
             - { name: OPSIA_BOT_RECONCILE_INTERVAL_MS, value: "2000" }

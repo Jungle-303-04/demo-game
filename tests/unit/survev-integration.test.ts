@@ -484,6 +484,7 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.match(policy, /kind: GameFleet/);
   assert.match(policy, /maxConcurrentRooms: 1/);
   assert.match(management, /OPSIA_ROOM_DIRECTORY_URL/);
+  assert.match(management, /OPSIA_MIN_BOTS_PER_ROOM, value: "60"/);
   assert.match(management, /API_SERVER_URL, value: http:\/\/login-gateway-api:8081/);
   assert.match(management, /ADMISSION_GATEWAY_URL, value: http:\/\/login-gateway/);
   assert.doesNotMatch(management, /- name: api-server\r?\n/);
