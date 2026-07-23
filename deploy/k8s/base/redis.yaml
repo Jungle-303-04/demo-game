@@ -4,7 +4,9 @@ metadata:
   name: redis
   namespace: sandbox
 spec:
-  serviceName: cache
+  # StatefulSet identity is immutable and remains independent from the
+  # client-facing Service name below.
+  serviceName: redis
   replicas: 1
   persistentVolumeClaimRetentionPolicy: { whenDeleted: Retain, whenScaled: Retain }
   selector:
