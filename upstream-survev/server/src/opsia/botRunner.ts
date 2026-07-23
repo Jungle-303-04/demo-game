@@ -42,6 +42,47 @@ const SURGE_BOT_INPUT_INTERVAL_MS = 60;
 const SURGE_BOT_INPUTS_PER_INTERVAL = 3;
 const HACK_BOT_INPUT_INTERVAL_MS = 30;
 const BOT_JOIN_READY_GRACE_MS = 100;
+const botNamePrefixes = [
+    "Lucky",
+    "Silent",
+    "Jungle",
+    "Pixel",
+    "Mango",
+    "Neon",
+    "Rapid",
+    "Blue",
+    "Night",
+    "Tiny",
+] as const;
+const botNameSuffixes = [
+    "Fox",
+    "Raven",
+    "Tiger",
+    "Runner",
+    "Ace",
+    "Nova",
+    "Panda",
+    "Wolf",
+    "Scout",
+    "Rush",
+] as const;
+
+const stableNameHash = (value: string): number => {
+    let hash = 2_166_136_261;
+    for (let index = 0; index < value.length; index++) {
+        hash ^= value.charCodeAt(index);
+        hash = Math.imul(hash, 16_777_619);
+    }
+    return hash >>> 0;
+};
+
+const humanLikeBotName = (sessionId: string): string => {
+    const hash = stableNameHash(sessionId);
+    const prefix = botNamePrefixes[hash % botNamePrefixes.length]!;
+    const suffix = botNameSuffixes[Math.floor(hash / botNamePrefixes.length) % botNameSuffixes.length]!;
+    const number = 10 + Math.floor(hash / (botNamePrefixes.length * botNameSuffixes.length)) % 90;
+    return hash % 3 === 0 ? `${prefix}${suffix}` : `${prefix}${suffix}${number}`;
+};
 type RoomAwareness = {
     snapshot?: BotBrainSnapshot;
     requestedAt: number;
@@ -102,12 +143,13 @@ class SurvevProtocolBot {
         mode: BotMode,
         match: NonNullable<FindGameResponse["res"]>[number],
         websocketUrl: string,
+        requestedNickname: string | undefined,
         private readonly roomEndpoint: string,
         private readonly onStopped: (id: string) => void,
     ) {
         this.id = id;
         this.sessionId = sessionId;
-        this.nickname = `OPSIA_${id.slice(-6)}`;
+        this.nickname = requestedNickname?.trim().slice(0, 16) || humanLikeBotName(sessionId);
         this.roomId = roomId;
         this.mode = mode;
         this.readyPromise = new Promise<void>((resolve, reject) => {
@@ -265,8 +307,8 @@ class SurvevProtocolBot {
         const inputInterval = this.mode === "hack"
             ? HACK_BOT_INPUT_INTERVAL_MS
             : this.mode === "surge"
-                ? SURGE_BOT_INPUT_INTERVAL_MS
-                : NORMAL_BOT_INPUT_INTERVAL_MS;
+            ? SURGE_BOT_INPUT_INTERVAL_MS
+            : NORMAL_BOT_INPUT_INTERVAL_MS;
         this.timer = setInterval(() => this.sendInputs(), inputInterval);
     }
 
@@ -316,24 +358,26 @@ class SurvevProtocolBot {
         const count = this.mode === "hack"
             ? 20
             : this.mode === "surge"
-                ? SURGE_BOT_INPUTS_PER_INTERVAL
-                : 1;
+            ? SURGE_BOT_INPUTS_PER_INTERVAL
+            : 1;
         for (let index = 0; index < count; index++) sendOne();
     }
 }
 
 const parseConfiguredRoomEndpoints = (configured = process.env.OPSIA_ROOM_ENDPOINTS ?? ""): Map<string, string> =>
-    new Map(configured.split(",").flatMap((entry) => {
-        const [roomId, endpoint] = entry.split("=").map((value) => value?.trim());
-        if (!roomId || !endpoint || !/^(?:room-\d+|canary-room)$/.test(roomId)) return [];
-        try {
-            const url = new URL(endpoint);
-            if (url.protocol !== "http:" && url.protocol !== "https:") return [];
-            return [[roomId, url.toString().replace(/\/$/, "")]];
-        } catch {
-            return [];
-        }
-    }));
+    new Map(
+        configured.split(",").flatMap((entry) => {
+            const [roomId, endpoint] = entry.split("=").map((value) => value?.trim());
+            if (!roomId || !endpoint || !/^(?:room-\d+|canary-room)$/.test(roomId)) return [];
+            try {
+                const url = new URL(endpoint);
+                if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+                return [[roomId, url.toString().replace(/\/$/, "")]];
+            } catch {
+                return [];
+            }
+        }),
+    );
 
 const roomDirectoryUrl = process.env.OPSIA_ROOM_DIRECTORY_URL?.trim().replace(/\/$/, "");
 const sessionGatewayUrl = normalizeSessionGatewayUrl(process.env.SESSION_GATEWAY_INTERNAL_URL);
@@ -364,7 +408,9 @@ const rooms = async (): Promise<Map<string, string>> => {
             };
             const next = new Map<string, string>();
             for (const room of payload.rooms ?? []) {
-                if (room.status === "inactive" || typeof room.roomId !== "string" || typeof room.endpoint !== "string") {
+                if (
+                    room.status === "inactive" || typeof room.roomId !== "string" || typeof room.endpoint !== "string"
+                ) {
                     continue;
                 }
                 const parsed = parseConfiguredRoomEndpoints(`${room.roomId}=${room.endpoint}`);
@@ -417,6 +463,7 @@ const spawn = async (
     requestedRoom: string | undefined,
     mode: BotMode,
     requestedSessionId?: string,
+    requestedNickname?: string,
 ): Promise<BotSummary[]> => {
     if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error("invalid_bot_count");
     const roomMap = await rooms();
@@ -456,6 +503,7 @@ const spawn = async (
             mode,
             match.res[0],
             botWebsocketUrl(roomId, match.res[0], sessionId, sessionGatewayUrl),
+            requestedNickname,
             endpoint,
             (stoppedId) => bots.delete(stoppedId),
         );
@@ -644,8 +692,8 @@ const server = createServer(async (request, response) => {
             const mode: BotMode = body.mode === "hack"
                 ? "hack"
                 : body.mode === "surge"
-                    ? "surge"
-                    : "normal";
+                ? "surge"
+                : "normal";
             const roomId = String(body.room ?? "");
             const job = await startJob(Number(body.count), roomId, mode, Number(body.intervalMs ?? 300));
             return reply(response, 202, job);
@@ -655,14 +703,15 @@ const server = createServer(async (request, response) => {
             const mode: BotMode = body.mode === "hack"
                 ? "hack"
                 : body.mode === "surge"
-                    ? "surge"
-                    : "normal";
+                ? "surge"
+                : "normal";
             return reply(response, 201, {
                 bots: await spawn(
                     Number(body.count),
                     body.room ? String(body.room) : undefined,
                     mode,
                     body.sessionId ? String(body.sessionId) : undefined,
+                    body.nickname ? String(body.nickname) : undefined,
                 ),
             });
         }

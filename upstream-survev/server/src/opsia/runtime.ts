@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createClient, type RedisClientType } from "redis";
-import { GameObjectDefs } from "../../../shared/defs/register.ts";
+import { GameObjectDefs, MapObjectDefs } from "../../../shared/defs/register.ts";
 import { DamageType, type InventoryItem } from "../../../shared/gameConfig.ts";
 import { ObjectType } from "../../../shared/net/objectSerializeFns.ts";
 import type { Game, JoinTokenData } from "../game/game.ts";
@@ -476,6 +476,23 @@ export interface OpsiaSnapshot {
         y: number;
         count: number;
     }>;
+    /**
+     * Live, collidable ground-layer obstacles used by protocol bots. Unlike
+     * map.navigation this projection is refreshed after crates, windows, and
+     * other destructible cover disappear.
+     */
+    obstacles: Array<{
+        id: number;
+        type: string;
+        kind: "tree" | "rock" | "wall" | "obstacle";
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+        destructible: boolean;
+        containsLoot: boolean;
+        health: number;
+    }>;
     tickP95Ms: number;
     tickRate: number;
     cpuPercent: number;
@@ -494,7 +511,10 @@ interface RestoredObstaclePlayerRefs {
     ownerSessionId?: string;
     skinPlayerSessionId?: string;
 }
-const restoredObstaclePlayerRefs = new WeakMap<Game, Map<Game["map"]["obstacles"][number], RestoredObstaclePlayerRefs>>();
+const restoredObstaclePlayerRefs = new WeakMap<
+    Game,
+    Map<Game["map"]["obstacles"][number], RestoredObstaclePlayerRefs>
+>();
 const restoredLootOwners = new WeakMap<Game, Map<Loot, string>>();
 const restoredProjectileSources = new WeakMap<Game, Map<Projectile, string>>();
 const restoredBulletSources = new WeakMap<Game, Map<Bullet, string>>();
@@ -1072,14 +1092,15 @@ const materialStateChecksum = (
     mapSeed: number,
     world: LooseWorldState,
     players: LoosePlayerState[],
-): string => checksumValue({
-    schemaVersion: 4,
-    roomId,
-    mapName,
-    mapSeed,
-    world,
-    players: [...players].sort((a, b) => a.sessionId.localeCompare(b.sessionId)),
-});
+): string =>
+    checksumValue({
+        schemaVersion: 4,
+        roomId,
+        mapName,
+        mapSeed,
+        world,
+        players: [...players].sort((a, b) => a.sessionId.localeCompare(b.sessionId)),
+    });
 
 const firstMaterialMismatch = (expected: unknown, actual: unknown, path = "world"): string | undefined => {
     if (Object.is(expected, actual)) return undefined;
@@ -1571,10 +1592,13 @@ export const restoreGame = (game: Game, snapshot: LooseGameSnapshot): string => 
     restoreWorldObjects(game, snapshot.world);
 
     restoredPlayers.set(game, new Map(snapshot.players.map((player) => [player.sessionId, player])));
-    processedInputSequences.set(game, new Map(snapshot.players.map((player) => {
-        const sequence = Number(player.lastInputSequence ?? 0);
-        return [player.sessionId, Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : 0] as const;
-    })));
+    processedInputSequences.set(
+        game,
+        new Map(snapshot.players.map((player) => {
+            const sequence = Number(player.lastInputSequence ?? 0);
+            return [player.sessionId, Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : 0] as const;
+        })),
+    );
 
     const materializedWorld = captureWorld(game);
     const materializedChecksum = materialStateChecksum(
@@ -1877,6 +1901,42 @@ export const makeOpsSnapshot = (
                 y: loot.pos.y,
                 count: loot.count,
             })),
+        obstacles: game.map.obstacles
+            .filter((obstacle) =>
+                obstacle.layer === 0
+                && !obstacle.dead
+                && obstacle.collidable
+                && !obstacle.isDoor
+            )
+            .map((obstacle) => {
+                const definition = MapObjectDefs.typeToDefSafe(obstacle.type);
+                const obstacleDefinition = definition?.type === "obstacle" ? definition : undefined;
+                const kind = obstacle.isWall
+                    ? "wall" as const
+                    : obstacle.isTree
+                    ? "tree" as const
+                    : /rock|stone|boulder/i.test(obstacle.type)
+                    ? "rock" as const
+                    : "obstacle" as const;
+                return {
+                    id: obstacle.__id,
+                    type: obstacle.type,
+                    kind,
+                    x: obstacle.pos.x + (obstacle.bounds.min.x + obstacle.bounds.max.x) / 2,
+                    y: obstacle.pos.y + (obstacle.bounds.min.y + obstacle.bounds.max.y) / 2,
+                    ...mapObjectSize(obstacle.bounds),
+                    destructible: obstacle.destructible,
+                    containsLoot: Boolean(
+                        obstacleDefinition
+                            && (
+                                obstacleDefinition.loot.length > 0
+                                || obstacleDefinition.smartLoot
+                                || obstacleDefinition.obstacleType === "crate"
+                            ),
+                    ),
+                    health: obstacle.health,
+                };
+            }),
         players: game.playerBarn.players.map((player) => ({
             sessionId: playerSessionId(player),
             nickname: player.name,

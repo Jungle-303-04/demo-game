@@ -59,6 +59,7 @@ describe("Opsia protocol bot input", () => {
         const mappings = [
             ["primary", GameConfig.Input.EquipPrimary],
             ["secondary", GameConfig.Input.EquipSecondary],
+            ["melee", GameConfig.Input.EquipMelee],
             ["throwable", GameConfig.Input.EquipThrowable],
             ["lastWeapon", GameConfig.Input.EquipLastWeap],
         ] as const;

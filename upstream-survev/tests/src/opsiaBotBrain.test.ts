@@ -360,7 +360,7 @@ describe("Opsia protocol bot brain", () => {
         const intent = decideBotIntent(stateSnapshot, "self", state, 1_000, () => 0.5);
 
         expect(intent.mode).toBe("zone");
-        expect(Math.abs(intent.moveAngle)).toBeCloseTo(Math.PI);
+        expect(Math.cos(intent.moveAngle)).toBeLessThan(-0.95);
         expect(intent.moving).toBe(true);
     });
 
@@ -377,7 +377,7 @@ describe("Opsia protocol bot brain", () => {
         );
 
         expect(intent.mode).toBe("zone");
-        expect(intent.moveAngle).toBeCloseTo(0);
+        expect(Math.cos(intent.moveAngle)).toBeGreaterThan(0.95);
     });
 
     test("ignores teammates when choosing a combat target", () => {
@@ -827,7 +827,7 @@ describe("Opsia protocol bot brain", () => {
         expect(intent.shoot).toBe(true);
     });
 
-    test("hunts a distant live enemy instead of wandering away from the fight", () => {
+    test("does not omnisciently hunt an unseen enemy across the map", () => {
         const state = createBotBrainState(() => 0.5);
         const intent = decideBotIntent(
             snapshot({
@@ -844,9 +844,9 @@ describe("Opsia protocol bot brain", () => {
             () => 0.5,
         );
 
-        expect(intent.mode).toBe("hunt");
+        expect(intent.mode).toBe("wander");
         expect(intent.moving).toBe(true);
-        expect(Math.abs(intent.moveAngle)).toBeLessThan(0.3);
+        expect(state.targetSessionId).toBeUndefined();
     });
 
     test("chooses the real secondary gun when it better fits long range", () => {
@@ -894,22 +894,23 @@ describe("Opsia protocol bot brain", () => {
 
     test("equips, cooks, releases, and recovers from a real frag grenade", () => {
         const state = createBotBrainState(() => 0.5);
-        const grenadeFight = (capturedAt: number, activeSlot = 0, weapon = "m9") => snapshot({
-            capturedAt,
-            players: [
-                player({
-                    activeSlot,
-                    weapon,
-                    throwableWeapon: "frag",
-                    throwableCount: 2,
-                    primaryWeapon: "m9",
-                    primaryAmmo: 15,
-                    primaryReserve: 30,
-                }),
-                player({ sessionId: "enemy", team: "blue", teamId: 2, x: 550 }),
-                player({ sessionId: "enemy-2", team: "blue", teamId: 2, x: 555, y: 505 }),
-            ],
-        });
+        const grenadeFight = (capturedAt: number, activeSlot = 0, weapon = "m9") =>
+            snapshot({
+                capturedAt,
+                players: [
+                    player({
+                        activeSlot,
+                        weapon,
+                        throwableWeapon: "frag",
+                        throwableCount: 2,
+                        primaryWeapon: "m9",
+                        primaryAmmo: 15,
+                        primaryReserve: 30,
+                    }),
+                    player({ sessionId: "enemy", team: "blue", teamId: 2, x: 550 }),
+                    player({ sessionId: "enemy-2", team: "blue", teamId: 2, x: 555, y: 505 }),
+                ],
+            });
 
         const equip = decideBotIntent(grenadeFight(900), "self", state, 1_000, () => 0.5);
         const cookStart = decideBotIntent(grenadeFight(1_099, 3, "frag"), "self", state, 1_100, () => 0.5);
@@ -1001,5 +1002,99 @@ describe("Opsia protocol bot brain", () => {
         expect(intent.mode).toBe("heal");
         expect(intent.useItem).toBe("soda");
         expect(intent.moving).toBe(false);
+    });
+
+    test("routes around a live non-wall obstacle while pursuing loot", () => {
+        const blocked = snapshot({
+            loot: [{ id: 201, type: "m9", kind: "gun", x: 560, y: 500, count: 1 }],
+            obstacles: [{
+                id: 202,
+                type: "stone_01",
+                kind: "rock",
+                x: 530,
+                y: 500,
+                width: 8,
+                height: 72,
+                destructible: false,
+                containsLoot: false,
+                health: 200,
+            }],
+            players: [player({ weapon: "fists", ammo: 0 })],
+        });
+        const state = createBotBrainState(() => 0.5);
+        const avoiding = decideBotIntent(blocked, "self", state, 1_000, () => 0.5);
+        const direct = decideBotIntent(
+            { ...blocked, capturedAt: 1_200, obstacles: [] },
+            "self",
+            state,
+            1_200,
+            () => 0.5,
+        );
+
+        expect(avoiding.mode).toBe("loot");
+        expect(Math.abs(avoiding.moveAngle)).toBeGreaterThan(0.35);
+        expect(direct.mode).toBe("loot");
+        expect(direct.moveAngle).toBeCloseTo(0);
+    });
+
+    test("approaches a loot crate, equips melee, and repeatedly strikes it", () => {
+        const crate = {
+            id: 203,
+            type: "crate_01",
+            kind: "obstacle",
+            x: 515,
+            y: 500,
+            width: 4.5,
+            height: 4.5,
+            destructible: true,
+            containsLoot: true,
+            health: 75,
+        };
+        const equipIntent = decideBotIntent(
+            snapshot({ obstacles: [crate], players: [player()] }),
+            "self",
+            createBotBrainState(() => 0.5),
+            1_000,
+            () => 0.5,
+        );
+        const strikeIntent = decideBotIntent(
+            snapshot({
+                obstacles: [{ ...crate, x: 506 }],
+                players: [player({ weapon: "fists", ammo: 0, activeSlot: 2 })],
+            }),
+            "self",
+            createBotBrainState(() => 0.5),
+            1_000,
+            () => 0.5,
+        );
+
+        expect(equipIntent.mode).toBe("break");
+        expect(equipIntent.equip).toBe("melee");
+        expect(strikeIntent.mode).toBe("break");
+        expect(strikeIntent.shoot).toBe(true);
+        expect(strikeIntent.forceShootStart).toBe(true);
+        expect(strikeIntent.aimAngle).toBeCloseTo(0);
+    });
+
+    test("spreads safe-zone destinations across bot identities", () => {
+        const zone = { x: 500, y: 500, radius: 210, nextX: 500, nextY: 500, nextRadius: 210 };
+        const first = decideBotIntent(
+            snapshot({ zone, players: [player({ sessionId: "bot-alpha", x: 700 })] }),
+            "bot-alpha",
+            createBotBrainState(() => 0.5),
+            1_000,
+            () => 0.5,
+        );
+        const second = decideBotIntent(
+            snapshot({ zone, players: [player({ sessionId: "bot-bravo", x: 700 })] }),
+            "bot-bravo",
+            createBotBrainState(() => 0.5),
+            1_000,
+            () => 0.5,
+        );
+
+        expect(first.mode).toBe("zone");
+        expect(second.mode).toBe("zone");
+        expect(Math.abs(first.moveAngle - second.moveAngle)).toBeGreaterThan(0.01);
     });
 });

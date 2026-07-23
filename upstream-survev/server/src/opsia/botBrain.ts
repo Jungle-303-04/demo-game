@@ -49,6 +49,7 @@ export interface BotBrainSnapshot {
         nextRadius: number;
     };
     loot?: BotBrainLoot[];
+    obstacles?: BotBrainObstacle[];
     players: BotBrainPlayer[];
 }
 
@@ -61,6 +62,14 @@ export interface BotBrainMapObstacle {
     height: number;
 }
 
+export interface BotBrainObstacle extends BotBrainMapObstacle {
+    type?: string;
+    kind?: string;
+    destructible: boolean;
+    containsLoot: boolean;
+    health: number;
+}
+
 export interface BotBrainLoot {
     id: number;
     type: string;
@@ -70,8 +79,22 @@ export interface BotBrainLoot {
     count: number;
 }
 
-export type BotIntentMode = "wander" | "loot" | "hunt" | "combat" | "flank" | "retreat" | "rescue" | "downed" | "grenade" | "zone" | "edge" | "unstuck" | "heal";
-export type BotEquipIntent = "otherGun" | "primary" | "secondary" | "throwable" | "lastWeapon";
+export type BotIntentMode =
+    | "wander"
+    | "loot"
+    | "break"
+    | "hunt"
+    | "combat"
+    | "flank"
+    | "retreat"
+    | "rescue"
+    | "downed"
+    | "grenade"
+    | "zone"
+    | "edge"
+    | "unstuck"
+    | "heal";
+export type BotEquipIntent = "otherGun" | "primary" | "secondary" | "melee" | "throwable" | "lastWeapon";
 export type BotUseItemIntent = "bandage" | "healthkit" | "soda" | "painkiller";
 export type BotMovementPhase = "travel" | "rest";
 export type BotGrenadePhase = "idle" | "equip" | "cook" | "release" | "recover";
@@ -83,6 +106,7 @@ export interface BotBrainState {
     movementPhase: BotMovementPhase;
     movementPhaseUntil: number;
     lastMovementCommanded: boolean;
+    lastMoveAngle?: number;
     lastSnapshotAt: number;
     lastX?: number;
     lastY?: number;
@@ -117,6 +141,18 @@ export interface BotBrainState {
     grenadeCookUntil: number;
     grenadeCooldownUntil: number;
     grenadeTargetSessionId?: string;
+    targetBreakableId?: number;
+    breakableLockedUntil: number;
+    navigationGoalKey?: string;
+    navigationWaypoints: Array<{ x: number; y: number }>;
+    navigationWaypointIndex: number;
+    navigationReplanAt: number;
+    roamX?: number;
+    roamY?: number;
+    roamSequence: number;
+    targetLastSeenX?: number;
+    targetLastSeenY?: number;
+    targetMemoryUntil: number;
 }
 
 export interface BotIntent {
@@ -137,6 +173,7 @@ type BotIntentWithoutMovement = Omit<BotIntent, "moving">;
 type MovementPolicy = "rhythm" | "force" | "stop";
 type Target = { player: BotBrainPlayer; distance: number };
 type LootTarget = { loot: BotBrainLoot; distance: number; utility: number };
+type BreakableTarget = { obstacle: BotBrainObstacle; distance: number; utility: number };
 type WeaponProfile = {
     kind: "gun" | "melee" | "other";
     effectiveRange: number;
@@ -150,14 +187,14 @@ const snapshotFreshnessMs = 2_000;
 const targetLockMinMs = 1_000;
 const targetLockJitterMs = 800;
 const meleeAttackDistance = 5.5;
-const combatAwarenessDistance = 900;
+const combatAwarenessDistance = 520;
 
 const distance = (ax: number, ay: number, bx: number, by: number): number => Math.hypot(bx - ax, by - ay);
 
 const angleTo = (ax: number, ay: number, bx: number, by: number): number => Math.atan2(by - ay, bx - ax);
 
 const navigationCellSize = 64;
-const navigationIndexPadding = 2.4;
+const navigationIndexPadding = 4;
 const maxIndexedCellsPerObstacle = 256;
 
 interface NavigationObstacleEntry {
@@ -176,11 +213,15 @@ const navigationIndexCache = new WeakMap<BotBrainSnapshot, NavigationSpatialInde
 const navigationCellKey = (cellX: number, cellY: number): string => `${cellX}:${cellY}`;
 
 const navigationObstacles = (snapshot: BotBrainSnapshot): BotBrainMapObstacle[] => {
+    const liveObstacles = snapshot.obstacles ?? [];
     const authoritativeWalls = snapshot.map.navigation ?? [];
+    // Presence of the live projection is authoritative even when it is empty:
+    // a formerly present crate or window may have just been destroyed.
+    if (snapshot.obstacles !== undefined) return liveObstacles;
     if (authoritativeWalls.length > 0) return authoritativeWalls;
-    return (snapshot.map.objects ?? []).filter(
-        (object) => object.kind === "building" || object.kind === "structure",
-    );
+    // Coarse building/structure boxes contain walkable rooms and open doors;
+    // treating them as solid is worse than having no fallback navigation.
+    return [];
 };
 
 const navigationSpatialIndex = (snapshot: BotBrainSnapshot): NavigationSpatialIndex => {
@@ -303,7 +344,8 @@ const insideObstacle = (
     y: number,
     obstacle: BotBrainMapObstacle,
     padding = 0,
-): boolean => x >= obstacle.x - obstacle.width / 2 - padding
+): boolean =>
+    x >= obstacle.x - obstacle.width / 2 - padding
     && x <= obstacle.x + obstacle.width / 2 + padding
     && y >= obstacle.y - obstacle.height / 2 - padding
     && y <= obstacle.y + obstacle.height / 2 + padding;
@@ -361,20 +403,23 @@ const segmentHitsObstacle = (
     bx: number,
     by: number,
     obstacle: BotBrainMapObstacle,
+    padding = 0.35,
 ): boolean => {
     if (insideObstacle(ax, ay, obstacle)) return false;
-    const minX = obstacle.x - obstacle.width / 2 - 0.35;
-    const maxX = obstacle.x + obstacle.width / 2 + 0.35;
-    const minY = obstacle.y - obstacle.height / 2 - 0.35;
-    const maxY = obstacle.y + obstacle.height / 2 + 0.35;
+    const minX = obstacle.x - obstacle.width / 2 - padding;
+    const maxX = obstacle.x + obstacle.width / 2 + padding;
+    const minY = obstacle.y - obstacle.height / 2 - padding;
+    const maxY = obstacle.y + obstacle.height / 2 + padding;
     const dx = bx - ax;
     const dy = by - ay;
     let low = 0;
     let high = 1;
-    for (const [origin, delta, min, max] of [
-        [ax, dx, minX, maxX],
-        [ay, dy, minY, maxY],
-    ] as const) {
+    for (
+        const [origin, delta, min, max] of [
+            [ax, dx, minX, maxX],
+            [ay, dy, minY, maxY],
+        ] as const
+    ) {
         if (Math.abs(delta) < 1e-6) {
             if (origin < min || origin > max) return false;
             continue;
@@ -407,6 +452,249 @@ const segmentIsClear = (
     !navigationEntriesAlongSegment(snapshot, ax, ay, bx, by).some(
         ({ obstacle }) => segmentHitsObstacle(ax, ay, bx, by, obstacle),
     );
+
+const segmentIsNavigable = (
+    snapshot: BotBrainSnapshot,
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+): boolean =>
+    !navigationEntriesAlongSegment(snapshot, ax, ay, bx, by).some(
+        ({ obstacle }) => segmentHitsObstacle(ax, ay, bx, by, obstacle, 3),
+    );
+
+type NavigationPoint = { x: number; y: number };
+type OpenPathNode = NavigationPoint & { key: string; g: number; f: number };
+
+const pathCellSize = 10;
+const maxPathExpansions = 7_500;
+
+const pushOpenNode = (heap: OpenPathNode[], node: OpenPathNode): void => {
+    heap.push(node);
+    let index = heap.length - 1;
+    while (index > 0) {
+        const parent = Math.floor((index - 1) / 2);
+        if (heap[parent]!.f <= node.f) break;
+        heap[index] = heap[parent]!;
+        index = parent;
+    }
+    heap[index] = node;
+};
+
+const popOpenNode = (heap: OpenPathNode[]): OpenPathNode | undefined => {
+    const first = heap[0];
+    const last = heap.pop();
+    if (!first || heap.length === 0 || !last) return first;
+    let index = 0;
+    while (true) {
+        const left = index * 2 + 1;
+        const right = left + 1;
+        if (left >= heap.length) break;
+        const child = right < heap.length && heap[right]!.f < heap[left]!.f ? right : left;
+        if (heap[child]!.f >= last.f) break;
+        heap[index] = heap[child]!;
+        index = child;
+    }
+    heap[index] = last;
+    return first;
+};
+
+const pathCellKey = (x: number, y: number): string => `${x}:${y}`;
+
+const pathPointBlocked = (snapshot: BotBrainSnapshot, x: number, y: number): boolean =>
+    navigationEntriesAtPoint(snapshot, x, y).some(
+        ({ obstacle }) => insideObstacle(x, y, obstacle, 3),
+    );
+
+const nearestOpenPathCell = (
+    snapshot: BotBrainSnapshot,
+    worldX: number,
+    worldY: number,
+): NavigationPoint | undefined => {
+    const centerX = Math.round(worldX / pathCellSize);
+    const centerY = Math.round(worldY / pathCellSize);
+    for (let radius = 0; radius <= 4; radius++) {
+        const candidates: NavigationPoint[] = [];
+        for (let xOffset = -radius; xOffset <= radius; xOffset++) {
+            for (let yOffset = -radius; yOffset <= radius; yOffset++) {
+                if (radius > 0 && Math.abs(xOffset) !== radius && Math.abs(yOffset) !== radius) continue;
+                const x = centerX + xOffset;
+                const y = centerY + yOffset;
+                const pointX = x * pathCellSize;
+                const pointY = y * pathCellSize;
+                if (
+                    pointX < 5
+                    || pointY < 5
+                    || pointX > snapshot.map.width - 5
+                    || pointY > snapshot.map.height - 5
+                    || pathPointBlocked(snapshot, pointX, pointY)
+                ) continue;
+                candidates.push({ x, y });
+            }
+        }
+        candidates.sort((left, right) =>
+            distance(left.x * pathCellSize, left.y * pathCellSize, worldX, worldY)
+            - distance(right.x * pathCellSize, right.y * pathCellSize, worldX, worldY)
+        );
+        if (candidates[0]) return candidates[0];
+    }
+    return undefined;
+};
+
+const planNavigationPath = (
+    snapshot: BotBrainSnapshot,
+    startX: number,
+    startY: number,
+    goalX: number,
+    goalY: number,
+): NavigationPoint[] => {
+    if (segmentIsNavigable(snapshot, startX, startY, goalX, goalY)) return [{ x: goalX, y: goalY }];
+    const start = nearestOpenPathCell(snapshot, startX, startY);
+    const goal = nearestOpenPathCell(snapshot, goalX, goalY);
+    if (!start || !goal) return [];
+
+    const directDistance = distance(startX, startY, goalX, goalY);
+    const margin = Math.min(220, Math.max(80, directDistance * 0.24));
+    const minCellX = Math.max(1, Math.floor((Math.min(startX, goalX) - margin) / pathCellSize));
+    const maxCellX = Math.min(
+        Math.floor(snapshot.map.width / pathCellSize) - 1,
+        Math.ceil((Math.max(startX, goalX) + margin) / pathCellSize),
+    );
+    const minCellY = Math.max(1, Math.floor((Math.min(startY, goalY) - margin) / pathCellSize));
+    const maxCellY = Math.min(
+        Math.floor(snapshot.map.height / pathCellSize) - 1,
+        Math.ceil((Math.max(startY, goalY) + margin) / pathCellSize),
+    );
+    const startKey = pathCellKey(start.x, start.y);
+    const goalKey = pathCellKey(goal.x, goal.y);
+    const costs = new Map<string, number>([[startKey, 0]]);
+    const parents = new Map<string, string>();
+    const cells = new Map<string, NavigationPoint>([[startKey, start]]);
+    const open: OpenPathNode[] = [];
+    const heuristic = (x: number, y: number): number => {
+        const dx = Math.abs(goal.x - x);
+        const dy = Math.abs(goal.y - y);
+        return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy);
+    };
+    pushOpenNode(open, { ...start, key: startKey, g: 0, f: heuristic(start.x, start.y) });
+    const directions = [
+        { x: 1, y: 0, cost: 1 },
+        { x: -1, y: 0, cost: 1 },
+        { x: 0, y: 1, cost: 1 },
+        { x: 0, y: -1, cost: 1 },
+        { x: 1, y: 1, cost: Math.SQRT2 },
+        { x: 1, y: -1, cost: Math.SQRT2 },
+        { x: -1, y: 1, cost: Math.SQRT2 },
+        { x: -1, y: -1, cost: Math.SQRT2 },
+    ];
+    let expansions = 0;
+    while (open.length > 0 && expansions++ < maxPathExpansions) {
+        const current = popOpenNode(open)!;
+        if (current.g > (costs.get(current.key) ?? Number.POSITIVE_INFINITY)) continue;
+        if (current.key === goalKey) break;
+        const currentWorldX = current.x * pathCellSize;
+        const currentWorldY = current.y * pathCellSize;
+        for (const direction of directions) {
+            const x = current.x + direction.x;
+            const y = current.y + direction.y;
+            if (x < minCellX || x > maxCellX || y < minCellY || y > maxCellY) continue;
+            const worldX = x * pathCellSize;
+            const worldY = y * pathCellSize;
+            if (pathPointBlocked(snapshot, worldX, worldY)) continue;
+            if (!segmentIsNavigable(snapshot, currentWorldX, currentWorldY, worldX, worldY)) continue;
+            if (direction.x !== 0 && direction.y !== 0) {
+                if (
+                    pathPointBlocked(snapshot, currentWorldX + direction.x * pathCellSize, currentWorldY)
+                    || pathPointBlocked(snapshot, currentWorldX, currentWorldY + direction.y * pathCellSize)
+                ) continue;
+            }
+            const key = pathCellKey(x, y);
+            const nextCost = current.g + direction.cost;
+            if (nextCost >= (costs.get(key) ?? Number.POSITIVE_INFINITY)) continue;
+            costs.set(key, nextCost);
+            parents.set(key, current.key);
+            cells.set(key, { x, y });
+            pushOpenNode(open, { x, y, key, g: nextCost, f: nextCost + heuristic(x, y) });
+        }
+    }
+    if (!costs.has(goalKey)) return [];
+
+    const gridPath: NavigationPoint[] = [];
+    let key = goalKey;
+    while (key !== startKey) {
+        const cell = cells.get(key);
+        if (!cell) return [];
+        gridPath.push({ x: cell.x * pathCellSize, y: cell.y * pathCellSize });
+        const parent = parents.get(key);
+        if (!parent) return [];
+        key = parent;
+    }
+    gridPath.reverse();
+    gridPath.push({ x: goalX, y: goalY });
+
+    const simplified: NavigationPoint[] = [];
+    let anchorX = startX;
+    let anchorY = startY;
+    let index = 0;
+    while (index < gridPath.length) {
+        let furthest = index;
+        for (let candidate = index + 1; candidate < gridPath.length; candidate++) {
+            if (!segmentIsNavigable(snapshot, anchorX, anchorY, gridPath[candidate]!.x, gridPath[candidate]!.y)) break;
+            furthest = candidate;
+        }
+        const waypoint = gridPath[furthest]!;
+        simplified.push(waypoint);
+        anchorX = waypoint.x;
+        anchorY = waypoint.y;
+        index = furthest + 1;
+    }
+    return simplified;
+};
+
+const navigateTo = (
+    snapshot: BotBrainSnapshot,
+    self: BotBrainPlayer,
+    state: BotBrainState,
+    goalX: number,
+    goalY: number,
+    goalKey: string,
+    now: number,
+): number => {
+    const clampedX = Math.max(6, Math.min(snapshot.map.width - 6, goalX));
+    const clampedY = Math.max(6, Math.min(snapshot.map.height - 6, goalY));
+    if (segmentIsNavigable(snapshot, self.x, self.y, clampedX, clampedY)) {
+        state.navigationGoalKey = undefined;
+        state.navigationWaypoints = [];
+        state.navigationWaypointIndex = 0;
+        return angleTo(self.x, self.y, clampedX, clampedY);
+    }
+
+    const routeIsReusable = state.navigationGoalKey === goalKey
+        && now < state.navigationReplanAt
+        && state.navigationWaypointIndex < state.navigationWaypoints.length;
+    if (!routeIsReusable) {
+        state.navigationGoalKey = goalKey;
+        state.navigationWaypoints = planNavigationPath(snapshot, self.x, self.y, clampedX, clampedY);
+        state.navigationWaypointIndex = 0;
+        state.navigationReplanAt = now + 1_350;
+    }
+    while (
+        state.navigationWaypointIndex < state.navigationWaypoints.length - 1
+        && distance(
+                self.x,
+                self.y,
+                state.navigationWaypoints[state.navigationWaypointIndex]!.x,
+                state.navigationWaypoints[state.navigationWaypointIndex]!.y,
+            ) <= 7
+    ) state.navigationWaypointIndex++;
+    const waypoint = state.navigationWaypoints[state.navigationWaypointIndex];
+    if (waypoint && segmentIsNavigable(snapshot, self.x, self.y, waypoint.x, waypoint.y)) {
+        return angleTo(self.x, self.y, waypoint.x, waypoint.y);
+    }
+    state.navigationReplanAt = 0;
+    return steerAroundWalls(snapshot, self, state, angleTo(self.x, self.y, clampedX, clampedY), now);
+};
 
 const firstBlockingObstacle = (
     snapshot: BotBrainSnapshot,
@@ -521,6 +809,12 @@ export const createBotBrainState = (random: () => number = Math.random): BotBrai
     grenadePhase: "idle",
     grenadeCookUntil: 0,
     grenadeCooldownUntil: 0,
+    breakableLockedUntil: 0,
+    navigationWaypoints: [],
+    navigationWaypointIndex: 0,
+    navigationReplanAt: 0,
+    roamSequence: 0,
+    targetMemoryUntil: 0,
 });
 
 const periodicActions = (
@@ -579,6 +873,7 @@ const finishIntent = (
         ? false
         : rhythmicMovement(state, intent.mode, now, random);
     state.lastMovementCommanded = moving;
+    if (moving) state.lastMoveAngle = intent.moveAngle;
     return { ...intent, moving };
 };
 
@@ -643,24 +938,25 @@ type TacticalGunSlot = {
     reserve: number;
 };
 
-const tacticalGunSlots = (self: BotBrainPlayer): TacticalGunSlot[] => ([
-    {
-        slot: 0,
-        equip: "primary",
-        weapon: self.primaryWeapon ?? "",
-        ammo: self.primaryAmmo ?? 0,
-        reserve: self.primaryReserve ?? 0,
-    },
-    {
-        slot: 1,
-        equip: "secondary",
-        weapon: self.secondaryWeapon ?? "",
-        ammo: self.secondaryAmmo ?? 0,
-        reserve: self.secondaryReserve ?? 0,
-    },
-] satisfies TacticalGunSlot[]).filter(
-    (slot) => weaponKind(slot.weapon) === "gun" && slot.ammo + slot.reserve > 0,
-);
+const tacticalGunSlots = (self: BotBrainPlayer): TacticalGunSlot[] =>
+    ([
+        {
+            slot: 0,
+            equip: "primary",
+            weapon: self.primaryWeapon ?? "",
+            ammo: self.primaryAmmo ?? 0,
+            reserve: self.primaryReserve ?? 0,
+        },
+        {
+            slot: 1,
+            equip: "secondary",
+            weapon: self.secondaryWeapon ?? "",
+            ammo: self.secondaryAmmo ?? 0,
+            reserve: self.secondaryReserve ?? 0,
+        },
+    ] satisfies TacticalGunSlot[]).filter(
+        (slot) => weaponKind(slot.weapon) === "gun" && slot.ammo + slot.reserve > 0,
+    );
 
 const weaponRangeScore = (weapon: string, targetDistance: number): number => {
     const profile = weaponProfile(weapon);
@@ -905,8 +1201,7 @@ interface BotPersonality {
 
 const personalityCache = new Map<string, BotPersonality>();
 
-const hashUnit = (sessionId: string, trait: string): number =>
-    stableHash(`${sessionId}:${trait}`) / 0xffff_ffff;
+const hashUnit = (sessionId: string, trait: string): number => stableHash(`${sessionId}:${trait}`) / 0xffff_ffff;
 
 const botPersonality = (sessionId: string): BotPersonality => {
     const cached = personalityCache.get(sessionId);
@@ -951,9 +1246,8 @@ const grenadeOpportunity = (
         || target.distance > 68
         || target.player.downed === true
     ) return false;
-    const nearbyEnemies = enemies.filter(({ player }) =>
-        distance(target.player.x, target.player.y, player.x, player.y) <= 24
-    ).length;
+    const nearbyEnemies =
+        enemies.filter(({ player }) => distance(target.player.x, target.player.y, player.x, player.y) <= 24).length;
     const allyInBlastRadius = allies.some(({ player }) =>
         distance(target.player.x, target.player.y, player.x, player.y) <= 28
     );
@@ -961,8 +1255,7 @@ const grenadeOpportunity = (
     return nearbyEnemies >= 2 || !hasClearShot(snapshot, self, target.player);
 };
 
-const lootAffinity = (sessionId: string, lootId: number): number =>
-    stableHash(`${sessionId}:${lootId}`) % 13;
+const lootAffinity = (sessionId: string, lootId: number): number => stableHash(`${sessionId}:${lootId}`) % 13;
 
 const lootGridCache = new WeakMap<BotBrainSnapshot, Map<string, BotBrainLoot[]>>();
 
@@ -1058,6 +1351,122 @@ const selectLootTarget = (
     return target;
 };
 
+const selectBreakableTarget = (
+    snapshot: BotBrainSnapshot,
+    self: BotBrainPlayer,
+    state: BotBrainState,
+    now: number,
+    sessionId: string,
+): BreakableTarget | undefined => {
+    const personality = botPersonality(sessionId);
+    const allies = snapshot.players.filter((player) =>
+        player.connected
+        && player.alive
+        && player.sessionId !== sessionId
+        && player.teamId === self.teamId
+    );
+    const candidates = (snapshot.obstacles ?? [])
+        .filter((obstacle) => obstacle.destructible && obstacle.containsLoot && obstacle.health > 0)
+        .map((obstacle) => {
+            const obstacleDistance = distance(self.x, self.y, obstacle.x, obstacle.y);
+            const competition = allies.filter((ally) =>
+                distance(ally.x, ally.y, obstacle.x, obstacle.y) + 12 < obstacleDistance
+            ).length;
+            const utility = 104
+                + Math.min(24, obstacle.health * 0.06)
+                + lootAffinity(sessionId, obstacle.id) * 1.8
+                - obstacleDistance * (0.22 + personality.caution * 0.04)
+                - competition * 34;
+            return { obstacle, distance: obstacleDistance, utility };
+        })
+        .filter((candidate) => candidate.distance <= Math.min(190, personality.lootRadius * 0.55))
+        .sort((left, right) => right.utility - left.utility);
+    const locked = now < state.breakableLockedUntil
+        ? candidates.find((candidate) => candidate.obstacle.id === state.targetBreakableId)
+        : undefined;
+    const target = locked ?? candidates[0];
+    if (!target || target.utility < 34) {
+        state.targetBreakableId = undefined;
+        state.breakableLockedUntil = 0;
+        return undefined;
+    }
+    if (target.obstacle.id !== state.targetBreakableId) {
+        state.targetBreakableId = target.obstacle.id;
+        state.breakableLockedUntil = now + 1_700;
+    }
+    return target;
+};
+
+const movementWithSeparation = (
+    snapshot: BotBrainSnapshot,
+    self: BotBrainPlayer,
+    desiredAngle: number,
+): number => {
+    let x = Math.cos(desiredAngle);
+    let y = Math.sin(desiredAngle);
+    for (const player of snapshot.players) {
+        if (
+            !player.connected
+            || !player.alive
+            || player.sessionId === self.sessionId
+            || player.teamId !== self.teamId
+        ) continue;
+        const allyDistance = distance(self.x, self.y, player.x, player.y);
+        if (allyDistance <= 0.01 || allyDistance >= 18) continue;
+        const strength = (18 - allyDistance) / 18 * 1.35;
+        x += (self.x - player.x) / allyDistance * strength;
+        y += (self.y - player.y) / allyDistance * strength;
+    }
+    const separatedAngle = Math.atan2(y, x);
+    return rayClearance(snapshot, self, separatedAngle, 20) >= 16
+        ? separatedAngle
+        : desiredAngle;
+};
+
+const distributedDestination = (
+    sessionId: string,
+    purpose: string,
+    centerX: number,
+    centerY: number,
+    radius: number,
+): NavigationPoint => {
+    const angle = hashUnit(sessionId, `${purpose}:angle`) * Math.PI * 2;
+    const distanceScale = 0.28 + hashUnit(sessionId, `${purpose}:radius`) * 0.48;
+    return {
+        x: centerX + Math.cos(angle) * radius * distanceScale,
+        y: centerY + Math.sin(angle) * radius * distanceScale,
+    };
+};
+
+const updateRoamDestination = (
+    snapshot: BotBrainSnapshot,
+    self: BotBrainPlayer,
+    state: BotBrainState,
+    sessionId: string,
+    now: number,
+): NavigationPoint => {
+    if (
+        state.roamX !== undefined
+        && state.roamY !== undefined
+        && now < state.decisionUntil
+        && distance(self.x, self.y, state.roamX, state.roamY) > 14
+    ) return { x: state.roamX, y: state.roamY };
+    state.roamSequence++;
+    const zoneUsable = snapshot.zone.radius > 0;
+    const centerX = zoneUsable ? snapshot.zone.x : snapshot.map.width / 2;
+    const centerY = zoneUsable ? snapshot.zone.y : snapshot.map.height / 2;
+    const maxRadius = zoneUsable
+        ? Math.min(snapshot.zone.radius * 0.68, Math.min(snapshot.map.width, snapshot.map.height) * 0.36)
+        : Math.min(snapshot.map.width, snapshot.map.height) * 0.34;
+    const purpose = `roam:${state.roamSequence}`;
+    const destination = distributedDestination(sessionId, purpose, centerX, centerY, maxRadius);
+    const margin = Math.max(28, Math.min(snapshot.map.width, snapshot.map.height) * 0.045);
+    state.roamX = Math.max(margin, Math.min(snapshot.map.width - margin, destination.x));
+    state.roamY = Math.max(margin, Math.min(snapshot.map.height - margin, destination.y));
+    state.decisionUntil = now + 3_200 + hashUnit(sessionId, `${purpose}:duration`) * 4_600;
+    return { x: state.roamX, y: state.roamY };
+};
+
 const updateStuckState = (
     snapshot: BotBrainSnapshot,
     self: BotBrainPlayer,
@@ -1072,9 +1481,18 @@ const updateStuckState = (
             state.stuckSamples = moved < 1.1 ? state.stuckSamples + 1 : 0;
             if (state.stuckSamples >= 4) {
                 state.stuckSamples = 0;
-                state.unstuckUntil = now + 900 + random() * 500;
-                state.wanderAngle += state.strafeSign * (Math.PI * (0.55 + random() * 0.35));
+                state.unstuckUntil = now + 1_100 + random() * 650;
+                const blockedAngle = state.lastMoveAngle ?? state.wanderAngle;
+                const escapeAngles = [
+                    blockedAngle + state.strafeSign * Math.PI / 2,
+                    blockedAngle - state.strafeSign * Math.PI / 2,
+                    blockedAngle + Math.PI,
+                ].sort((left, right) =>
+                    rayClearance(snapshot, self, right, 64) - rayClearance(snapshot, self, left, 64)
+                );
+                state.wanderAngle = escapeAngles[0]!;
                 state.strafeSign = state.strafeSign === 1 ? -1 : 1;
+                state.navigationReplanAt = 0;
             }
         }
     }
@@ -1117,6 +1535,12 @@ export const decideBotIntent = (
         state.grenadePhase = "idle";
         state.grenadeCookUntil = 0;
         state.grenadeTargetSessionId = undefined;
+        state.targetBreakableId = undefined;
+        state.breakableLockedUntil = 0;
+        state.navigationGoalKey = undefined;
+        state.navigationWaypoints = [];
+        state.navigationWaypointIndex = 0;
+        state.targetMemoryUntil = 0;
         if (now >= state.decisionUntil) {
             state.wanderAngle = random() * Math.PI * 2;
             state.decisionUntil = now + 1_500 + random() * 2_000;
@@ -1147,7 +1571,7 @@ export const decideBotIntent = (
     }
     state.lastHealth = self.health;
 
-    const enemies = snapshot.players
+    const allEnemies = snapshot.players
         .filter((player) =>
             player.connected
             && player.alive
@@ -1173,7 +1597,30 @@ export const decideBotIntent = (
         }))
         .sort((left, right) => left.distance - right.distance);
     const personality = botPersonality(sessionId);
+    const sightRange = 350 + hashUnit(sessionId, "sight-range") * 170;
+    const directlyPerceived = allEnemies.filter(({ player, distance: targetDistance }) =>
+        targetDistance <= 125
+        || (targetDistance <= sightRange && hasClearShot(snapshot, self, player))
+        || (now < state.underFireUntil && targetDistance <= 300)
+    );
+    const rememberedTarget = now < state.targetMemoryUntil
+        ? allEnemies.find(({ player }) => player.sessionId === state.targetSessionId)
+        : undefined;
+    const enemies = [...directlyPerceived];
+    if (rememberedTarget && !enemies.some(({ player }) => player.sessionId === rememberedTarget.player.sessionId)) {
+        enemies.push(rememberedTarget);
+        enemies.sort((left, right) => left.distance - right.distance);
+    }
     const target = selectTarget(enemies, state, now, random);
+    if (target && directlyPerceived.some(({ player }) => player.sessionId === target.player.sessionId)) {
+        state.targetLastSeenX = target.player.x;
+        state.targetLastSeenY = target.player.y;
+        state.targetMemoryUntil = now + 2_200 + personality.aggression * 450;
+    } else if (!target) {
+        state.targetLastSeenX = undefined;
+        state.targetLastSeenY = undefined;
+        state.targetMemoryUntil = 0;
+    }
     const selfWeapon = weaponProfile(self.weapon);
     const projectileTravelSeconds = target && Number.isFinite(selfWeapon.projectileSpeed)
         ? Math.min(0.72, target.distance / Math.max(1, selfWeapon.projectileSpeed))
@@ -1195,7 +1642,15 @@ export const decideBotIntent = (
         state.grenadePhase = "idle";
         const rescueAlly = allies.find(({ player }) => player.downed !== true);
         const crawlAngle = rescueAlly
-            ? angleTo(self.x, self.y, rescueAlly.player.x, rescueAlly.player.y)
+            ? navigateTo(
+                snapshot,
+                self,
+                state,
+                rescueAlly.player.x,
+                rescueAlly.player.y,
+                `downed:${rescueAlly.player.sessionId}`,
+                now,
+            )
             : target
             ? targetAngle + Math.PI
             : angleTo(self.x, self.y, snapshot.zone.x, snapshot.zone.y);
@@ -1203,7 +1658,11 @@ export const decideBotIntent = (
             state,
             {
                 mode: "downed",
-                moveAngle: steerAroundWalls(snapshot, self, state, crawlAngle, now),
+                moveAngle: movementWithSeparation(
+                    snapshot,
+                    self,
+                    steerAroundWalls(snapshot, self, state, crawlAngle, now),
+                ),
                 aimAngle: targetAngle,
                 aimDistance: aimDistance(target),
                 shoot: false,
@@ -1348,11 +1807,21 @@ export const decideBotIntent = (
         || self.y > snapshot.map.height - edgeMargin;
     if (outsideMapCenter) {
         state.healingUntil = 0;
-        const centerAngle = angleTo(
-            self.x,
-            self.y,
+        const edgeDestination = distributedDestination(
+            sessionId,
+            "map-edge",
             snapshot.map.width / 2,
             snapshot.map.height / 2,
+            Math.min(snapshot.map.width, snapshot.map.height) * 0.24,
+        );
+        const centerAngle = navigateTo(
+            snapshot,
+            self,
+            state,
+            edgeDestination.x,
+            edgeDestination.y,
+            `edge:${Math.round(edgeDestination.x)}:${Math.round(edgeDestination.y)}`,
+            now,
         );
         const atHardEdge = self.x < edgeMargin * 0.35
             || self.y < edgeMargin * 0.35
@@ -1362,7 +1831,7 @@ export const decideBotIntent = (
             state,
             {
                 mode: "edge",
-                moveAngle: steerAroundWalls(snapshot, self, state, centerAngle, now),
+                moveAngle: movementWithSeparation(snapshot, self, centerAngle),
                 aimAngle: targetAngle,
                 aimDistance: aimDistance(target, 60),
                 shoot,
@@ -1385,13 +1854,29 @@ export const decideBotIntent = (
         state.healingUntil = 0;
         const zoneX = shouldReturnToCurrentZone ? snapshot.zone.x : snapshot.zone.nextX;
         const zoneY = shouldReturnToCurrentZone ? snapshot.zone.y : snapshot.zone.nextY;
-        const safeAngle = angleTo(self.x, self.y, zoneX, zoneY);
+        const zoneRadius = shouldReturnToCurrentZone ? snapshot.zone.radius : snapshot.zone.nextRadius;
+        const safeDestination = distributedDestination(
+            sessionId,
+            shouldReturnToCurrentZone ? "current-zone" : "next-zone",
+            zoneX,
+            zoneY,
+            zoneRadius * 0.58,
+        );
+        const safeAngle = navigateTo(
+            snapshot,
+            self,
+            state,
+            safeDestination.x,
+            safeDestination.y,
+            `zone:${Math.round(zoneX)}:${Math.round(zoneY)}:${Math.round(zoneRadius)}`,
+            now,
+        );
         const outsideCurrentZone = snapshot.zone.radius > 0 && zoneDistance > snapshot.zone.radius;
         return finishIntent(
             state,
             {
                 mode: "zone",
-                moveAngle: steerAroundWalls(snapshot, self, state, safeAngle, now),
+                moveAngle: movementWithSeparation(snapshot, self, safeAngle),
                 aimAngle: targetAngle,
                 aimDistance: aimDistance(target, 60),
                 shoot,
@@ -1514,13 +1999,21 @@ export const decideBotIntent = (
         && target.distance <= 150
         && hasClearShot(snapshot, target.player, self);
     if (downedAlly && !exposedRescueThreat) {
-        const rescueAngle = angleTo(self.x, self.y, downedAlly.player.x, downedAlly.player.y);
+        const rescueAngle = navigateTo(
+            snapshot,
+            self,
+            state,
+            downedAlly.player.x,
+            downedAlly.player.y,
+            `rescue:${downedAlly.player.sessionId}`,
+            now,
+        );
         const canRevive = downedAlly.distance <= 5.5;
         return finishIntent(
             state,
             {
                 mode: "rescue",
-                moveAngle: steerAroundWalls(snapshot, self, state, rescueAngle, now),
+                moveAngle: movementWithSeparation(snapshot, self, rescueAngle),
                 aimAngle: targetAngle,
                 aimDistance: aimDistance(target),
                 shoot: false,
@@ -1534,18 +2027,75 @@ export const decideBotIntent = (
     }
 
     const lootTarget = selectLootTarget(snapshot, self, state, now, sessionId);
+    const breakableTarget = selectBreakableTarget(snapshot, self, state, now, sessionId);
     const needsWeaponOrAmmo = weaponKind(self.weapon) !== "gun" || self.ammo <= 0;
     const valuableLootBreakDistance = 65 + personality.lootDrive * 28;
     const canBreakForLoot = !target
         || target.distance > (
-            needsWeaponOrAmmo
-                ? 70
-                : (lootTarget?.utility ?? 0) >= 82
-                ? valuableLootBreakDistance
-                : 560 + personality.caution * 70
+                needsWeaponOrAmmo
+                    ? 70
+                    : (lootTarget?.utility ?? 0) >= 82
+                    ? valuableLootBreakDistance
+                    : 560 + personality.caution * 70
+            );
+    const canBreakCrate = !target || target.distance > (needsWeaponOrAmmo ? 110 : 240);
+    const shouldBreakCrate = Boolean(
+        breakableTarget
+            && canBreakCrate
+            && (
+                !lootTarget
+                || breakableTarget.utility + (needsWeaponOrAmmo ? 48 : 22) > lootTarget.utility
+            ),
+    );
+    if (breakableTarget && shouldBreakCrate) {
+        const obstacle = breakableTarget.obstacle;
+        const obstacleRadius = Math.max(obstacle.width, obstacle.height) / 2;
+        const perimeterDistance = Math.max(0, breakableTarget.distance - obstacleRadius);
+        const obstacleAngle = angleTo(self.x, self.y, obstacle.x, obstacle.y);
+        const activeKind = weaponKind(self.weapon);
+        const shouldEquipMelee = activeKind !== "melee" && perimeterDistance <= 22;
+        const canStrike = activeKind === "melee" && perimeterDistance <= meleeAttackDistance;
+        const approachDistance = obstacleRadius + 2.8;
+        const approachX = obstacle.x - Math.cos(obstacleAngle) * approachDistance;
+        const approachY = obstacle.y - Math.sin(obstacleAngle) * approachDistance;
+        const moveAngle = navigateTo(
+            snapshot,
+            self,
+            state,
+            approachX,
+            approachY,
+            `break:${obstacle.id}`,
+            now,
         );
+        return finishIntent(
+            state,
+            {
+                mode: "break",
+                moveAngle: movementWithSeparation(snapshot, self, moveAngle),
+                aimAngle: obstacleAngle,
+                aimDistance: Math.min(64, Math.max(8, breakableTarget.distance)),
+                shoot: canStrike,
+                interact: false,
+                reload: false,
+                equip: shouldEquipMelee ? "melee" : undefined,
+                forceShootStart: canStrike,
+            },
+            canStrike || shouldEquipMelee ? "stop" : "force",
+            now,
+            random,
+        );
+    }
     if (lootTarget && canBreakForLoot) {
         const lootAngle = angleTo(self.x, self.y, lootTarget.loot.x, lootTarget.loot.y);
+        const lootMoveAngle = navigateTo(
+            snapshot,
+            self,
+            state,
+            lootTarget.loot.x,
+            lootTarget.loot.y,
+            `loot:${lootTarget.loot.id}`,
+            now,
+        );
         // The authoritative player pickup check uses player radius + loot radius
         // (normally 2-2.25 world units), so do not stop outside that circle.
         const withinPickupRange = lootTarget.distance <= 1.8;
@@ -1553,7 +2103,7 @@ export const decideBotIntent = (
             state,
             {
                 mode: "loot",
-                moveAngle: lootAngle,
+                moveAngle: movementWithSeparation(snapshot, self, lootMoveAngle),
                 aimAngle: target ? targetAngle : lootAngle,
                 aimDistance: aimDistance(target, Math.min(64, Math.max(12, lootTarget.distance))),
                 shoot: false,
@@ -1569,12 +2119,23 @@ export const decideBotIntent = (
     if (target && target.distance <= combatAwarenessDistance && !hasClearShot(snapshot, self, target.player)) {
         const waypoint = selectFlankWaypoint(snapshot, self, target.player, state, now);
         if (waypoint) {
-            const flankAngle = angleTo(self.x, self.y, waypoint.x, waypoint.y);
             return finishIntent(
                 state,
                 {
                     mode: "flank",
-                    moveAngle: steerAroundWalls(snapshot, self, state, flankAngle, now),
+                    moveAngle: movementWithSeparation(
+                        snapshot,
+                        self,
+                        navigateTo(
+                            snapshot,
+                            self,
+                            state,
+                            waypoint.x,
+                            waypoint.y,
+                            `flank:${target.player.sessionId}`,
+                            now,
+                        ),
+                    ),
                     aimAngle: targetAngle,
                     aimDistance: aimDistance(target),
                     shoot: false,
@@ -1625,8 +2186,8 @@ export const decideBotIntent = (
                 moveAngle += state.strafeSign * personality.orbitAngle + state.combatFeintAngle;
             } else {
                 moveAngle += state.strafeSign * (
-                    (style === "flanker" ? 0.2 : 0.08) + personality.aggression * 0.08
-                ) + state.combatFeintAngle * 0.35;
+                            (style === "flanker" ? 0.2 : 0.08) + personality.aggression * 0.08
+                        ) + state.combatFeintAngle * 0.35;
                 if (style === "breacher") movementPolicy = "force";
             }
             if (now < state.underFireUntil && mode === "combat") {
@@ -1637,7 +2198,11 @@ export const decideBotIntent = (
             state,
             {
                 mode,
-                moveAngle: steerAroundWalls(snapshot, self, state, moveAngle, now),
+                moveAngle: movementWithSeparation(
+                    snapshot,
+                    self,
+                    steerAroundWalls(snapshot, self, state, moveAngle, now),
+                ),
                 aimAngle: targetAngle,
                 aimDistance: aimDistance(target),
                 shoot,
@@ -1653,16 +2218,24 @@ export const decideBotIntent = (
         const waypoint = !clearShot
             ? selectFlankWaypoint(snapshot, self, target.player, state, now)
             : undefined;
-        const huntAngle = waypoint
-            ? angleTo(self.x, self.y, waypoint.x, waypoint.y)
-            : targetAngle + state.strafeSign * personality.orbitAngle * (
-                personality.style === "flanker" ? 0.12 : 0.04
-            );
+        const huntX = waypoint?.x ?? state.targetLastSeenX ?? target.player.x;
+        const huntY = waypoint?.y ?? state.targetLastSeenY ?? target.player.y;
+        const huntAngle = navigateTo(
+            snapshot,
+            self,
+            state,
+            huntX,
+            huntY,
+            `hunt:${target.player.sessionId}:${waypoint ? "flank" : "seen"}`,
+            now,
+        ) + state.strafeSign * personality.orbitAngle * (
+                    personality.style === "flanker" ? 0.08 : 0.025
+                );
         return finishIntent(
             state,
             {
                 mode: "hunt",
-                moveAngle: steerAroundWalls(snapshot, self, state, huntAngle, now),
+                moveAngle: movementWithSeparation(snapshot, self, huntAngle),
                 aimAngle: targetAngle,
                 aimDistance: aimDistance(target, 64),
                 shoot: false,
@@ -1674,22 +2247,25 @@ export const decideBotIntent = (
         );
     }
 
-    if (now >= state.decisionUntil) {
-        state.wanderAngle += (random() - 0.5) * Math.PI * 1.35 + personality.roamBias * 0.35;
-        state.decisionUntil = now + (1_350 + random() * 3_400) * personality.cadenceScale;
-        if (random() < 0.28) state.strafeSign = state.strafeSign === 1 ? -1 : 1;
-    }
+    const roamDestination = updateRoamDestination(snapshot, self, state, sessionId, now);
     const nearestAlly = allies[0];
-    const wanderAngle = nearestAlly && nearestAlly.distance > 220
-        ? angleTo(self.x, self.y, nearestAlly.player.x, nearestAlly.player.y)
-            + formationOffset(sessionId)
-            + personality.roamBias * 0.25
-        : state.wanderAngle + personality.roamBias * 0.18;
+    const followSmallSquad = allies.length <= 3 && nearestAlly && nearestAlly.distance > 260;
+    const wanderX = followSmallSquad ? nearestAlly.player.x : roamDestination.x;
+    const wanderY = followSmallSquad ? nearestAlly.player.y : roamDestination.y;
+    const wanderAngle = navigateTo(
+        snapshot,
+        self,
+        state,
+        wanderX,
+        wanderY,
+        followSmallSquad ? `squad:${nearestAlly.player.sessionId}` : `roam:${state.roamSequence}`,
+        now,
+    ) + (followSmallSquad ? formationOffset(sessionId) : personality.roamBias * 0.05);
     return finishIntent(
         state,
         {
             mode: "wander",
-            moveAngle: steerAroundWalls(snapshot, self, state, wanderAngle, now),
+            moveAngle: movementWithSeparation(snapshot, self, wanderAngle),
             aimAngle: targetAngle,
             aimDistance: aimDistance(target),
             shoot: false,

@@ -32,6 +32,7 @@ export const createBotInput = (intent: BotIntent, random: () => number = Math.ra
     if (intent.equip === "otherGun") input.addInput(GameConfig.Input.EquipOtherGun);
     if (intent.equip === "primary") input.addInput(GameConfig.Input.EquipPrimary);
     if (intent.equip === "secondary") input.addInput(GameConfig.Input.EquipSecondary);
+    if (intent.equip === "melee") input.addInput(GameConfig.Input.EquipMelee);
     if (intent.equip === "throwable") input.addInput(GameConfig.Input.EquipThrowable);
     if (intent.equip === "lastWeapon") input.addInput(GameConfig.Input.EquipLastWeap);
     if (intent.useItem) input.useItem = intent.useItem;
