@@ -306,7 +306,7 @@ test("pod failure is capability-gated before mutation and verifies runtime recov
   ]);
 });
 
-test("admission saturation exposes the failure metric and cleanup only stops the load", async (context) => {
+test("admission saturation exposes the failure metric and verifies service recovery", async (context) => {
   let loadStatus: AdmissionLoadStatus = {
     jobId: "admission-exact",
     roomId: "room-0",
@@ -396,11 +396,15 @@ test("admission saturation exposes the failure metric and cleanup only stops the
   assert.equal(failedServer.rooms[0]?.active?.evidence?.phase, "server_failed");
   assert.equal(failedServer.rooms[0]?.active?.evidence?.existingSessionsExpected, "unaffected");
 
+  admissionHealthy = true;
   const stoppedResult = await controller.recover(record, room, "admission-storm");
   assert.equal(stoppedResult.status, "completed");
   assert.equal(stoppedResult.evidence?.failureRatePercent, 27.5);
   assert.equal(stoppedResult.evidence?.loadStopped, true);
-  assert.equal(stoppedResult.evidence?.recoveryPerformed, false);
+  assert.equal(stoppedResult.evidence?.admissionServerStatus, "healthy");
+  assert.equal(stoppedResult.evidence?.recoveryPerformed, true);
+  assert.equal(stoppedResult.evidence?.recoveryVerified, true);
+  assert.equal(stoppedResult.evidence?.recoveryOwner, "service-restart-policy");
   assert.equal(stopped, true);
   assert.equal(controller.admissionFailureRates().has("room-0"), false);
   assert.ok(calls.includes("POST http://api-server/ops/failure/admission-overload/arm"));

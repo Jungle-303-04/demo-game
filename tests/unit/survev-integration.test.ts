@@ -161,6 +161,10 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /controlPlaneClient\.startFailureScenario\(roomId, "admission-storm"\)/);
   assert.match(adminUi, /onRunAdmissionStorm=\{\(roomId\) => void startAdmissionStorm\(roomId\)\}/);
   assert.match(adminUi, /입장 서버 장애/);
+  assert.match(adminUi, /onRecoverAdmissionStorm=\{\(roomId\) => void recoverAdmissionStorm\(roomId\)\}/);
+  assert.match(adminUi, /className="is-recovery"/);
+  assert.match(adminUi, /자동 복구/);
+  assert.match(compose, /api-server:\s+[\s\S]*?restart: on-failure/);
   assert.match(adminUi, /snapshotCapturedAt > 0/);
   assert.doesNotMatch(adminUi, /ROOM_FORM_DEFAULTS|ManagementTab/);
   assert.doesNotMatch(adminUi, /import \{ FailureScenarioPage \}/);
@@ -370,7 +374,9 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(serverBlock, /event\.key === "Escape"/);
   assert.match(serverBlock, /관전하기/);
   assert.match(serverBlock, /참가하기/);
-  assert.match(serverBlock, /scenarioActionLabel/);
+  assert.match(serverBlock, /onScenarioStart/);
+  assert.match(serverBlock, /onScenarioRecover/);
+  assert.match(serverBlock, /scenarioActive/);
   assert.doesNotMatch(serverBlock, /room-graph-stack|room-signal-graph|LiveRoomMiniMap|ActualGameMap|<iframe/);
   assert.match(adminCss, /\.server-block \{[^}]*--server-border-size: clamp\(50px, 4\.8vw, 80px\);[^}]*--status-left-color:[^}]*--status-right-color:[^}]*border: var\(--server-border-size\) solid transparent;[^}]*linear-gradient\([^}]*var\(--status-left-color\) 50%[^}]*var\(--status-right-color\) 50%/s);
   assert.doesNotMatch(adminUi, /<h1>게임 서버<\/h1>/);

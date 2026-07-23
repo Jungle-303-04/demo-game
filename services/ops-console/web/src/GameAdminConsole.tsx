@@ -601,8 +601,9 @@ function ServerBlock({
   room,
   onJoin,
   onSpectate,
-  onScenario,
-  scenarioActionLabel,
+  onScenarioStart,
+  onScenarioRecover,
+  scenarioActive,
   scenarioDisabled,
   scenarioPending,
 }: {
@@ -610,8 +611,9 @@ function ServerBlock({
   room: GameRoom;
   onJoin: () => void;
   onSpectate: () => void;
-  onScenario: () => void;
-  scenarioActionLabel: string;
+  onScenarioStart: () => void;
+  onScenarioRecover: () => void;
+  scenarioActive: boolean;
   scenarioDisabled: boolean;
   scenarioPending: boolean;
 }) {
@@ -681,12 +683,21 @@ function ServerBlock({
             </button>
             <button
               className="is-scenario"
-              disabled={scenarioPending || scenarioDisabled}
-              onClick={() => runAndClose(onScenario)}
+              disabled={scenarioPending || scenarioDisabled || scenarioActive}
+              onClick={() => runAndClose(onScenarioStart)}
               role="menuitem"
               type="button"
             >
-              {scenarioPending ? "요청 처리 중…" : scenarioActionLabel}
+              {scenarioActive ? "입장 서버 장애 실행 중" : "입장 서버 장애"}
+            </button>
+            <button
+              className="is-recovery"
+              disabled={scenarioPending || !scenarioActive}
+              onClick={() => runAndClose(onScenarioRecover)}
+              role="menuitem"
+              type="button"
+            >
+              {scenarioPending && scenarioActive ? "자동 복구 중…" : "자동 복구"}
             </button>
           </div>
         ) : null}
@@ -798,7 +809,7 @@ function RoomDirectory({
   onJoinRoom,
   onOpenRoom,
   onRunAdmissionStorm,
-  onStopAdmissionStorm,
+  onRecoverAdmissionStorm,
   admissionActiveRoomId,
   scenarioPendingRoomId,
 }: {
@@ -808,7 +819,7 @@ function RoomDirectory({
   onJoinRoom: (roomId: string) => void;
   onOpenRoom: (roomId: string) => void;
   onRunAdmissionStorm: (roomId: string) => void;
-  onStopAdmissionStorm: (roomId: string) => void;
+  onRecoverAdmissionStorm: (roomId: string) => void;
   admissionActiveRoomId: string | null;
   scenarioPendingRoomId: string | null;
 }) {
@@ -839,15 +850,10 @@ function RoomDirectory({
               key={room.id}
               onJoin={() => onJoinRoom(room.id)}
               onSpectate={() => onOpenRoom(room.id)}
-              onScenario={() => admissionActive
-                ? onStopAdmissionStorm(room.id)
-                : onRunAdmissionStorm(room.id)}
+              onScenarioRecover={() => onRecoverAdmissionStorm(room.id)}
+              onScenarioStart={() => onRunAdmissionStorm(room.id)}
               room={room}
-              scenarioActionLabel={admissionActive
-                ? "장애 부하 중단"
-                : admissionRunningElsewhere
-                  ? "입장 서버 장애 중"
-                  : "입장 서버 장애"}
+              scenarioActive={admissionActive}
               scenarioDisabled={admissionRunningElsewhere}
               scenarioPending={scenarioPendingRoomId === room.id}
             />
@@ -1570,7 +1576,7 @@ export function GameAdminConsole() {
     }
   }
 
-  async function stopAdmissionStorm(roomId: string) {
+  async function recoverAdmissionStorm(roomId: string) {
     if (scenarioPendingRoomId) return;
     setScenarioPendingRoomId(roomId);
     setError("");
@@ -1678,7 +1684,7 @@ export function GameAdminConsole() {
           onJoinRoom={setJoiningRoomId}
           onOpenRoom={openRoomForSpectating}
           onRunAdmissionStorm={(roomId) => void startAdmissionStorm(roomId)}
-          onStopAdmissionStorm={(roomId) => void stopAdmissionStorm(roomId)}
+          onRecoverAdmissionStorm={(roomId) => void recoverAdmissionStorm(roomId)}
           rooms={rooms}
           scenarioPendingRoomId={scenarioPendingRoomId}
         />

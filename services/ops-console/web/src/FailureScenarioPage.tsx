@@ -104,7 +104,7 @@ const SCENARIOS: readonly ScenarioDefinition[] = [
     title: "신규 입장 처리량 포화",
     summary: "중앙 입장 API의 실제 성공률을 보며 요청량을 높이고 장애 상태를 유지합니다.",
     symptom: "신규 입장 성공률 하락 · 기존 게임 세션 유지",
-    recovery: "외부 Pod 증설 시 입장 실패율 하락 확인",
+    recovery: "입장 부하 중단 후 서비스 자동 재시작과 건강 상태 확인",
     tone: "danger",
   },
   {
@@ -624,7 +624,7 @@ export function FailureScenarioPage({
                         {pendingForCard && pending?.action === "recover"
                           ? "복구 요청 중"
                           : scenario.id === "admission-storm"
-                            ? "입장 부하 중단"
+                            ? "자동 복구"
                           : runtimeRecoveryWaiting
                             ? "런타임 자동 복구 대기"
                             : "복구 실행"}
