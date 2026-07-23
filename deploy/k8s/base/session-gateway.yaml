@@ -21,6 +21,8 @@ spec:
           imagePullPolicy: Always
           env:
             - { name: SESSION_ROOM_ENDPOINTS, value: "room-0=http://game-room-0:8001,room-1=http://game-room-1:8001,room-2=http://game-room-2:8001,room-3=http://game-room-3:8001,room-4=http://game-room-4:8001" }
+            - { name: ADMISSION_GATEWAY_URL, value: "http://login-gateway-api:8081" }
+            - { name: REQUIRE_ADMISSION_GATEWAY, value: "true" }
             - name: SESSION_GATEWAY_SHARED_SECRET
               valueFrom: { secretKeyRef: { name: demo-game-session-gateway, key: shared-secret } }
             - { name: REQUIRE_CONTROL_TOKEN, value: "true" }

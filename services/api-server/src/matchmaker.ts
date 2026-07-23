@@ -64,7 +64,7 @@ export class Matchmaker {
     this.capacity.set(maxPerSecond);
   }
 
-  async findGame(sessionId: string, nickname: string): Promise<RoomRegistryRecord> {
+  async findGame(sessionId: string, nickname: string, requestedRoomId?: string): Promise<RoomRegistryRecord> {
     const startedAt = performance.now();
     this.inflight.inc();
     const now = this.now();
@@ -93,9 +93,27 @@ export class Matchmaker {
         && room.joinLocked !== true
         && Number(room.players) < Number(room.spec?.maxPlayers ?? 100)
       );
-      if (rooms.length === 0) return this.reject(sessionId, nickname, "no_room", attempt, startedAt);
-      const room = [...rooms].sort((a, b) => a.players - b.players || a.ordinal - b.ordinal)[0];
-      if (!room) return this.reject(sessionId, nickname, "no_room", attempt, startedAt);
+      if (rooms.length === 0) {
+        return this.reject(
+          sessionId,
+          nickname,
+          requestedRoomId ? "room_unavailable" : "no_room",
+          attempt,
+          startedAt,
+        );
+      }
+      const room = requestedRoomId
+        ? rooms.find((candidate) => candidate.roomId === requestedRoomId)
+        : [...rooms].sort((a, b) => a.players - b.players || a.ordinal - b.ordinal)[0];
+      if (!room) {
+        return this.reject(
+          sessionId,
+          nickname,
+          requestedRoomId ? "room_unavailable" : "no_room",
+          attempt,
+          startedAt,
+        );
+      }
       this.requests.labels("accepted").inc();
       this.duration.labels("accepted").observe((performance.now() - startedAt) / 1_000);
       return room;
