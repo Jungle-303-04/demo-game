@@ -6,6 +6,8 @@ import {
 } from "./events.js";
 
 export const CANARY_ROOM_ID = "canary-room";
+export const CANARY_SERVICE_NAME = "game-room-canary";
+export const CANARY_BOT_SERVICE_NAME = "game-room-canary-bot";
 
 export interface CanaryValidationTarget {
   canaryId: string;
@@ -28,7 +30,7 @@ export interface CanaryIsolationPolicy {
 
 export const DEFAULT_CANARY_ISOLATION_POLICY: CanaryIsolationPolicy = Object.freeze({
   roomId: CANARY_ROOM_ID,
-  endpointOrigin: "http://canary-room:8001",
+  endpointOrigin: `http://${CANARY_SERVICE_NAME}:8001`,
   redisKeyPrefix: "room:canary-room:",
   redisDatabase: 1,
   liveRedisDatabases: Object.freeze([0]),
@@ -739,7 +741,7 @@ const endpointOrigin = (value: string): string => {
 const validatePolicy = (policy: CanaryIsolationPolicy): void => {
   if (policy.roomId !== CANARY_ROOM_ID) throw new Error("canary_policy_room_invalid");
   const url = new URL(endpointOrigin(policy.endpointOrigin));
-  if (url.hostname !== CANARY_ROOM_ID) {
+  if (url.hostname !== CANARY_SERVICE_NAME) {
     throw new Error("canary_policy_endpoint_not_isolated");
   }
   if (policy.redisKeyPrefix !== `room:${CANARY_ROOM_ID}:`) {

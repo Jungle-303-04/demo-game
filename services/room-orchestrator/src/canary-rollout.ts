@@ -1,4 +1,8 @@
-import { CANARY_ROOM_ID, type CanaryValidationTarget } from "./canary.js";
+import {
+  CANARY_ROOM_ID,
+  CANARY_SERVICE_NAME,
+  type CanaryValidationTarget,
+} from "./canary.js";
 
 type FetchLike = typeof fetch;
 
@@ -89,7 +93,7 @@ export class KubernetesCanaryRollout {
     this.apiServer = api.origin;
     this.namespace = options.namespace;
     this.deploymentName = options.deploymentName ?? CANARY_ROOM_ID;
-    this.endpoint = new URL(options.endpoint ?? `http://${CANARY_ROOM_ID}:8001`).origin;
+    this.endpoint = new URL(options.endpoint ?? `http://${CANARY_SERVICE_NAME}:8001`).origin;
     this.redisKeyPrefix = options.redisKeyPrefix ?? `room:${CANARY_ROOM_ID}:`;
     this.redisDatabase = options.redisDatabase ?? 1;
     this.imageRepository = trimSlash(options.gameImageRepository
@@ -100,7 +104,7 @@ export class KubernetesCanaryRollout {
     if (!dnsLabel.test(this.namespace) || !dnsLabel.test(this.deploymentName)) {
       throw new Error("canary_rollout_kubernetes_name_invalid");
     }
-    if (new URL(this.endpoint).hostname !== CANARY_ROOM_ID || this.redisKeyPrefix !== `room:${CANARY_ROOM_ID}:`
+    if (new URL(this.endpoint).hostname !== CANARY_SERVICE_NAME || this.redisKeyPrefix !== `room:${CANARY_ROOM_ID}:`
       || this.redisDatabase !== 1 || !this.imageRepository) {
       throw new Error("canary_rollout_isolation_invalid");
     }

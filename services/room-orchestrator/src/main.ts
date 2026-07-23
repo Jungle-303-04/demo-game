@@ -13,7 +13,9 @@ import {
   type ReadableOperationEventTransport,
 } from "./events.js";
 import {
+  CANARY_BOT_SERVICE_NAME,
   CANARY_ROOM_ID,
+  CANARY_SERVICE_NAME,
   CanaryValidationCoordinator,
   HttpBotValidationStarter,
   HttpCanaryMetricsSource,
@@ -117,7 +119,7 @@ const canaryRollout = kubernetesApiServer && kubeToken
     namespace: process.env.NAMESPACE ?? "sandbox",
     token: kubeTokenProvider,
     gameImageRepository: process.env.GAME_IMAGE_REPOSITORY,
-    endpoint: process.env.CANARY_GAME_ENDPOINT ?? "http://canary-room:8001",
+    endpoint: process.env.CANARY_GAME_ENDPOINT ?? `http://${CANARY_SERVICE_NAME}:8001`,
   })
   : undefined;
 const canaryCoordinator = canaryRollout && kubernetesApiServer && controlToken
@@ -126,7 +128,7 @@ const canaryCoordinator = canaryRollout && kubernetesApiServer && controlToken
     metrics: new HttpCanaryMetricsSource(),
     kubernetes: new KubernetesApiCanaryObservationSource(kubernetesApiServer, kubeTokenProvider),
     bots: new HttpBotValidationStarter(
-      process.env.CANARY_BOT_RUNNER_URL ?? "http://canary-validation-bot:8084",
+      process.env.CANARY_BOT_RUNNER_URL ?? `http://${CANARY_BOT_SERVICE_NAME}:8084`,
       controlToken,
     ),
   }, {}, undefined, opsiaWorkspaceId, opsiaClusterId, process.env.NAMESPACE ?? "sandbox")

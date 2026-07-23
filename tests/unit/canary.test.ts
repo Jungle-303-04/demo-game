@@ -26,7 +26,7 @@ import { sealedCanaryApprovalForRevision } from "../../services/room-orchestrato
 const target: CanaryValidationTarget = {
   canaryId: "canary-safe-revision",
   roomId: "canary-room",
-  endpoint: "http://canary-room:8001",
+  endpoint: "http://game-room-canary:8001",
   revision: "safe-revision",
   redisKeyPrefix: "room:canary-room:",
   redisDatabase: 1,
@@ -116,7 +116,7 @@ const sources = (input: {
       metricsCalls += 1;
       return {
         observedAt: new Date(Date.parse("2026-07-20T10:00:00.000Z") + metricsCalls * 1_000).toISOString(),
-        url: "http://canary-room:8001/metrics",
+        url: "http://game-room-canary:8001/metrics",
         body: input.metrics ?? metricsBody(),
       };
     },
@@ -398,14 +398,14 @@ test("HTTP metric source always reads the isolated server /metrics endpoint", as
     signal: new AbortController().signal,
   });
 
-  assert.equal(requestedUrl, "http://canary-room:8001/metrics");
+  assert.equal(requestedUrl, "http://game-room-canary:8001/metrics");
   assert.match(scrape.body, /game_snapshot_inflight/);
 });
 
 test("HTTP bot starter waits for the accepted job and real connected sessions", async () => {
   const requests: string[] = [];
   const starter = new HttpBotValidationStarter(
-    "http://canary-validation-bot:8084",
+    "http://game-room-canary-bot:8084",
     "control-token",
     async (input, init) => {
       const url = new URL(String(input));
@@ -467,7 +467,7 @@ test("HTTP bot starter waits for the accepted job and real connected sessions", 
 test("HTTP bot starter cleans an accepted job when bounded readiness fails", async () => {
   let cleanupCalls = 0;
   const starter = new HttpBotValidationStarter(
-    "http://canary-validation-bot:8084",
+    "http://game-room-canary-bot:8084",
     "control-token",
     async (input, init) => {
       const url = new URL(String(input));
@@ -654,7 +654,7 @@ test("Canary rollout patches only the fixed isolated Deployment with immutable i
   assert.deepEqual(scheduled, {
     canaryId: "canary-01234567",
     roomId: "canary-room",
-    endpoint: "http://canary-room:8001",
+    endpoint: "http://game-room-canary:8001",
     revision: immutableRevision,
     redisKeyPrefix: "room:canary-room:",
     redisDatabase: 1,
