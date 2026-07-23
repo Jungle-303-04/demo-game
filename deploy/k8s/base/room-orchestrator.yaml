@@ -12,7 +12,7 @@ spec:
         - name: room-orchestrator
           image: ghcr.io/jungle-303-04/demo-game/room-orchestrator:stable
           env:
-            - { name: REDIS_URL, value: redis://redis:6379 }
+            - { name: REDIS_URL, value: redis://cache:6379 }
             - { name: KUBERNETES_SERVICE_HOST, value: kubernetes.default.svc }
             - { name: NAMESPACE, value: sandbox }
             - { name: GAME_DEPLOYMENT_PREFIX, value: game-room }
@@ -22,8 +22,8 @@ spec:
             - { name: GAME_ENDPOINT_TEMPLATE, value: "http://game-room-{ordinal}:8001" }
             - { name: SESSION_GATEWAY_INTERNAL_URL, value: "http://session-gateway:8083" }
             - { name: GAME_IMAGE_REPOSITORY, value: "ghcr.io/jungle-303-04/demo-game/game-server" }
-            - { name: CANARY_GAME_ENDPOINT, value: "http://canary-room:8001" }
-            - { name: CANARY_BOT_RUNNER_URL, value: "http://canary-validation-bot:8084" }
+            - { name: CANARY_GAME_ENDPOINT, value: "http://game-room-canary:8001" }
+            - { name: CANARY_BOT_RUNNER_URL, value: "http://game-room-canary-bot:8084" }
             - { name: REQUIRE_CANARY_APPROVAL, value: "true" }
             - name: OPSIA_EVENT_ENDPOINT
               valueFrom: { configMapKeyRef: { name: ops-policy, key: opsiaEventEndpoint } }

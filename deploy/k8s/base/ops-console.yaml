@@ -13,6 +13,8 @@ spec:
           env:
             - { name: ORCHESTRATOR_URL, value: http://room-orchestrator:8082 }
             - { name: BOT_RUNNER_URL, value: http://bot-runner:8084 }
+            - { name: API_SERVER_URL, value: http://login-gateway-api:8081 }
+            - { name: ADMISSION_GATEWAY_URL, value: http://login-gateway }
           ports: [{ name: http, containerPort: 8085 }]
 ---
 apiVersion: v1
@@ -21,4 +23,3 @@ metadata: { name: ops-console, namespace: sandbox }
 spec:
   selector: { app: ops-console }
   ports: [{ name: http, port: 8085, targetPort: http }]
-

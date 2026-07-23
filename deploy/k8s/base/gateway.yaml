@@ -12,7 +12,7 @@ data:
       }
 
       location = /api/find-game {
-        proxy_pass http://api-server.sandbox.svc.cluster.local:8081;
+        proxy_pass http://login-gateway-api.sandbox.svc.cluster.local:8081;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -33,7 +33,7 @@ data:
       client_max_body_size 1m;
 
       location = /api/find-game {
-        proxy_pass http://api-server.sandbox.svc.cluster.local:8081;
+        proxy_pass http://login-gateway-api.sandbox.svc.cluster.local:8081;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -60,7 +60,7 @@ data:
       }
 
       location / {
-        proxy_pass http://management-server.sandbox.svc.cluster.local:8085;
+        proxy_pass http://login-gateway-management.sandbox.svc.cluster.local:8085;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-Host $host;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -102,7 +102,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: demo-game-gateway, namespace: sandbox, labels: { app: demo-game-gateway } }
+metadata: { name: login-gateway, namespace: sandbox, labels: { app: demo-game-gateway } }
 spec:
   type: LoadBalancer
   selector: { app: demo-game-gateway }

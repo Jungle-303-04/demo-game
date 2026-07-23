@@ -472,19 +472,20 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   }
   assert.match(gateway, /room-\\d\+/);
   assert.match(gateway, /proxy_pass http:\/\/session-gateway\.sandbox\.svc\.cluster\.local:8083/);
-  assert.match(gateway, /proxy_pass http:\/\/api-server\.sandbox\.svc\.cluster\.local:8081/);
+  assert.match(gateway, /proxy_pass http:\/\/login-gateway-api\.sandbox\.svc\.cluster\.local:8081/);
   assert.match(policy, /desiredRooms: "5"/);
   assert.match(policy, /maxRooms: "20"/);
   assert.match(policy, /roomProfiles: "room-0,room-1,room-2,room-3,room-4"/);
   assert.match(policy, /kind: GameFleet/);
   assert.match(policy, /maxConcurrentRooms: 1/);
   assert.match(management, /OPSIA_ROOM_DIRECTORY_URL/);
-  assert.match(management, /API_SERVER_URL, value: http:\/\/api-server:8081/);
+  assert.match(management, /API_SERVER_URL, value: http:\/\/login-gateway-api:8081/);
+  assert.match(management, /ADMISSION_GATEWAY_URL, value: http:\/\/login-gateway/);
   assert.doesNotMatch(management, /- name: api-server\r?\n/);
   assert.match(baseKustomization, /- api-server\.yaml/);
   assert.match(apiServer, /name: api-server[\s\S]*replicas: 1/);
   assert.match(apiServer, /MAX_FIND_GAME_PER_SECOND, value: "25"/);
-  assert.match(apiServer, /kind: Service[\s\S]*name: api-server/);
+  assert.match(apiServer, /kind: Service[\s\S]*name: login-gateway-api/);
   assert.match(rbac, /resources: \["deployments", "replicasets"\][\s\S]*verbs: \["get", "list", "patch"\]/);
   assert.match(monitoring, /sum\(rate\(find_game_requests_total\{outcome!="accepted"\}\[1m\]\)\)/);
   assert.match(management, /key: maxRooms/);
@@ -501,8 +502,8 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.doesNotMatch(gateway, /canary-room/);
   assert.match(canary, /name: canary-room/);
   assert.match(canary, /OPSIA_REDIS_KEY_PREFIX, value: "room:canary-room:"/);
-  assert.match(canary, /REDIS_URL, value: redis:\/\/redis:6379\/1/);
-  assert.match(canary, /OPSIA_ROOM_ENDPOINTS, value: "canary-room=http:\/\/canary-room:8001"/);
+  assert.match(canary, /REDIS_URL, value: redis:\/\/cache:6379\/1/);
+  assert.match(canary, /OPSIA_ROOM_ENDPOINTS, value: "canary-room=http:\/\/game-room-canary:8001"/);
   assert.match(canary, /OPSIA_MIN_BOTS_PER_ROOM, value: "10"/);
   assert.match(canary, /limits: \{ cpu: "3", memory: 4Gi \}/);
   assert.match(canary, /opsia\.dev\/public: disabled/);

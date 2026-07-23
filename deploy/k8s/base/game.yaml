@@ -45,7 +45,7 @@ spec:
             - { name: OPSIA_GAME_BUILD_REVISION, value: stable }
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-0 }
-            - { name: REDIS_URL, value: redis://redis:6379/0 }
+            - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
@@ -111,7 +111,7 @@ spec:
             - { name: OPSIA_GAME_BUILD_REVISION, value: stable }
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-1 }
-            - { name: REDIS_URL, value: redis://redis:6379/0 }
+            - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
@@ -177,7 +177,7 @@ spec:
             - { name: OPSIA_GAME_BUILD_REVISION, value: stable }
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-2 }
-            - { name: REDIS_URL, value: redis://redis:6379/0 }
+            - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
@@ -243,7 +243,7 @@ spec:
             - { name: OPSIA_GAME_BUILD_REVISION, value: stable }
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-3 }
-            - { name: REDIS_URL, value: redis://redis:6379/0 }
+            - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
@@ -309,7 +309,7 @@ spec:
             - { name: OPSIA_GAME_BUILD_REVISION, value: stable }
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-4 }
-            - { name: REDIS_URL, value: redis://redis:6379/0 }
+            - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }

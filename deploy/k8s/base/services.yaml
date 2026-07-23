@@ -36,9 +36,21 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: game-metrics
+  name: game-room-metrics
   namespace: sandbox
   labels: { app: game-server, opsia.dev/fleet: live }
 spec:
   selector: { app: game-server, opsia.dev/fleet: live }
+  ports: [{ name: http, port: 8001, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: game-room-headless
+  namespace: sandbox
+  labels: { app: game-server }
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector: { app: game-server }
   ports: [{ name: http, port: 8001, targetPort: http }]

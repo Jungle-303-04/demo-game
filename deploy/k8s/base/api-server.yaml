@@ -17,7 +17,7 @@ spec:
           image: ghcr.io/jungle-303-04/demo-game/api-server:stable
           imagePullPolicy: Always
           env:
-            - { name: ORCHESTRATOR_URL, value: http://management-server:8082 }
+            - { name: ORCHESTRATOR_URL, value: http://login-gateway-management:8082 }
             - { name: MAX_FIND_GAME_PER_SECOND, value: "25" }
             - { name: ADMISSION_OVERLOAD_THRESHOLD_REQUESTS, value: "35" }
             - { name: ADMISSION_OVERLOAD_WINDOW_MS, value: "1000" }
@@ -31,7 +31,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: api-server, namespace: sandbox, labels: { app: api-server } }
+metadata: { name: login-gateway-api, namespace: sandbox, labels: { app: api-server } }
 spec:
   selector: { app: api-server }
   ports: [{ name: http, port: 8081, targetPort: http }]
@@ -42,4 +42,3 @@ metadata: { name: api-server, namespace: sandbox }
 spec:
   minAvailable: 1
   selector: { matchLabels: { app: api-server } }
-

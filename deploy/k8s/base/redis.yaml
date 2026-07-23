@@ -4,7 +4,7 @@ metadata:
   name: redis
   namespace: sandbox
 spec:
-  serviceName: redis
+  serviceName: cache
   replicas: 1
   persistentVolumeClaimRetentionPolicy: { whenDeleted: Retain, whenScaled: Retain }
   selector:
@@ -30,7 +30,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: redis
+  name: cache
   namespace: sandbox
 spec:
   selector: { app: redis }

@@ -20,7 +20,7 @@ spec:
           image: ghcr.io/jungle-303-04/demo-game/room-orchestrator:stable
           imagePullPolicy: Always
           env:
-            - { name: REDIS_URL, value: redis://redis:6379 }
+            - { name: REDIS_URL, value: redis://cache:6379 }
             - { name: NAMESPACE, value: sandbox }
             - { name: GAME_DEPLOYMENT_PREFIX, value: game-room }
             - { name: MAX_ROOMS, valueFrom: { configMapKeyRef: { name: ops-policy, key: maxRooms } } }
@@ -29,8 +29,8 @@ spec:
             - { name: GAME_ENDPOINT_TEMPLATE, value: "http://game-room-{ordinal}:8001" }
             - { name: SESSION_GATEWAY_INTERNAL_URL, value: "http://session-gateway:8083" }
             - { name: GAME_IMAGE_REPOSITORY, value: "ghcr.io/jungle-303-04/demo-game/game-server" }
-            - { name: CANARY_GAME_ENDPOINT, value: "http://canary-room:8001" }
-            - { name: CANARY_BOT_RUNNER_URL, value: "http://canary-validation-bot:8084" }
+            - { name: CANARY_GAME_ENDPOINT, value: "http://game-room-canary:8001" }
+            - { name: CANARY_BOT_RUNNER_URL, value: "http://game-room-canary-bot:8084" }
             - { name: REQUIRE_CANARY_APPROVAL, value: "true" }
             - name: OPSIA_EVENT_ENDPOINT
               valueFrom: { configMapKeyRef: { name: ops-policy, key: opsiaEventEndpoint } }
@@ -74,8 +74,8 @@ spec:
           env:
             - { name: ORCHESTRATOR_URL, value: http://127.0.0.1:8082 }
             - { name: BOT_RUNNER_URL, value: http://127.0.0.1:8084 }
-            - { name: API_SERVER_URL, value: http://api-server:8081 }
-            - { name: ADMISSION_GATEWAY_URL, value: http://demo-game-gateway }
+            - { name: API_SERVER_URL, value: http://login-gateway-api:8081 }
+            - { name: ADMISSION_GATEWAY_URL, value: http://login-gateway }
             - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
             - name: OPS_CONTROL_TOKEN
               valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
@@ -101,7 +101,7 @@ spec:
 ---
 apiVersion: v1
 kind: Service
-metadata: { name: management-server, namespace: sandbox, labels: { app: management-server } }
+metadata: { name: login-gateway-management, namespace: sandbox, labels: { app: management-server } }
 spec:
   selector: { app: management-server }
   ports:

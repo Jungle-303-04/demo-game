@@ -22,7 +22,7 @@ spec:
             backend: { service: { name: session-gateway, port: { name: http } } }
           - path: /api/find-game
             pathType: Prefix
-            backend: { service: { name: api-server, port: { name: http } } }
+            backend: { service: { name: login-gateway-api, port: { name: http } } }
           - path: /
             pathType: Prefix
             backend: { service: { name: ops-console, port: { name: http } } }
