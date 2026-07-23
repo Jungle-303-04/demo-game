@@ -443,6 +443,10 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   const baseKustomization = await readFile(join(process.cwd(), "deploy/k8s/base/kustomization.yaml"), "utf8");
   const monitoring = await readFile(join(process.cwd(), "deploy/k8s/base/monitoring.yaml"), "utf8");
   const sessionGateway = await readFile(join(process.cwd(), "deploy/k8s/base/session-gateway.yaml"), "utf8");
+  const sessionGatewayImplementation = await readFile(
+    join(process.cwd(), "upstream-survev/server/src/opsia/sessionGateway.ts"),
+    "utf8",
+  );
   const sandboxOverlay = await readFile(join(process.cwd(), "deploy/k8s/overlays/sandbox/kustomization.yaml"), "utf8");
   const gameServerOverlay = await readFile(join(process.cwd(), "deploy/k8s/overlays/game-server/kustomization.yaml"), "utf8");
   const bootstrapSecrets = await readFile(join(process.cwd(), "deploy/k8s/overlays/game-server/bootstrap-secrets.yaml"), "utf8");
@@ -501,6 +505,12 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.doesNotMatch(bootstrapSecrets, /demo-game-admin/);
   assert.match(sessionGateway, /room-4=http:\/\/game-room-4:8001/);
   assert.match(sessionGateway, /SESSION_GATEWAY_SHARED_SECRET/);
+  assert.match(sessionGateway, /ADMISSION_GATEWAY_URL, value: "http:\/\/login-gateway-api:8081"/);
+  assert.match(sessionGateway, /REQUIRE_ADMISSION_GATEWAY, value: "true"/);
+  assert.match(sessionGatewayImplementation, /admission_gateway_url_required/);
+  assert.match(sessionGatewayImplementation, /admission_gateway_unavailable/);
+  assert.match(sessionGatewayImplementation, /spectator = parsed\.spectator === true/);
+  assert.match(sessionGatewayImplementation, /roomId: details\.roomId/);
   assert.equal((liveDeployments.match(/REQUIRE_SESSION_GATEWAY, value: "true"/g) ?? []).length, 5);
   assert.equal((liveDeployments.match(/name: SESSION_GATEWAY_SHARED_SECRET/g) ?? []).length, 5);
   assert.match(management, /SESSION_GATEWAY_INTERNAL_URL, value: http:\/\/session-gateway:8083/);

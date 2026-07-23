@@ -84,7 +84,11 @@ const server = createServer(async (request, response) => {
       overloadFuse.observeRequest();
       const body = await readJson(request); const sessionId = String(body.sessionId ?? ""); const nickname = String(body.nickname ?? "");
       if (!sessionId) return send(response, 400, { error: "sessionId_required" });
-      const room = await matchmaker.findGame(sessionId, nickname);
+      const requestedRoomId = body.roomId === undefined ? undefined : String(body.roomId);
+      if (requestedRoomId !== undefined && !/^room-\d+$/.test(requestedRoomId)) {
+        return send(response, 400, { error: "roomId_invalid" });
+      }
+      const room = await matchmaker.findGame(sessionId, nickname, requestedRoomId);
       // This service chooses a live room Deployment only. The participant then
       // uses that room's real survev `/api/find_game` + WebSocket protocol.
       const host = String(request.headers["x-forwarded-host"] ?? request.headers.host ?? "localhost");
@@ -98,7 +102,7 @@ const server = createServer(async (request, response) => {
     const message = error instanceof Error ? error.message : "request_failed";
     const status = message.includes("rate_limited")
       ? 429
-      : message.includes("no_room") || message.includes("directory_unavailable")
+      : message.includes("no_room") || message.includes("room_unavailable") || message.includes("directory_unavailable")
         ? 503
         : 400;
     return send(response, status, { error: message });

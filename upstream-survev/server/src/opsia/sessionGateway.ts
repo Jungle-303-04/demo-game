@@ -113,6 +113,19 @@ const requireControlToken = process.env.REQUIRE_CONTROL_TOKEN === "true";
 if (requireControlToken && !controlToken) throw new Error("ops_control_token_required");
 const gatewaySharedSecret = process.env.SESSION_GATEWAY_SHARED_SECRET?.trim() ?? "";
 assertGatewaySharedSecret(gatewaySharedSecret);
+const requireAdmissionGateway = process.env.REQUIRE_ADMISSION_GATEWAY === "true";
+const admissionGatewayUrl = (() => {
+    const configured = process.env.ADMISSION_GATEWAY_URL?.trim() ?? "";
+    if (!configured) {
+        if (requireAdmissionGateway) throw new Error("admission_gateway_url_required");
+        return "";
+    }
+    const url = new URL(configured);
+    if (!/^https?:$/.test(url.protocol) || url.username || url.password || url.search || url.hash) {
+        throw new Error("admission_gateway_url_invalid");
+    }
+    return url.toString().replace(/\/+$/, "");
+})();
 
 const safeSessionHash = (sessionId: string): string =>
     createHash("sha256").update(sessionId).digest("hex").slice(0, 16);
@@ -1229,12 +1242,45 @@ const proxyHttp = async (
         if (!route) return replyJson(response, 404, { error: "gateway_room_not_found" });
         const body = details.method === "GET" || details.method === "HEAD" ? undefined : await readBody(response);
         let requestedSessionId: string | undefined;
+        let spectator = false;
         if (/\/api\/find_game$/.test(details.pathname) && body?.byteLength) {
             try {
-                const parsed = JSON.parse(Buffer.from(body).toString("utf8")) as { opsiaSessionId?: unknown };
+                const parsed = JSON.parse(Buffer.from(body).toString("utf8")) as {
+                    opsiaSessionId?: unknown;
+                    spectator?: unknown;
+                };
                 if (typeof parsed.opsiaSessionId === "string") requestedSessionId = parsed.opsiaSessionId;
+                spectator = parsed.spectator === true;
             } catch {
                 // The upstream remains responsible for returning the canonical bad-request response.
+            }
+        }
+        if (admissionGatewayUrl && requestedSessionId && !spectator && /\/api\/find_game$/.test(details.pathname)) {
+            let admissionResponse: Response;
+            try {
+                admissionResponse = await fetch(`${admissionGatewayUrl}/api/find-game`, {
+                    method: "POST",
+                    headers: { "content-type": "application/json", connection: "close" },
+                    body: JSON.stringify({
+                        sessionId: requestedSessionId,
+                        nickname: "DirectJoin",
+                        roomId: details.roomId,
+                    }),
+                    signal: AbortSignal.any([controller.signal, AbortSignal.timeout(2_000)]),
+                });
+            } catch {
+                if (!aborted) replyJson(response, 503, { error: "admission_gateway_unavailable" });
+                return;
+            }
+            if (!admissionResponse.ok) {
+                const status = admissionResponse.status === 429 ? 429 : 503;
+                if (!aborted) replyJson(response, status, { error: "admission_rejected" });
+                return;
+            }
+            const admitted = await admissionResponse.json() as { room?: { roomId?: string } };
+            if (admitted.room?.roomId !== details.roomId) {
+                if (!aborted) replyJson(response, 503, { error: "admission_room_mismatch" });
+                return;
             }
         }
         const upstream = await fetch(`${route.endpoint}${details.pathname}${details.query ? `?${details.query}` : ""}`, {

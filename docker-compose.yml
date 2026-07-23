@@ -104,6 +104,8 @@ services:
     environment:
       <<: [*control-environment, *session-gateway-environment]
       SESSION_ROOM_ENDPOINTS: "room-0=http://game-0:8001,room-1=http://game-1:8001,room-2=http://game-2:8001,room-3=http://game-3:8001,room-4=http://game-4:8001"
+      ADMISSION_GATEWAY_URL: http://api-server:8081
+      REQUIRE_ADMISSION_GATEWAY: "true"
     ports: ["8083:8083"]
     depends_on: { game-0: { condition: service_started }, game-1: { condition: service_started }, game-2: { condition: service_started }, game-3: { condition: service_started }, game-4: { condition: service_started } }
   api-server:

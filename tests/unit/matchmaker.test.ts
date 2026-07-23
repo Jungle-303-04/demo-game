@@ -29,6 +29,23 @@ test("matchmaker excludes rooms that report their real player capacity is full",
   assert.equal(selected.roomId, "room-1");
 });
 
+test("matchmaker admits a requested room only when that exact room is available", async () => {
+  const first = { ...recordForOrdinal(0), status: "running" as const, players: 1, joinLocked: false };
+  const requested = { ...recordForOrdinal(1), status: "running" as const, players: 10, joinLocked: false };
+  const directory: RoomDirectory = { list: async () => [first, requested] };
+  const selected = await new Matchmaker(directory).findGame("session-room", "Grace", "room-1");
+  assert.equal(selected.roomId, "room-1");
+});
+
+test("matchmaker rejects a requested room that is locked", async () => {
+  const requested = { ...recordForOrdinal(1), status: "running" as const, players: 10, joinLocked: true };
+  const directory: RoomDirectory = { list: async () => [requested] };
+  await assert.rejects(
+    new Matchmaker(directory).findGame("session-room", "Grace", "room-1"),
+    /find_game_rejected:room_unavailable/,
+  );
+});
+
 test("matchmaker reserves its rate-limit slot before concurrent directory probes", async () => {
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
