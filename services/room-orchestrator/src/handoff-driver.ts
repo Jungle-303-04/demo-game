@@ -445,6 +445,7 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
       if (candidateStatus.reason && ![
         "candidate_not_caught_up",
         "candidate_snapshot_missing",
+        "candidate_checksum_mismatch",
       ].includes(candidateStatus.reason)) {
         throw new Error(candidateStatus.reason);
       }

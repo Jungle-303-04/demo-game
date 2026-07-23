@@ -309,16 +309,29 @@ const reconcileObservedWorkloads = async (): Promise<RoomRegistryRecord[] | unde
   const activeWorkloads = workloads.filter((workload) => workload.replicas === 1);
   const gatewayEndpoint = (process.env.SESSION_GATEWAY_INTERNAL_URL ?? "").replace(/\/$/, "");
   if (gatewayEndpoint && controlToken) {
-    for (const workload of activeWorkloads) {
-      if (registeredGatewayRooms.has(workload.roomId)) continue;
-      const response = await fetch(`${gatewayEndpoint}/internal/rooms/${encodeURIComponent(workload.roomId)}/register`, withControlToken({
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ endpoint: workload.endpoint, epoch: 1 }),
+    const unregistered = activeWorkloads.filter((workload) => !registeredGatewayRooms.has(workload.roomId));
+    if (unregistered.length > 0) {
+      const routesResponse = await fetch(`${gatewayEndpoint}/internal/rooms`, withControlToken({
+        method: "GET",
         signal: AbortSignal.timeout(5_000),
       }, controlToken));
-      if (!response.ok) throw new Error(`gateway_room_registration_failed:${workload.roomId}:${response.status}`);
-      registeredGatewayRooms.add(workload.roomId);
+      if (!routesResponse.ok) throw new Error(`gateway_rooms_read_failed:${routesResponse.status}`);
+      const gateway = await routesResponse.json() as { rooms?: Array<{ roomId?: string }> };
+      const existingRoomIds = new Set((gateway.rooms ?? []).map((route) => route.roomId).filter(Boolean));
+      for (const workload of unregistered) {
+        if (existingRoomIds.has(workload.roomId)) {
+          registeredGatewayRooms.add(workload.roomId);
+          continue;
+        }
+        const response = await fetch(`${gatewayEndpoint}/internal/rooms/${encodeURIComponent(workload.roomId)}/register`, withControlToken({
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ endpoint: workload.endpoint, epoch: 1 }),
+          signal: AbortSignal.timeout(5_000),
+        }, controlToken));
+        if (!response.ok) throw new Error(`gateway_room_registration_failed:${workload.roomId}:${response.status}`);
+        registeredGatewayRooms.add(workload.roomId);
+      }
     }
   }
   const activeIds = new Set(activeWorkloads.map((workload) => workload.roomId));
