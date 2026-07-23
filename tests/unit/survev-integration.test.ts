@@ -35,6 +35,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   );
   const failureScenarios = await readFile(join(process.cwd(), "services/ops-console/src/failure-scenarios.ts"), "utf8");
   const botRunner = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRunner.ts"), "utf8");
+  const botStarterWeapon = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botStarterWeapon.ts"), "utf8");
   const botRouting = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRouting.ts"), "utf8");
   const sessionGatewaySource = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/sessionGateway.ts"), "utf8");
   const gameProcessManager = await readFile(join(process.cwd(), "upstream-survev/server/src/game/gameProcessManager.ts"), "utf8");
@@ -229,6 +230,9 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(botRunner, /const NORMAL_BOT_INPUT_INTERVAL_MS = 100/);
   assert.match(botRunner, /const BOT_AWARENESS_INTERVAL_MS = 750/);
   assert.match(botRunner, /const BOT_DECISION_INTERVAL_MS = 650/);
+  assert.match(botStarterWeapon, /DEFAULT_OPSIA_BOT_STARTER_GUNS/);
+  assert.match(botStarterWeapon, /selectOpsiaBotStarterGun/);
+  assert.match(compose, /OPSIA_BOT_STARTER_GUNS: "\$\{OPSIA_BOT_STARTER_GUNS:-mp5,mac10,vector,hk416,ak47,scar,mosin,m870,m9\}"/);
   assert.match(botRunner, /OPSIA_BOT_TACTICAL_BRAIN === "true"/);
   assert.match(compose, /OPSIA_BOT_TACTICAL_BRAIN: "\$\{OPSIA_BOT_TACTICAL_BRAIN:-false\}"/);
   assert.match(botRunner, /OPSIA_BOT_LIGHTWEIGHT_COMBAT !== "false"/);

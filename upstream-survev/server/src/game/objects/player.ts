@@ -42,6 +42,10 @@ import { QuestManager } from "../questManager.ts";
 import { NoOpSocket } from "../socket.ts";
 import { WeaponManager } from "../weaponManager.ts";
 import { restorePlayer } from "../../opsia/runtime.ts";
+import {
+    opsiaBotStarterGunCandidates,
+    selectOpsiaBotStarterGun,
+} from "../../opsia/botStarterWeapon.ts";
 import type { Building } from "./building.ts";
 import { BaseGameObject, type DamageParams, type GameObject } from "./gameObject.ts";
 import type { Loot } from "./loot.ts";
@@ -1460,7 +1464,12 @@ export class Player extends BaseGameObject {
 
     equipOpsiaBotStarterWeapon(): void {
         if (process.env.OPSIA_ROOM !== "true" || !this.bot) return;
-        const starterWeapon = process.env.OPSIA_BOT_STARTER_GUN?.trim() || "hk416";
+        const configuredStarterGuns = process.env.OPSIA_BOT_STARTER_GUNS
+            ?? process.env.OPSIA_BOT_STARTER_GUN;
+        const starterCandidates = opsiaBotStarterGunCandidates(configuredStarterGuns)
+            .filter((candidate) => GameObjectDefs.typeToDefSafe(candidate)?.type === "gun");
+        const starterWeapon = selectOpsiaBotStarterGun(starterCandidates);
+        if (!starterWeapon) return;
         const starterDefinition = GameObjectDefs.typeToDefSafe(starterWeapon);
         if (starterDefinition?.type !== "gun") return;
         const ammoStats = this.weaponManager.getAmmoStats(starterDefinition);

@@ -143,6 +143,7 @@ export interface BotBrainState {
     grenadeCooldownUntil: number;
     grenadeTargetSessionId?: string;
     targetBreakableId?: number;
+    breakableAttackUntil: number;
     breakableLockedUntil: number;
     navigationGoalKey?: string;
     navigationWaypoints: Array<{ x: number; y: number }>;
@@ -810,6 +811,7 @@ export const createBotBrainState = (random: () => number = Math.random): BotBrai
     grenadePhase: "idle",
     grenadeCookUntil: 0,
     grenadeCooldownUntil: 0,
+    breakableAttackUntil: 0,
     breakableLockedUntil: 0,
     navigationWaypoints: [],
     navigationWaypointIndex: 0,
@@ -834,15 +836,15 @@ const movementPhaseDuration = (
     random: () => number,
 ): number => {
     if (mode === "combat") {
-        return phase === "travel" ? 650 + random() * 600 : 450 + random() * 500;
+        return phase === "travel" ? 900 + random() * 1_900 : 250 + random() * 750;
     }
     if (mode === "zone" || mode === "edge") {
-        return phase === "travel" ? 1_300 + random() * 800 : 250 + random() * 300;
+        return phase === "travel" ? 2_000 + random() * 2_500 : 150 + random() * 450;
     }
     if (mode === "hunt") {
-        return phase === "travel" ? 2_100 + random() * 1_200 : 180 + random() * 260;
+        return phase === "travel" ? 1_800 + random() * 2_200 : 200 + random() * 700;
     }
-    return phase === "travel" ? 1_000 + random() * 900 : 650 + random() * 700;
+    return phase === "travel" ? 2_000 + random() * 3_000 : 350 + random() * 1_050;
 };
 
 const rhythmicMovement = (
@@ -851,14 +853,14 @@ const rhythmicMovement = (
     now: number,
     random: () => number,
 ): boolean => {
-    // Keep normal bots in motion like active players. Tactical stop policies
-    // still pause for healing, reviving, pickups, grenade cooking, and downed
-    // states, but roaming and combat no longer inject artificial idle periods.
-    if (state.movementPhase !== "travel" || now >= state.movementPhaseUntil) {
+    if (state.movementPhaseUntil <= 0) {
         state.movementPhase = "travel";
         state.movementPhaseUntil = now + movementPhaseDuration(mode, "travel", random);
+    } else if (now >= state.movementPhaseUntil) {
+        state.movementPhase = state.movementPhase === "travel" ? "rest" : "travel";
+        state.movementPhaseUntil = now + movementPhaseDuration(mode, state.movementPhase, random);
     }
-    return true;
+    return state.movementPhase === "travel";
 };
 
 const finishIntent = (
@@ -1053,6 +1055,31 @@ const canShootTarget = (self: BotBrainPlayer, target: Target | undefined): boole
     return false;
 };
 
+const controlledGunFire = (
+    state: BotBrainState,
+    weapon: string,
+    now: number,
+    random: () => number,
+): boolean => {
+    const definition = GameObjectDefs.typeToDefSafe(weapon);
+    if (definition?.type !== "gun") return false;
+    if (now < state.burstUntil) return true;
+    if (now < state.nextBurstAt) return false;
+    const burstDuration = definition.fireMode === "burst"
+        ? 260 + random() * 540
+        : definition.fireMode === "single"
+        ? 120 + random() * 220
+        : 300 + random() * 500;
+    const pauseDuration = definition.fireMode === "single"
+        ? 450 + random() * 1_550
+        : definition.fireMode === "burst"
+        ? 350 + random() * 1_250
+        : 400 + random() * 1_600;
+    state.burstUntil = now + burstDuration;
+    state.nextBurstAt = state.burstUntil + pauseDuration;
+    return true;
+};
+
 const controlledFire = (
     state: BotBrainState,
     self: BotBrainPlayer,
@@ -1064,21 +1091,7 @@ const controlledFire = (
     if (!clearShot || !canShootTarget(self, target)) return false;
     const definition = GameObjectDefs.typeToDefSafe(self.weapon);
     if (!target || definition?.type !== "gun") return true;
-    const profile = weaponProfile(self.weapon);
-    const needsBurstDiscipline = target.distance > profile.preferredRange * 0.82;
-    if (!needsBurstDiscipline || definition.fireMode === "single") {
-        state.burstUntil = 0;
-        state.nextBurstAt = 0;
-        return true;
-    }
-    if (now < state.burstUntil) return true;
-    if (now < state.nextBurstAt) return false;
-    const burstDuration = definition.fireMode === "burst"
-        ? 380 + random() * 220
-        : 260 + random() * 320;
-    state.burstUntil = now + burstDuration;
-    state.nextBurstAt = state.burstUntil + 160 + random() * 300;
-    return true;
+    return controlledGunFire(state, self.weapon, now, random);
 };
 
 const selectTarget = (
@@ -1640,6 +1653,7 @@ export const decideLightweightCombatIntent = (
         const canShoot = activeGunHasAmmo
             && profile.kind === "gun"
             && enemy.distance <= profile.effectiveRange;
+        const shoot = canShoot && controlledFire(state, self, enemy, true, now, random);
         return finishIntent(
             state,
             {
@@ -1647,13 +1661,13 @@ export const decideLightweightCombatIntent = (
                 moveAngle,
                 aimAngle: targetAngle,
                 aimDistance: Math.min(64, Math.max(18, enemy.distance)),
-                shoot: canShoot,
+                shoot,
                 interact: false,
                 reload: shouldReload,
                 equip: shouldEquip,
-                forceShootStart: canShoot,
+                forceShootStart: shoot,
             },
-            "force",
+            "rhythm",
             now,
             random,
         );
@@ -1703,7 +1717,7 @@ export const decideLightweightCombatIntent = (
     let crateDistance = Number.POSITIVE_INFINITY;
     for (const obstacle of snapshot.obstacles ?? []) {
         if (!obstacle.destructible || !obstacle.containsLoot || obstacle.health <= 0) continue;
-        if (now < state.breakableLockedUntil && obstacle.id === state.targetBreakableId) continue;
+        if (now < state.breakableLockedUntil) continue;
         const candidateDistance = distance(self.x, self.y, obstacle.x, obstacle.y);
         if (candidateDistance < crateDistance) {
             crate = obstacle;
@@ -1711,39 +1725,49 @@ export const decideLightweightCombatIntent = (
         }
     }
     if (crate && crateDistance <= 190) {
-        state.targetBreakableId = crate.id;
-        state.targetLootId = undefined;
-        const crateAngle = angleTo(self.x, self.y, crate.x, crate.y);
-        const perimeterDistance = Math.max(0, crateDistance - Math.max(crate.width, crate.height) / 2);
-        const activeGunSlot = gunSlots.find((slot) => slot.slot === self.activeSlot);
-        const shouldReloadGun = activeKind === "gun"
-            && self.ammo <= 0
-            && (activeGunSlot?.reserve ?? 0) > 0;
-        const canShootCrate = activeKind === "gun" && self.ammo > 0 && perimeterDistance <= 58;
-        const shouldEquipMelee = activeKind !== "melee"
-            && !shouldReloadGun
-            && !(activeKind === "gun" && self.ammo > 0)
-            && perimeterDistance <= 20;
-        // Fists reach 1.35 units forward with a 0.9 radius collider. Using the
-        // broader player-combat distance made bots stop 3-5 units from crates.
-        const canStrike = activeKind === "melee" && perimeterDistance <= 2.25;
-        return finishIntent(
-            state,
-            {
-                mode: "break",
-                moveAngle: crateAngle,
-                aimAngle: crateAngle,
-                aimDistance: Math.min(64, Math.max(8, crateDistance)),
-                shoot: canShootCrate || canStrike,
-                interact: false,
-                reload: shouldReloadGun,
-                equip: shouldEquipMelee ? "melee" : undefined,
-                forceShootStart: canShootCrate || canStrike,
-            },
-            canShootCrate || canStrike || shouldEquipMelee || shouldReloadGun ? "stop" : "force",
-            now,
-            random,
-        );
+        if (state.targetBreakableId !== crate.id || state.breakableAttackUntil <= 0) {
+            state.targetBreakableId = crate.id;
+            state.breakableAttackUntil = now + 2_000 + random() * 2_000;
+        }
+        if (now < state.breakableAttackUntil) {
+            state.targetLootId = undefined;
+            const crateAngle = angleTo(self.x, self.y, crate.x, crate.y);
+            const perimeterDistance = Math.max(0, crateDistance - Math.max(crate.width, crate.height) / 2);
+            const activeGunSlot = gunSlots.find((slot) => slot.slot === self.activeSlot);
+            const shouldReloadGun = activeKind === "gun"
+                && self.ammo <= 0
+                && (activeGunSlot?.reserve ?? 0) > 0;
+            const canShootCrate = activeKind === "gun" && self.ammo > 0 && perimeterDistance <= 58;
+            const shootCrate = canShootCrate && controlledGunFire(state, self.weapon, now, random);
+            const shouldEquipMelee = activeKind !== "melee"
+                && !shouldReloadGun
+                && !(activeKind === "gun" && self.ammo > 0)
+                && perimeterDistance <= 20;
+            // Fists reach 1.35 units forward with a 0.9 radius collider. Using the
+            // broader player-combat distance made bots stop 3-5 units from crates.
+            const canStrike = activeKind === "melee" && perimeterDistance <= 2.25;
+            return finishIntent(
+                state,
+                {
+                    mode: "break",
+                    moveAngle: crateAngle,
+                    aimAngle: crateAngle,
+                    aimDistance: Math.min(64, Math.max(8, crateDistance)),
+                    shoot: shootCrate || canStrike,
+                    interact: false,
+                    reload: shouldReloadGun,
+                    equip: shouldEquipMelee ? "melee" : undefined,
+                    forceShootStart: shootCrate || canStrike,
+                },
+                canShootCrate || canStrike || shouldEquipMelee || shouldReloadGun ? "stop" : "force",
+                now,
+                random,
+            );
+        }
+        // Give up temporarily when a crate survives several seconds. This
+        // prevents a wall or furniture collider from pinning a bot forever.
+        state.breakableAttackUntil = 0;
+        state.breakableLockedUntil = now + 4_000 + random() * 4_000;
     }
 
     if (lootTarget && lootDistance <= 520 && !lootTemporarilyBlocked) {
@@ -1768,7 +1792,7 @@ export const decideLightweightCombatIntent = (
     }
 
     state.targetLootId = undefined;
-    state.targetBreakableId = undefined;
+    if (now >= state.breakableLockedUntil) state.targetBreakableId = undefined;
     if (now >= state.decisionUntil) {
         state.wanderAngle = random() * Math.PI * 2;
         state.decisionUntil = now + 700 + random() * 650;
@@ -1784,7 +1808,7 @@ export const decideLightweightCombatIntent = (
             interact: false,
             reload: activeKind === "gun" && self.ammo <= 0,
         },
-        "force",
+        "rhythm",
         now,
         random,
     );

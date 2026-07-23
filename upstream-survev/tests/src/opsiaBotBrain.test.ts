@@ -43,11 +43,21 @@ const snapshot = (overrides: Partial<BotBrainSnapshot> = {}): BotBrainSnapshot =
 describe("Opsia protocol bot brain", () => {
     test("lightweight combat shoots a nearby enemy without tactical pathfinding", () => {
         const state = createBotBrainState(() => 0.5);
-        const intent = decideLightweightCombatIntent(snapshot(), "self", state, 1_000, () => 0.5);
+        const combat = snapshot({ capturedAt: 1_000 });
+        const intent = decideLightweightCombatIntent(combat, "self", state, 1_000, () => 0.5);
+        const paused = decideLightweightCombatIntent(
+            { ...combat, capturedAt: 1_500 },
+            "self",
+            state,
+            1_500,
+            () => 0.5,
+        );
 
         expect(intent.mode).toBe("combat");
         expect(intent.shoot).toBe(true);
         expect(intent.aimAngle).toBeCloseTo(0);
+        expect(paused.shoot).toBe(false);
+        expect(state.nextBurstAt).toBeGreaterThan(1_500);
     });
 
     test("lightweight combat seeks a gun when unarmed", () => {
@@ -129,18 +139,57 @@ describe("Opsia protocol bot brain", () => {
 
     test("lightweight combat keeps a loaded gun equipped and shoots a crate", () => {
         const state = createBotBrainState(() => 0.5);
+        const crateSnapshot = snapshot({
+            players: [player({
+                activeSlot: 0,
+                primaryWeapon: "hk416",
+                primaryAmmo: 30,
+                primaryReserve: 90,
+                weapon: "hk416",
+                ammo: 30,
+            })],
+            obstacles: [{
+                id: 24,
+                type: "crate",
+                kind: "obstacle",
+                x: 550,
+                y: 500,
+                width: 4,
+                height: 4,
+                destructible: true,
+                containsLoot: true,
+                health: 100,
+            }],
+        });
         const intent = decideLightweightCombatIntent(
-            snapshot({
-                players: [player({
-                    activeSlot: 0,
-                    primaryWeapon: "hk416",
-                    primaryAmmo: 30,
-                    primaryReserve: 90,
-                    weapon: "hk416",
-                    ammo: 30,
-                })],
-                obstacles: [{
-                    id: 24,
+            crateSnapshot,
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+        const paused = decideLightweightCombatIntent(
+            { ...crateSnapshot, capturedAt: 1_600 },
+            "self",
+            state,
+            1_600,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("break");
+        expect(intent.shoot).toBe(true);
+        expect(intent.equip).toBeUndefined();
+        expect(intent.moving).toBe(false);
+        expect(paused.shoot).toBe(false);
+    });
+
+    test("lightweight combat abandons an unreachable crate and resumes moving", () => {
+        const state = createBotBrainState(() => 0.5);
+        const crateSnapshot = snapshot({
+            players: [player({ weapon: "hk416", ammo: 30 })],
+            obstacles: [
+                {
+                    id: 25,
                     type: "crate",
                     kind: "obstacle",
                     x: 550,
@@ -150,18 +199,49 @@ describe("Opsia protocol bot brain", () => {
                     destructible: true,
                     containsLoot: true,
                     health: 100,
-                }],
-            }),
+                },
+                {
+                    id: 26,
+                    type: "crate",
+                    kind: "obstacle",
+                    x: 570,
+                    y: 500,
+                    width: 4,
+                    height: 4,
+                    destructible: true,
+                    containsLoot: true,
+                    health: 100,
+                },
+            ],
+        });
+        const attacking = decideLightweightCombatIntent(
+            crateSnapshot,
             "self",
             state,
             1_000,
             () => 0.5,
         );
+        const movingOn = decideLightweightCombatIntent(
+            { ...crateSnapshot, capturedAt: 4_100 },
+            "self",
+            state,
+            4_100,
+            () => 0.5,
+        );
+        const stillMovingOn = decideLightweightCombatIntent(
+            { ...crateSnapshot, capturedAt: 5_000 },
+            "self",
+            state,
+            5_000,
+            () => 0.5,
+        );
 
-        expect(intent.mode).toBe("break");
-        expect(intent.shoot).toBe(true);
-        expect(intent.equip).toBeUndefined();
-        expect(intent.moving).toBe(false);
+        expect(attacking.mode).toBe("break");
+        expect(movingOn.mode).toBe("wander");
+        expect(movingOn.moving).toBe(true);
+        expect(stillMovingOn.mode).toBe("wander");
+        expect(stillMovingOn.moving).toBe(true);
+        expect(state.breakableLockedUntil).toBe(10_100);
     });
 
     test("lightweight combat escapes an indoor doorway after one stalled snapshot", () => {
@@ -459,7 +539,7 @@ describe("Opsia protocol bot brain", () => {
         expect(Math.max(...angles) - Math.min(...angles)).toBeGreaterThan(0.2);
     });
 
-    test("keeps travelling through combat decisions without dropping aim", () => {
+    test("alternates randomized combat travel and rest without dropping aim", () => {
         const state = createBotBrainState(() => 0.5);
         state.movementPhase = "travel";
         state.movementPhaseUntil = 1_200;
@@ -467,29 +547,28 @@ describe("Opsia protocol bot brain", () => {
 
         const travelling = decideBotIntent(stateSnapshot, "self", state, 1_100, () => 0.5);
         const resting = decideBotIntent(stateSnapshot, "self", state, 1_300, () => 0.5);
-        const stillResting = decideBotIntent(stateSnapshot, "self", state, 1_999, () => 0.5);
-        const travellingAgain = decideBotIntent(stateSnapshot, "self", state, 2_001, () => 0.5);
+        const travellingAgain = decideBotIntent(stateSnapshot, "self", state, 1_999, () => 0.5);
+        const stillTravelling = decideBotIntent(stateSnapshot, "self", state, 2_001, () => 0.5);
 
         expect(travelling.moving).toBe(true);
-        expect(resting.moving).toBe(true);
-        expect(stillResting.moving).toBe(true);
+        expect(resting.moving).toBe(false);
         expect(travellingAgain.moving).toBe(true);
-        for (const intent of [travelling, resting, stillResting, travellingAgain]) {
+        expect(stillTravelling.moving).toBe(true);
+        for (const intent of [travelling, resting, travellingAgain, stillTravelling]) {
             expect(intent.mode).toBe("combat");
             expect(intent.aimAngle).toBeCloseTo(0);
-            expect(intent.shoot).toBe(true);
         }
     });
 
-    test("immediately resumes travel from a legacy rest state", () => {
+    test("honors a randomized movement rest until its deadline", () => {
         const state = createBotBrainState(() => 0.5);
         state.movementPhase = "rest";
         state.movementPhaseUntil = 5_000;
 
         const intent = decideBotIntent(snapshot(), "self", state, 1_100, () => 0.5);
 
-        expect(intent.moving).toBe(true);
-        expect(state.movementPhase).toBe("travel");
+        expect(intent.moving).toBe(false);
+        expect(state.movementPhase).toBe("rest");
         expect(state.stuckSamples).toBe(0);
     });
 
@@ -1035,11 +1114,11 @@ describe("Opsia protocol bot brain", () => {
             ],
         });
         const first = decideBotIntent(combat, "self", state, 1_000, () => 0.5);
-        const pause = decideBotIntent({ ...combat, capturedAt: 1_499 }, "self", state, 1_500, () => 0.5);
+        const pause = decideBotIntent({ ...combat, capturedAt: 1_599 }, "self", state, 1_600, () => 0.5);
 
         expect(first.shoot).toBe(true);
         expect(pause.shoot).toBe(false);
-        expect(state.nextBurstAt).toBeGreaterThan(1_500);
+        expect(state.nextBurstAt).toBeGreaterThan(1_600);
     });
 
     test("equips, cooks, releases, and recovers from a real frag grenade", () => {
