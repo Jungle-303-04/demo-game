@@ -1129,6 +1129,47 @@ app.post("/internal/rooms/:room/register", (response, request) => {
     });
 });
 
+app.post("/internal/rooms/:room/reconcile", (response, request) => {
+    let aborted = false;
+    response.onAborted(() => { aborted = true; });
+    const roomId = request.getParameter(0) ?? "";
+    if (!authorized(request.getHeader("authorization"))) return replyJson(response, 401, { error: "unauthorized" });
+    void readBody(response, 64 * 1024).then(async (payload) => {
+        const body = payload.byteLength
+            ? JSON.parse(Buffer.from(payload).toString("utf8")) as Record<string, unknown>
+            : {};
+        const endpoint = String(body.endpoint ?? "").trim();
+        const epoch = Number(body.epoch);
+        const current = registry.get(roomId);
+        if (!current) throw new Error("gateway_room_not_found");
+        if (current.endpoint !== endpoint) throw new Error("gateway_room_reconciliation_endpoint_conflict");
+        if (roomPreparations.has(roomId) || roomVerifications.has(roomId)
+            || [...sessions.values()].some((session) => session.data.roomId === roomId)) {
+            throw new Error("gateway_room_reconciliation_in_use");
+        }
+        const authorityResponse = await fetch(`${endpoint}/ops/handoff/status`, {
+            headers: controlToken ? { authorization: `Bearer ${controlToken}` } : {},
+            signal: AbortSignal.timeout(5_000),
+        });
+        const authority = await authorityResponse.json() as {
+            role?: string;
+            roomId?: string;
+            ready?: boolean;
+            roomEpoch?: number;
+        };
+        if (!authorityResponse.ok || authority.role !== "active" || authority.ready !== true
+            || authority.roomId !== roomId || authority.roomEpoch !== epoch) {
+            throw new Error("gateway_room_reconciliation_authority_mismatch");
+        }
+        const route = registry.reconcileStableRoute({ roomId, endpoint, epoch });
+        if (!aborted) replyJson(response, 200, { route, status: "reconciled" });
+    }).catch((error) => {
+        if (!aborted) replyJson(response, 409, {
+            error: error instanceof Error ? error.message : "gateway_room_reconciliation_failed",
+        });
+    });
+});
+
 app.get("/internal/rooms/:room/operations/:operation", (response, request) => {
     if (!authorized(request.getHeader("authorization"))) return replyJson(response, 401, { error: "unauthorized" });
     const roomId = request.getParameter(0) ?? "";

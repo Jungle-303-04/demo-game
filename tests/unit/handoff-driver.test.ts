@@ -29,11 +29,12 @@ const harness = (options: {
   requestTimeoutMs?: number;
   postVerificationTimeoutMs?: number;
   releaseChecksumConflictOnce?: boolean;
+  gatewayInitialEpoch?: number;
 } = {}): Harness => {
   const calls: Harness["calls"] = [];
   let rolloutPatched = false;
   let gatewayEndpoint = "http://10.0.0.11:8001";
-  let gatewayEpoch = 41;
+  let gatewayEpoch = options.gatewayInitialEpoch ?? 41;
   let gatewayOperationId = "op-rollout";
   let gatewayReadCount = 0;
   let oldActive = true;
@@ -269,6 +270,11 @@ const harness = (options: {
         }] : [],
       });
     }
+    if (url === "http://gateway:8083/internal/rooms/room-1/reconcile") {
+      gatewayEndpoint = String(body?.endpoint);
+      gatewayEpoch = Number(body?.epoch);
+      return json({ route: { roomId: "room-1", endpoint: gatewayEndpoint, epoch: gatewayEpoch } });
+    }
     if (url === "http://gateway:8083/internal/rooms/room-1/cutover") {
       gatewayEndpoint = String(body?.endpoint);
       gatewayEpoch = Number(body?.nextEpoch);
@@ -337,6 +343,19 @@ test("rolling handoff creates an auto-role Candidate addressed by Pod IP", async
     ((podRolePatches[1]?.body?.metadata as Record<string, unknown>).labels as Record<string, string>),
     { "opsia.dev/game-role": "candidate" },
   );
+});
+
+test("a restarted Gateway reconciles its stale epoch before scheduling a Candidate", async () => {
+  const { driver, calls } = harness({ gatewayInitialEpoch: 1 });
+  const target = await driver.resolveTarget({ roomId: "room-1", revision: "new" });
+
+  assert.equal(target.currentEpoch, 41);
+  const reconciliation = calls.find((call) =>
+    call.url === "http://gateway:8083/internal/rooms/room-1/reconcile");
+  assert.deepEqual(reconciliation?.body, {
+    endpoint: "http://10.0.0.11:8001",
+    epoch: 41,
+  });
 });
 
 test("candidate schedule timeout restores the original Deployment template", async () => {

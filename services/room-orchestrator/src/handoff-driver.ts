@@ -237,6 +237,7 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
     // A rollout target is derived from the room id rather than a caller-owned
     // Kubernetes name, so the API cannot patch an arbitrary Deployment.
     if (!kubernetesNamePattern.test(expectedDeployment)) throw new Error("invalid_game_deployment");
+    await this.reconcileGatewayEpoch(input.roomId, Number(epoch));
     return {
       roomId: input.roomId,
       activeEndpoint: selected.endpoint,
@@ -1008,6 +1009,19 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
 
   private gatewayRooms(): Promise<GatewayRoomStatus> {
     return this.controlJson<GatewayRoomStatus>(`${this.gatewayEndpoint}/internal/rooms`, { method: "GET" });
+  }
+
+  private async reconcileGatewayEpoch(roomId: string, activeEpoch: number): Promise<void> {
+    const gateway = await this.gatewayRooms();
+    const route = gateway.rooms?.find((entry) => entry.roomId === roomId);
+    if (!route?.endpoint || !Number.isSafeInteger(route.epoch)) {
+      throw new Error("gateway_room_route_unavailable");
+    }
+    if (route.epoch === activeEpoch) return;
+    await this.controlJson(`${this.gatewayEndpoint}/internal/rooms/${roomId}/reconcile`, {
+      method: "POST",
+      body: { endpoint: route.endpoint, epoch: activeEpoch },
+    });
   }
 
   private async gatewayCutover(

@@ -206,6 +206,26 @@ export class FencedGatewayRoomRegistry {
         return { ...normalized };
     }
 
+    /**
+     * Reconciles the epoch of an unchanged stable Service after a Gateway
+     * process restart. The caller must first prove that the Service currently
+     * resolves to the active room authority and that no Gateway session is
+     * attached to the stale route.
+     */
+    reconcileStableRoute(route: GatewayRoomRoute): GatewayRoomRoute {
+        const normalized = normalizeRoute(route);
+        const current = this.routes.get(normalized.roomId);
+        if (!current) throw new Error("gateway_room_not_found");
+        if (current.endpoint !== normalized.endpoint) {
+            throw new Error("gateway_room_reconciliation_endpoint_conflict");
+        }
+        if (normalized.epoch < current.epoch) {
+            throw new Error("gateway_room_reconciliation_epoch_regression");
+        }
+        this.routes.set(normalized.roomId, normalized);
+        return { ...normalized };
+    }
+
     compareAndSwap(
         roomId: string,
         expectedEpoch: number,

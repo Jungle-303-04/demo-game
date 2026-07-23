@@ -113,6 +113,27 @@ describe("session gateway handoff protocol", () => {
         })).toThrowError("gateway_room_registration_conflict");
     });
 
+    test("reconciles only a newer epoch for the unchanged stable room Service", () => {
+        const registry = new FencedGatewayRoomRegistry([
+            { roomId: "room-1", endpoint: "http://game-room-1:8001", epoch: 1 },
+        ]);
+        expect(registry.reconcileStableRoute({
+            roomId: "room-1",
+            endpoint: "http://game-room-1:8001",
+            epoch: 7,
+        })).toMatchObject({ roomId: "room-1", epoch: 7 });
+        expect(() => registry.reconcileStableRoute({
+            roomId: "room-1",
+            endpoint: "http://other-service:8001",
+            epoch: 8,
+        })).toThrowError("gateway_room_reconciliation_endpoint_conflict");
+        expect(() => registry.reconcileStableRoute({
+            roomId: "room-1",
+            endpoint: "http://game-room-1:8001",
+            epoch: 6,
+        })).toThrowError("gateway_room_reconciliation_epoch_regression");
+    });
+
     test("rewrites only the one-time match token when resuming a stable session", () => {
         const original = new net.JoinMsg();
         original.protocol = 1021;
