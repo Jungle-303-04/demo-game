@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Game, JoinTokenData } from "../../server/src/game/game.ts";
 import type { Player } from "../../server/src/game/objects/player.ts";
 import { RoomStateJournal } from "../../server/src/opsia/journal.ts";
+import { checksumValue } from "../../server/src/opsia/snapshot.ts";
 import {
     lastProcessedGatewayInput,
     type LooseGameSnapshot,
@@ -122,6 +123,23 @@ describe("Opsia recovery ownership", () => {
         player.pos.x = 99;
         expect(restorePlayer(game, player, join)).toBe(false);
         expect(player.pos.x).toBe(99);
+    });
+
+    it("restores a legacy canonical-checksum snapshot during a rolling upgrade", () => {
+        process.env.ROOM_ID = "room-legacy-checksum";
+        const source = fakeGame();
+        const snapshot = serializeGame(source);
+        snapshot.stateChecksum = checksumValue({
+            schemaVersion: 4,
+            roomId: snapshot.roomId,
+            mapName: snapshot.mapName,
+            mapSeed: snapshot.mapSeed,
+            world: snapshot.world,
+            players: snapshot.players,
+        });
+        delete snapshot.stateChecksumAlgorithm;
+
+        expect(restoreGame(fakeGame(), snapshot)).toBe(snapshot.stateChecksum);
     });
 
     it("rejects a player projection captured from a different map", () => {

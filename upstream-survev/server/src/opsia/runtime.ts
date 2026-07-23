@@ -22,6 +22,7 @@ import { RoomStateJournal } from "./journal.ts";
 import {
     BoundedSnapshotWriter,
     checksumOrderedValue,
+    checksumValue,
     type GameSnapshotEnvelope,
     parseSnapshotEnvelope,
     readSnapshotRuntimeConfig,
@@ -379,6 +380,7 @@ export interface LooseGameSnapshot {
     savedAt: number;
     mapSeed: number;
     stateChecksum: string;
+    stateChecksumAlgorithm?: "canonical-json-sha256" | "ordered-json-sha256";
     handoffSafe: true;
     unsupportedState: [];
     world: LooseWorldState;
@@ -1093,8 +1095,9 @@ const materialStateChecksum = (
     mapSeed: number,
     world: LooseWorldState,
     players: LoosePlayerState[],
+    algorithm: NonNullable<LooseGameSnapshot["stateChecksumAlgorithm"]> = "ordered-json-sha256",
 ): string =>
-    checksumOrderedValue({
+    (algorithm === "ordered-json-sha256" ? checksumOrderedValue : checksumValue)({
         schemaVersion: 4,
         roomId,
         mapName,
@@ -1143,6 +1146,7 @@ export const serializeGame = (game: Game): LooseGameSnapshot => {
         savedAt: Date.now(),
         mapSeed,
         stateChecksum: materialStateChecksum(roomId, game.mapName, mapSeed, world, players),
+        stateChecksumAlgorithm: "ordered-json-sha256",
         handoffSafe: true,
         unsupportedState: [],
         world,
@@ -1577,6 +1581,8 @@ export const restoreGame = (game: Game, snapshot: LooseGameSnapshot): string => 
         || !Array.isArray(snapshot.unsupportedState)
         || snapshot.unsupportedState.length !== 0
         || !/^[a-f\d]{64}$/.test(snapshot.stateChecksum)
+        || (snapshot.stateChecksumAlgorithm !== undefined
+            && !["canonical-json-sha256", "ordered-json-sha256"].includes(snapshot.stateChecksumAlgorithm))
         || !snapshot.world
     ) {
         throw new Error("invalid_opsia_snapshot");
@@ -1608,6 +1614,7 @@ export const restoreGame = (game: Game, snapshot: LooseGameSnapshot): string => 
         snapshot.mapSeed,
         materializedWorld,
         snapshot.players,
+        snapshot.stateChecksumAlgorithm ?? "canonical-json-sha256",
     );
     if (materializedChecksum !== snapshot.stateChecksum) {
         const mismatch = firstMaterialMismatch(snapshot.world, materializedWorld);
@@ -2141,6 +2148,7 @@ export class OpsiaSnapshotStore {
                     snapshot.mapSeed,
                     snapshot.world,
                     snapshot.players,
+                    snapshot.stateChecksumAlgorithm ?? "canonical-json-sha256",
                 );
             }
             this.snapshotTick = Math.max(this.snapshotTick + 1, normalizedServerTick);
