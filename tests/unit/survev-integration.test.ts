@@ -219,6 +219,10 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(gameServer, /verifyGatewayConnection/);
   assert.match(gameServer, /consumeGatewayNonce/);
   assert.match(gameServer, /session_gateway_required/);
+  assert.match(gameServer, /this\.snapshotFailures\.labels\(snapshot\.roomId\)\.inc\(failureDelta\)/);
+  assert.match(gameServer, /this\.snapshotTimeouts\.labels\(snapshot\.roomId\)\.inc\(timeoutDelta\)/);
+  assert.doesNotMatch(gameServer, /if \(failureDelta\) this\.snapshotFailures/);
+  assert.doesNotMatch(gameServer, /if \(timeoutDelta\) this\.snapshotTimeouts/);
   assert.match(gameServer, /gateway_join_frame_invalid/);
   assert.match(gameServer, /gateway_join_required/);
   assert.match(serverClient, /session_already_connected/);

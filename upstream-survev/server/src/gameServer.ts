@@ -231,8 +231,8 @@ class OpsiaMetrics {
         const failureDelta = Math.max(0, writer.failuresTotal - previous.failuresTotal);
         const timeoutDelta = Math.max(0, writer.timeoutsTotal - previous.timeoutsTotal);
         if (coalescedDelta) this.snapshotCoalesced.labels(snapshot.roomId).inc(coalescedDelta);
-        if (failureDelta) this.snapshotFailures.labels(snapshot.roomId).inc(failureDelta);
-        if (timeoutDelta) this.snapshotTimeouts.labels(snapshot.roomId).inc(timeoutDelta);
+        this.snapshotFailures.labels(snapshot.roomId).inc(failureDelta);
+        this.snapshotTimeouts.labels(snapshot.roomId).inc(timeoutDelta);
         this.snapshotCounterBaselines.set(snapshot.roomId, {
             coalescedTotal: writer.coalescedTotal,
             failuresTotal: writer.failuresTotal,
