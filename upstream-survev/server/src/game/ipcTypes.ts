@@ -21,6 +21,7 @@ export interface GameData {
 export interface OpsiaSnapshotData {
     roomId: string;
     capturedAt: number;
+    mapStaticIncluded: boolean;
     map: {
         name: string;
         seed: number;

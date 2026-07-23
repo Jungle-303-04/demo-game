@@ -468,6 +468,7 @@ export interface OpsiaMapSnapshot {
 export interface OpsiaSnapshot {
     roomId: string;
     capturedAt: number;
+    mapStaticIncluded: boolean;
     map: OpsiaMapSnapshot;
     zone: { x: number; y: number; radius: number; nextX: number; nextY: number; nextRadius: number };
     players: OpsiaPlayerSnapshot[];
@@ -530,6 +531,7 @@ const processedInputSequences = new WeakMap<Game, Map<string, number>>();
 const inputWindows = new WeakMap<Game, Map<string, number[]>>();
 const inputCounters = new WeakMap<Game, { accepted: number; rejected: number }>();
 const mapSnapshots = new WeakMap<Game, OpsiaMapSnapshot>();
+const publishedMapSeeds = new WeakMap<Game, number>();
 const memorySnapshots = new Map<string, string>();
 const memoryLeases = new Map<string, { owner: string; expiresAt: number }>();
 let previousCpuUsage = process.cpuUsage();
@@ -1878,10 +1880,16 @@ export const makeOpsSnapshot = (
     previousCpuUsage = process.cpuUsage();
     previousCpuAt = now;
     const cpuPercent = Math.max(0, Math.min(100, ((cpuDelta.user + cpuDelta.system) / 1000 / elapsedMs) * 100));
+    const fullMap = makeOpsMapSnapshot(game);
+    const mapStaticIncluded = publishedMapSeeds.get(game) !== fullMap.seed;
+    if (mapStaticIncluded) publishedMapSeeds.set(game, fullMap.seed);
     return {
         roomId: opsiaRoomId(),
         capturedAt: Date.now(),
-        map: makeOpsMapSnapshot(game),
+        mapStaticIncluded,
+        map: mapStaticIncluded
+            ? fullMap
+            : { ...fullMap, rivers: [], places: [], objects: [], navigation: [] },
         zone: {
             x: game.gas.currentPos.x,
             y: game.gas.currentPos.y,

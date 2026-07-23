@@ -23,6 +23,18 @@ if (process.env.NODE_ENV === "production") {
     procFile = "src/game/gameProcess.ts";
 }
 
+export const retainOpsiaStaticMap = (
+    previous: OpsiaSnapshotData | undefined,
+    incoming: OpsiaSnapshotData,
+): OpsiaSnapshotData => {
+    if (incoming.mapStaticIncluded || previous?.map.seed !== incoming.map.seed) return incoming;
+    return {
+        ...incoming,
+        mapStaticIncluded: true,
+        map: previous.map,
+    };
+};
+
 /**
  * Preserves the raw Survev browser protocol for direct sockets while requiring
  * an authoritative child-process epoch for every Gateway-bound output.
@@ -205,6 +217,7 @@ class GameProcess {
                 }
                 break;
             case ProcessMsgType.OpsiaSnapshot:
+                msg.snapshot = retainOpsiaStaticMap(this.opsiaSnapshot, msg.snapshot);
                 this.opsiaSnapshot = msg.snapshot;
                 if (process.env.OPSIA_ROOM === "true") this.refreshOpsiaCapacity();
                 this.manager.emitOpsiaSnapshot(msg.snapshot);

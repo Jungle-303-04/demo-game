@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type { Game, JoinTokenData } from "../../server/src/game/game.ts";
+import { retainOpsiaStaticMap } from "../../server/src/game/gameProcessManager.ts";
 import type { Player } from "../../server/src/game/objects/player.ts";
 import { RoomStateJournal } from "../../server/src/opsia/journal.ts";
 import { checksumValue } from "../../server/src/opsia/snapshot.ts";
@@ -61,12 +62,20 @@ describe("Opsia recovery ownership", () => {
         )!;
 
         const before = makeOpsSnapshot(game, 0, 20);
+        expect(before.mapStaticIncluded).toBe(true);
         expect(before.obstacles.some((obstacle) => obstacle.id === breakable.__id)).toBe(true);
         expect(before.obstacles.some((obstacle) => obstacle.containsLoot)).toBe(true);
 
         breakable.dead = true;
         const after = makeOpsSnapshot(game, 0, 20);
+        expect(after.mapStaticIncluded).toBe(false);
+        expect(after.map.objects).toEqual([]);
+        expect(after.map.navigation).toEqual([]);
         expect(after.obstacles.some((obstacle) => obstacle.id === breakable.__id)).toBe(false);
+        const merged = retainOpsiaStaticMap(before, after);
+        expect(merged.mapStaticIncluded).toBe(true);
+        expect(merged.map.objects).toEqual(before.map.objects);
+        expect(merged.obstacles.some((obstacle) => obstacle.id === breakable.__id)).toBe(false);
     });
 
     it("persists the exact stable-session input ACK in the snapshot contract", () => {
