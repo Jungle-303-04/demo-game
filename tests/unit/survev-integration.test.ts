@@ -213,6 +213,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.doesNotMatch(opsConsoleServer, /OPS_ADMIN_TOKEN|REQUIRE_ADMIN_TOKEN|admin_token_required|timingSafeEqual/);
   assert.match(failureScenarios, /new AdmissionLoadController/);
   assert.match(failureScenarios, /process\.env\.ADMISSION_GATEWAY_URL/);
+  assert.match(failureScenarios, /admission-overload\/recover/);
   assert.doesNotMatch(failureScenarios, /api-server\/scale/);
   assert.match(failureScenarioUi, /function AdmissionCapacityPanel/);
   assert.match(failureScenarioUi, /failureRatePercent/);
@@ -501,6 +502,9 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.match(baseKustomization, /- api-server\.yaml/);
   assert.match(apiServer, /name: api-server[\s\S]*replicas: 1/);
   assert.match(apiServer, /MAX_FIND_GAME_PER_SECOND, value: "25"/);
+  assert.match(apiServer, /ADMISSION_FAILURE_STATE_FILE/);
+  assert.match(apiServer, /publishNotReadyAddresses: true/);
+  assert.match(apiServer, /emptyDir: \{\}/);
   assert.match(apiServer, /kind: Service[\s\S]*name: login-gateway-api/);
   assert.match(rbac, /resources: \["deployments", "replicasets"\][\s\S]*verbs: \["get", "list", "patch"\]/);
   assert.match(monitoring, /sum\(rate\(find_game_requests_total\{outcome!="accepted"\}\[1m\]\)\)/);

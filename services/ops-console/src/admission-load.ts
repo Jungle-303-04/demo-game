@@ -248,18 +248,17 @@ export class AdmissionLoadController implements AdmissionLoadService {
   }
 
   private evaluateRamp(job: AdmissionJob): void {
-    if (job.phase !== "ramping" || this.now() < job.nextRampAtMs) return;
+    if ((job.phase !== "ramping" && job.phase !== "saturated") || this.now() < job.nextRampAtMs) return;
     const status = this.publicStatus(job);
     if (status.failureRatePercent >= this.failureThreshold * 100) {
       job.phase = "saturated";
       job.incidentTriggered = true;
       job.saturationReason = "failure_threshold";
-      return;
     }
     if (job.targetRps >= job.maximumRps) {
-      // Reaching the configured ceiling is not the incident. Keep applying
-      // maximum pressure until the live admission path actually starts
-      // failing or an operator explicitly recovers the scenario.
+      // Keep maximum pressure applied until the operator explicitly recovers
+      // the scenario. Crossing the first failure threshold is an incident
+      // signal, not a reason to stop increasing pressure.
       job.nextRampAtMs = this.now() + this.rampIntervalMs;
       return;
     }

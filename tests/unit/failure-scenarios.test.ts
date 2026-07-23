@@ -345,8 +345,9 @@ test("admission saturation exposes the failure metric and verifies service recov
     if (url === "http://api-server/ops/failure/admission-overload/arm") {
       return json({ armed: true, thresholdRequests: 35, windowMs: 1_000 });
     }
-    if (url === "http://api-server/ops/failure/admission-overload/disarm") {
-      return json({ armed: false, thresholdRequests: 35, windowMs: 1_000 });
+    if (url === "http://api-server/ops/failure/admission-overload/recover") {
+      admissionHealthy = true;
+      return json({ status: "ok", admissionOverload: { armed: false } });
     }
     if (url === "http://api-server/healthz") {
       return admissionHealthy ? json({ status: "ok" }) : json({ error: "unavailable" }, 503);
@@ -396,7 +397,6 @@ test("admission saturation exposes the failure metric and verifies service recov
   assert.equal(failedServer.rooms[0]?.active?.evidence?.phase, "server_failed");
   assert.equal(failedServer.rooms[0]?.active?.evidence?.existingSessionsExpected, "unaffected");
 
-  admissionHealthy = true;
   const stoppedResult = await controller.recover(record, room, "admission-storm");
   assert.equal(stoppedResult.status, "completed");
   assert.equal(stoppedResult.evidence?.failureRatePercent, 27.5);
@@ -408,7 +408,7 @@ test("admission saturation exposes the failure metric and verifies service recov
   assert.equal(stopped, true);
   assert.equal(controller.admissionFailureRates().has("room-0"), false);
   assert.ok(calls.includes("POST http://api-server/ops/failure/admission-overload/arm"));
-  assert.ok(calls.includes("POST http://api-server/ops/failure/admission-overload/disarm"));
+  assert.ok(calls.includes("POST http://api-server/ops/failure/admission-overload/recover"));
   assert.ok(calls.every((call) => !call.includes("/scale")));
 });
 

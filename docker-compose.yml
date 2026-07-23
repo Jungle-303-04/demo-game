@@ -117,6 +117,7 @@ services:
       ADMISSION_OVERLOAD_THRESHOLD_REQUESTS: "${ADMISSION_OVERLOAD_THRESHOLD_REQUESTS:-35}"
       ADMISSION_OVERLOAD_WINDOW_MS: "${ADMISSION_OVERLOAD_WINDOW_MS:-1000}"
       ADMISSION_OVERLOAD_EXIT_CODE: "${ADMISSION_OVERLOAD_EXIT_CODE:-70}"
+      ADMISSION_FAILURE_STATE_FILE: /tmp/opsia-admission-overload.failed
       PUBLIC_ROOM_URLS: "room-0=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-0/,room-1=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-1/,room-2=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-2/,room-3=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-3/,room-4=http://${PUBLIC_GAME_HOST:-localhost}:8083/play/room-4/"
     ports: ["8081:8081"]
     depends_on: { room-orchestrator: { condition: service_started } }

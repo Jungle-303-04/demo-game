@@ -22,17 +22,21 @@ spec:
             - { name: ADMISSION_OVERLOAD_THRESHOLD_REQUESTS, value: "35" }
             - { name: ADMISSION_OVERLOAD_WINDOW_MS, value: "1000" }
             - { name: ADMISSION_OVERLOAD_EXIT_CODE, value: "70" }
+            - { name: ADMISSION_FAILURE_STATE_FILE, value: "/var/run/opsia/admission-overload.failed" }
             - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
             - name: OPS_CONTROL_TOKEN
               valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
           ports: [{ name: http, containerPort: 8081 }]
           readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 2 }
+          volumeMounts: [{ name: admission-failure-state, mountPath: /var/run/opsia }]
           resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 256Mi } }
+      volumes: [{ name: admission-failure-state, emptyDir: {} }]
 ---
 apiVersion: v1
 kind: Service
 metadata: { name: login-gateway-api, namespace: sandbox, labels: { app: api-server } }
 spec:
+  publishNotReadyAddresses: true
   selector: { app: api-server }
   ports: [{ name: http, port: 8081, targetPort: http }]
 ---
