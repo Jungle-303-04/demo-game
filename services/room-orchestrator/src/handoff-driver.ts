@@ -927,6 +927,7 @@ export class KubernetesRoomHandoffDriver implements RoomHandoffDriver {
                   env: [
                     { name: "OPSIA_ROLE", value: "auto" },
                     { name: "OPSIA_GAME_BUILD_REVISION", value: input.revision },
+                    { name: "REDIS_URL", value: "redis://cache:6379/0" },
                   ],
                 }],
               },

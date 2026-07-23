@@ -328,6 +328,8 @@ test("rolling handoff creates an auto-role Candidate addressed by Pod IP", async
   }).containers[0];
   assert.equal(container?.image, "repo/game-server:new");
   assert.ok(container?.env.some((entry) => entry.name === "OPSIA_ROLE" && entry.value === "auto"));
+  assert.ok(container?.env.some((entry) =>
+    entry.name === "REDIS_URL" && entry.value === "redis://cache:6379/0"));
   assert.ok(calls.some((call) => call.url === "http://10.0.0.12:8001/ops/handoff/status"));
   const podRolePatches = calls.filter((call) => call.method === "PATCH" && call.url.includes("/pods/"));
   assert.equal(podRolePatches.length, 2);
