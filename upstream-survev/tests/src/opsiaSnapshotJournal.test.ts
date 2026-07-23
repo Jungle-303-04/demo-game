@@ -84,6 +84,8 @@ describe("snapshot envelope", () => {
         ).toThrow("opsia_snapshot_interval_below_minimum");
         expect(readSnapshotRuntimeConfig({ OPSIA_SNAPSHOT_INTERVAL_MS: "500" } as NodeJS.ProcessEnv).intervalMs)
             .toBe(500);
+        expect(readSnapshotRuntimeConfig({} as NodeJS.ProcessEnv).maxPayloadBytes)
+            .toBe(8 * 1024 * 1024);
     });
 });
 
