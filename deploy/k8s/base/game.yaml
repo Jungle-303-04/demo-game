@@ -380,6 +380,6 @@ metadata:
   name: live-game-rooms
   namespace: sandbox
 spec:
-  minAvailable: 4
+  minAvailable: 5
   selector:
     matchLabels: { app: game-server, opsia.dev/fleet: live }
