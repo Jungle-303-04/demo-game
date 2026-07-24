@@ -129,6 +129,60 @@ test("matchmaker metrics count every rejected admission and expose capacity", as
   assert.doesNotMatch(metrics, /root_category=/);
 });
 
+test("matchmaker emits generic structured admission facts for Loki correlation", async () => {
+  const directory: RoomDirectory = {
+    list: async () => [{ ...recordForOrdinal(0), status: "running", players: 0 }],
+  };
+  const entries: Array<Record<string, unknown>> = [];
+  const matchmaker = new Matchmaker(
+    directory,
+    1,
+    () => Date.parse("2026-07-24T00:00:00.000Z"),
+    (entry) => entries.push(entry),
+  );
+
+  await matchmaker.findGame("session-a", "Ada");
+  await assert.rejects(
+    matchmaker.findGame("session-b", "Grace"),
+    /find_game_rejected:rate_limited/,
+  );
+
+  assert.equal(entries.length, 2);
+  assert.deepEqual(entries[0], {
+    level: "info",
+    event: "find_game_admitted",
+    timestamp: "2026-07-24T00:00:00.000Z",
+    namespace: "sandbox",
+    resource_kind: "Deployment",
+    resource_name: "api-server",
+    service: "api-server",
+    sli: "admission",
+    symptom: "admission_failure",
+    outcome: "accepted",
+    room_id: "room-0",
+    capacity_per_second: 1,
+    duration_ms: entries[0]!.duration_ms,
+  });
+  assert.deepEqual(entries[1], {
+    level: "warn",
+    event: "find_game_rejected",
+    timestamp: "2026-07-24T00:00:00.000Z",
+    namespace: "sandbox",
+    resource_kind: "Deployment",
+    resource_name: "api-server",
+    service: "api-server",
+    sli: "admission",
+    symptom: "admission_failure",
+    outcome: "rejected",
+    reason: "rate_limited",
+    capacity_per_second: 1,
+    duration_ms: entries[1]!.duration_ms,
+  });
+  assert.equal(typeof entries[0]!.duration_ms, "number");
+  assert.equal(typeof entries[1]!.duration_ms, "number");
+  assert.doesNotMatch(JSON.stringify(entries), /replicas|root_cause|cost|deployment.*caused/i);
+});
+
 test("scraping clears a stale failure gauge after the one second admission window", async () => {
   let now = 1_000;
   const directory: RoomDirectory = {

@@ -4,12 +4,43 @@ import type { RoomRegistryRecord } from "../../room-orchestrator/src/registry.js
 type StructuredLog = {
   level: "info" | "warn" | "error";
   event: string;
-  sessionId?: string;
-  nickname?: string;
+  timestamp: string;
+  namespace: string;
+  resource_kind: string;
+  resource_name: string;
+  service: string;
+  sli: string;
+  symptom: string;
+  outcome: "accepted" | "rejected";
+  reason?: string;
+  room_id?: string;
+  capacity_per_second: number;
+  duration_ms: number;
   detail?: Record<string, unknown>;
 };
 
 export interface RoomDirectory { list(): Promise<RoomRegistryRecord[]>; }
+
+type TelemetryIdentity = {
+  namespace: string;
+  resourceKind: string;
+  resourceName: string;
+  service: string;
+  sli: string;
+  symptom: string;
+};
+
+const telemetryIdentity = (): TelemetryIdentity => {
+  const resourceName = process.env.OPSIA_WORKLOAD_NAME ?? "api-server";
+  return {
+    namespace: process.env.POD_NAMESPACE ?? "sandbox",
+    resourceKind: process.env.OPSIA_RESOURCE_KIND ?? "Deployment",
+    resourceName,
+    service: process.env.OPSIA_SERVICE_NAME ?? resourceName,
+    sli: process.env.OPSIA_SLI_NAME ?? "admission",
+    symptom: process.env.OPSIA_SLI_SYMPTOM ?? "admission_failure",
+  };
+};
 
 export class HttpRoomDirectory implements RoomDirectory {
   constructor(private readonly orchestratorUrl: string, private readonly controlToken = "") {}
@@ -48,6 +79,7 @@ export class Matchmaker {
   readonly registry = new Registry();
   private readonly attempts: Array<{ at: number; failed: boolean }> = [];
   private readonly admittedAt: number[] = [];
+  private readonly identity = telemetryIdentity();
   private readonly requests = new Counter({ name: "find_game_requests_total", help: "Matchmaking requests", labelNames: ["outcome"] as const, registers: [this.registry] });
   private readonly failureRatio = new Gauge({ name: "find_game_fail_ratio", help: "Recent matchmaking failure ratio", registers: [this.registry] });
   private readonly opsiaFailureRatio = new Gauge({
@@ -90,12 +122,12 @@ export class Matchmaker {
   constructor(private readonly directory: RoomDirectory, private readonly maxPerSecond = 25, private readonly now: () => number = Date.now, private readonly log: (entry: StructuredLog) => void = () => undefined) {
     this.capacity.set(maxPerSecond);
     this.opsiaFailureRatio.labels(
-      process.env.POD_NAMESPACE ?? "sandbox",
-      "Deployment",
-      process.env.OPSIA_WORKLOAD_NAME ?? "api-server",
-      "api-server",
-      "admission",
-      "admission_failure",
+      this.identity.namespace,
+      this.identity.resourceKind,
+      this.identity.resourceName,
+      this.identity.service,
+      this.identity.sli,
+      this.identity.symptom,
     ).set(0);
   }
 
@@ -151,15 +183,23 @@ export class Matchmaker {
       }
       this.requests.labels("accepted").inc();
       this.opsiaRequests.labels(
-        process.env.POD_NAMESPACE ?? "sandbox",
-        "Deployment",
-        process.env.OPSIA_WORKLOAD_NAME ?? "api-server",
-        "api-server",
-        "admission",
-        "admission_failure",
+        this.identity.namespace,
+        this.identity.resourceKind,
+        this.identity.resourceName,
+        this.identity.service,
+        this.identity.sli,
+        this.identity.symptom,
         "accepted",
       ).inc();
-      this.duration.labels("accepted").observe((performance.now() - startedAt) / 1_000);
+      const durationMs = performance.now() - startedAt;
+      this.duration.labels("accepted").observe(durationMs / 1_000);
+      this.logAdmission({
+        level: "info",
+        event: "find_game_admitted",
+        outcome: "accepted",
+        roomId: room.roomId,
+        durationMs,
+      });
       return room;
     } finally {
       this.inflight.dec();
@@ -182,16 +222,23 @@ export class Matchmaker {
     this.updateFailureRatio();
     this.requests.labels(reason).inc();
     this.opsiaRequests.labels(
-      process.env.POD_NAMESPACE ?? "sandbox",
-      "Deployment",
-      process.env.OPSIA_WORKLOAD_NAME ?? "api-server",
-      "api-server",
-      "admission",
-      "admission_failure",
+      this.identity.namespace,
+      this.identity.resourceKind,
+      this.identity.resourceName,
+      this.identity.service,
+      this.identity.sli,
+      this.identity.symptom,
       reason,
     ).inc();
-    this.duration.labels(reason).observe((performance.now() - startedAt) / 1_000);
-    this.log({ level: "warn", event: "find_game_rejected", sessionId, nickname, detail: { reason } });
+    const durationMs = performance.now() - startedAt;
+    this.duration.labels(reason).observe(durationMs / 1_000);
+    this.logAdmission({
+      level: "warn",
+      event: "find_game_rejected",
+      outcome: "rejected",
+      reason,
+      durationMs,
+    });
     throw new Error(`find_game_rejected:${reason}`);
   }
 
@@ -200,13 +247,39 @@ export class Matchmaker {
     const ratio = total ? this.attempts.filter((entry) => entry.failed).length / total : 0;
     this.failureRatio.set(ratio);
     this.opsiaFailureRatio.labels(
-      process.env.POD_NAMESPACE ?? "sandbox",
-      "Deployment",
-      process.env.OPSIA_WORKLOAD_NAME ?? "api-server",
-      "api-server",
-      "admission",
-      "admission_failure",
+      this.identity.namespace,
+      this.identity.resourceKind,
+      this.identity.resourceName,
+      this.identity.service,
+      this.identity.sli,
+      this.identity.symptom,
     ).set(ratio);
+  }
+
+  private logAdmission(input: {
+    level: StructuredLog["level"];
+    event: string;
+    outcome: StructuredLog["outcome"];
+    reason?: string;
+    roomId?: string;
+    durationMs: number;
+  }): void {
+    this.log({
+      level: input.level,
+      event: input.event,
+      timestamp: new Date(this.now()).toISOString(),
+      namespace: this.identity.namespace,
+      resource_kind: this.identity.resourceKind,
+      resource_name: this.identity.resourceName,
+      service: this.identity.service,
+      sli: this.identity.sli,
+      symptom: this.identity.symptom,
+      outcome: input.outcome,
+      ...(input.reason ? { reason: input.reason } : {}),
+      ...(input.roomId ? { room_id: input.roomId } : {}),
+      capacity_per_second: this.maxPerSecond,
+      duration_ms: Number(input.durationMs.toFixed(3)),
+    });
   }
 
   private trimAttempts(now: number): void {
