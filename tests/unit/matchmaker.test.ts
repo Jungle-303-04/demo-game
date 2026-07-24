@@ -114,19 +114,25 @@ test("matchmaker metrics count every rejected admission and expose capacity", as
   assert.match(metrics, /find_game_inflight 0/);
   assert.match(metrics, /find_game_capacity_per_second 1/);
   assert.match(metrics, /find_game_request_duration_seconds_count\{outcome="rate_limited"\} 1/);
+  assert.doesNotMatch(metrics, /opsia_sli_failure_ratio/);
   assert.match(
     metrics,
-    /opsia_sli_failure_ratio\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure"\} 0\.5/,
+    /opsia_sli_requests_total\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure",outcome="success"\} 1/,
   );
   assert.match(
     metrics,
-    /opsia_sli_requests_total\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure",outcome="accepted"\} 1/,
-  );
-  assert.match(
-    metrics,
-    /opsia_sli_requests_total\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure",outcome="rate_limited"\} 1/,
+    /opsia_sli_requests_total\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure",outcome="failure"\} 1/,
   );
   assert.doesNotMatch(metrics, /root_category=/);
+});
+
+test("standard SLI initializes both outcome series before traffic starts", async () => {
+  const matchmaker = new Matchmaker({ list: async () => [] });
+  const metrics = await matchmaker.registry.metrics();
+
+  assert.match(metrics, /opsia_sli_requests_total\{[^}]+outcome="success"\} 0/);
+  assert.match(metrics, /opsia_sli_requests_total\{[^}]+outcome="failure"\} 0/);
+  assert.doesNotMatch(metrics, /opsia_sli_failure_ratio/);
 });
 
 test("matchmaker emits generic structured admission facts for Loki correlation", async () => {
@@ -183,7 +189,7 @@ test("matchmaker emits generic structured admission facts for Loki correlation",
   assert.doesNotMatch(JSON.stringify(entries), /replicas|root_cause|cost|deployment.*caused/i);
 });
 
-test("scraping clears a stale failure gauge after the one second admission window", async () => {
+test("scraping clears only the legacy window gauge while standard counters stay monotonic", async () => {
   let now = 1_000;
   const directory: RoomDirectory = {
     list: async () => [{ ...recordForOrdinal(0), status: "running", players: 0 }],
@@ -200,7 +206,9 @@ test("scraping clears a stale failure gauge after the one second admission windo
   const metrics = await matchmaker.registry.metrics();
 
   assert.match(metrics, /find_game_fail_ratio 0(?:\n|$)/);
-  assert.match(metrics, /opsia_sli_failure_ratio\{[^}]+\} 0(?:\n|$)/);
+  assert.doesNotMatch(metrics, /opsia_sli_failure_ratio/);
+  assert.match(metrics, /opsia_sli_requests_total\{[^}]+outcome="success"\} 1/);
+  assert.match(metrics, /opsia_sli_requests_total\{[^}]+outcome="failure"\} 1/);
 });
 
 test("HTTP room directory authenticates and bounds its orchestrator request", async (context) => {
