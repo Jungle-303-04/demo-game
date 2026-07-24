@@ -626,5 +626,9 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   }
   assert.match(publishImagesWorkflow, /ghcr\.io\/jungle-303-04\/demo-game\/\$\{\{ matrix\.image \}\}:\$\{\{ inputs\.tag \}\}/);
   assert.doesNotMatch(gameServerOverlay, /v20260720-/);
-  assert.equal((gameServerOverlay.match(/newTag: stable/g) ?? []).length, 6);
+  const pinnedImageTags = [...gameServerOverlay.matchAll(/newTag: ([0-9a-f]{40})/g)]
+    .map((match) => match[1]);
+  assert.equal(pinnedImageTags.length, 6);
+  assert.equal(new Set(pinnedImageTags).size, 1);
+  assert.doesNotMatch(gameServerOverlay, /newTag: stable/);
 });
