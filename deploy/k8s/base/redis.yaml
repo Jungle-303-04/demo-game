@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   annotations:
-    kyro.io/editor-verification: "2026-07-24"
+    kyro.io/editor-verification: "2026-07-24-confirmed"
   name: redis
   namespace: sandbox
 spec:
