@@ -12,6 +12,7 @@ metadata:
     opsia.dev/room-profile: faction
     opsia.dev/rollout-role: active-candidate
     opsia.dev/game-role: active
+    opsia.dev/recovery-continuity: protected
 spec:
   replicas: 1
   minReadySeconds: 15
@@ -79,6 +80,7 @@ metadata:
     opsia.dev/room-profile: desert
     opsia.dev/rollout-role: active-candidate
     opsia.dev/game-role: active
+    opsia.dev/recovery-continuity: protected
 spec:
   replicas: 1
   minReadySeconds: 15
@@ -145,6 +147,7 @@ metadata:
     opsia.dev/room-profile: snow
     opsia.dev/rollout-role: active-candidate
     opsia.dev/game-role: active
+    opsia.dev/recovery-continuity: protected
 spec:
   replicas: 1
   minReadySeconds: 15
@@ -211,6 +214,7 @@ metadata:
     opsia.dev/room-profile: main
     opsia.dev/rollout-role: active-candidate
     opsia.dev/game-role: active
+    opsia.dev/recovery-continuity: protected
 spec:
   replicas: 1
   minReadySeconds: 15
@@ -277,6 +281,7 @@ metadata:
     opsia.dev/room-profile: woods
     opsia.dev/rollout-role: active-candidate
     opsia.dev/game-role: active
+    opsia.dev/recovery-continuity: protected
 spec:
   replicas: 1
   minReadySeconds: 15

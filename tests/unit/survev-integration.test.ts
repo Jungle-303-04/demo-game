@@ -499,6 +499,10 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.equal((liveDeployments.match(/maxSurge: 1/g) ?? []).length, 5);
   assert.equal((liveDeployments.match(/maxUnavailable: 0/g) ?? []).length, 5);
   assert.equal((liveDeployments.match(/opsia\.dev\/rollout-role: active-candidate/g) ?? []).length, 10);
+  assert.equal(
+    (liveDeployments.match(/opsia\.dev\/recovery-continuity: protected/g) ?? []).length,
+    5,
+  );
   // Each stable room ID labels both its Deployment and the Pod template, so
   // reconciliation can follow a replacement Pod without using its name.
   assert.equal((liveDeployments.match(/game\.opsia\.dev\/room-id: room-[0-4]/g) ?? []).length, 10);
