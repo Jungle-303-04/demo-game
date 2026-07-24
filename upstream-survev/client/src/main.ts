@@ -394,10 +394,11 @@ export class Application {
             const domCanvas = document.querySelector<HTMLCanvasElement>("#cvs")!;
 
             // Multi-view tiles cover the same combined CSS area as the single
-            // view and run at 30fps, so full CSS-pixel resolution is affordable.
+            // view. Four-up runs at 45fps with full CSS-pixel resolution while
+            // the lighter two-up view can spend a little resolution on 60fps.
             // The previous 0.28 scale made a PIP quadrant roughly 78x59 pixels.
             const rendererRes = this.opsiaWatch
-                ? this.opsiaWallFps > 0 && this.opsiaWallFps <= 30 ? 1 : 0.8
+                ? this.opsiaWallFps > 0 && this.opsiaWallFps <= 45 ? 1 : 0.9
                 : window.devicePixelRatio > 1 ? 2 : 1;
 
             if (device.os == "ios") {

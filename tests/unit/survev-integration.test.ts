@@ -66,7 +66,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(audioManager, /this\.forcedMute = this\.permanentlyMuted \|\| mute/);
   assert.match(audioManager, /if \(this\.permanentlyMuted\) \{\s*this\.preloadedSounds = true;\s*return;/s);
   assert.match(client, /const rendererRes = this\.opsiaWatch\s*\? this\.opsiaWallFps > 0/s);
-  assert.match(client, /this\.opsiaWallFps <= 30 \? 1 : 0\.8/);
+  assert.match(client, /this\.opsiaWallFps <= 45 \? 1 : 0\.9/);
   assert.match(client, /__opsiaWallLightFrames/);
   assert.match(client, /opsiaControllerOrigin/);
   assert.match(client, /data\.type !== "opsia-spectator-control"/);
@@ -129,7 +129,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /visiblePlayers\.map\(\(player, index\) =>/);
   assert.match(adminUi, /loadDelayMs=\{index \* 200\}/);
   assert.doesNotMatch(adminUi, /targetFps=\{60\}/);
-  assert.match(adminUi, /wallFps=\{30\}/);
+  assert.match(adminUi, /wallFps=\{layout === 4 \? 45 : 60\}/);
   assert.match(adminUi, /loadAttempt >= 3/);
   assert.match(adminUi, /}, 6_000\)/);
   assert.match(adminUi, /className="spectator-loading"/);

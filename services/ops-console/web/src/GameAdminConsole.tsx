@@ -1069,7 +1069,7 @@ function SpectatorWall({
           loadDelayMs={index * 200}
           player={player}
           room={room}
-          wallFps={30}
+          wallFps={layout === 4 ? 45 : 60}
         />
       ))}
     </div>
