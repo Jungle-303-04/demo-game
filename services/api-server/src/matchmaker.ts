@@ -4,12 +4,43 @@ import type { RoomRegistryRecord } from "../../room-orchestrator/src/registry.js
 type StructuredLog = {
   level: "info" | "warn" | "error";
   event: string;
-  sessionId?: string;
-  nickname?: string;
+  timestamp: string;
+  namespace: string;
+  resource_kind: string;
+  resource_name: string;
+  service: string;
+  sli: string;
+  symptom: string;
+  outcome: "accepted" | "rejected";
+  reason?: string;
+  room_id?: string;
+  capacity_per_second: number;
+  duration_ms: number;
   detail?: Record<string, unknown>;
 };
 
 export interface RoomDirectory { list(): Promise<RoomRegistryRecord[]>; }
+
+type TelemetryIdentity = {
+  namespace: string;
+  resourceKind: string;
+  resourceName: string;
+  service: string;
+  sli: string;
+  symptom: string;
+};
+
+const telemetryIdentity = (): TelemetryIdentity => {
+  const resourceName = process.env.OPSIA_WORKLOAD_NAME ?? "api-server";
+  return {
+    namespace: process.env.POD_NAMESPACE ?? "sandbox",
+    resourceKind: process.env.OPSIA_RESOURCE_KIND ?? "Deployment",
+    resourceName,
+    service: process.env.OPSIA_SERVICE_NAME ?? resourceName,
+    sli: process.env.OPSIA_SLI_NAME ?? "admission",
+    symptom: process.env.OPSIA_SLI_SYMPTOM ?? "admission_failure",
+  };
+};
 
 export class HttpRoomDirectory implements RoomDirectory {
   constructor(private readonly orchestratorUrl: string, private readonly controlToken = "") {}
@@ -48,8 +79,36 @@ export class Matchmaker {
   readonly registry = new Registry();
   private readonly attempts: Array<{ at: number; failed: boolean }> = [];
   private readonly admittedAt: number[] = [];
+  private readonly identity = telemetryIdentity();
   private readonly requests = new Counter({ name: "find_game_requests_total", help: "Matchmaking requests", labelNames: ["outcome"] as const, registers: [this.registry] });
   private readonly failureRatio = new Gauge({ name: "find_game_fail_ratio", help: "Recent matchmaking failure ratio", registers: [this.registry] });
+  private readonly opsiaFailureRatio = new Gauge({
+    name: "opsia_sli_failure_ratio",
+    help: "Standardized workload SLI failure ratio for Opsia/Kyro correlation",
+    labelNames: [
+      "namespace",
+      "resource_kind",
+      "resource_name",
+      "service",
+      "sli",
+      "symptom",
+    ] as const,
+    registers: [this.registry],
+  });
+  private readonly opsiaRequests = new Counter({
+    name: "opsia_sli_requests_total",
+    help: "Standardized workload SLI request count for Opsia/Kyro verification",
+    labelNames: [
+      "namespace",
+      "resource_kind",
+      "resource_name",
+      "service",
+      "sli",
+      "symptom",
+      "outcome",
+    ] as const,
+    registers: [this.registry],
+  });
   private readonly inflight = new Gauge({ name: "find_game_inflight", help: "Matchmaking requests currently executing", registers: [this.registry] });
   private readonly capacity = new Gauge({ name: "find_game_capacity_per_second", help: "Configured admission capacity for this API process", registers: [this.registry] });
   private readonly duration = new Histogram({
@@ -62,6 +121,14 @@ export class Matchmaker {
 
   constructor(private readonly directory: RoomDirectory, private readonly maxPerSecond = 25, private readonly now: () => number = Date.now, private readonly log: (entry: StructuredLog) => void = () => undefined) {
     this.capacity.set(maxPerSecond);
+    this.opsiaFailureRatio.labels(
+      this.identity.namespace,
+      this.identity.resourceKind,
+      this.identity.resourceName,
+      this.identity.service,
+      this.identity.sli,
+      this.identity.symptom,
+    ).set(0);
   }
 
   async findGame(sessionId: string, nickname: string, requestedRoomId?: string): Promise<RoomRegistryRecord> {
@@ -70,7 +137,7 @@ export class Matchmaker {
     const now = this.now();
     const attempt = { at: now, failed: false };
     this.attempts.push(attempt);
-    this.attempts.splice(0, this.attempts.length, ...this.attempts.filter((entry) => entry.at > now - 1_000));
+    this.trimAttempts(now);
     this.updateFailureRatio();
     try {
       const recentAdmitted = this.admittedAt.filter((at) => at > now - 1_000);
@@ -115,11 +182,33 @@ export class Matchmaker {
         );
       }
       this.requests.labels("accepted").inc();
-      this.duration.labels("accepted").observe((performance.now() - startedAt) / 1_000);
+      this.opsiaRequests.labels(
+        this.identity.namespace,
+        this.identity.resourceKind,
+        this.identity.resourceName,
+        this.identity.service,
+        this.identity.sli,
+        this.identity.symptom,
+        "accepted",
+      ).inc();
+      const durationMs = performance.now() - startedAt;
+      this.duration.labels("accepted").observe(durationMs / 1_000);
+      this.logAdmission({
+        level: "info",
+        event: "find_game_admitted",
+        outcome: "accepted",
+        roomId: room.roomId,
+        durationMs,
+      });
       return room;
     } finally {
       this.inflight.dec();
     }
+  }
+
+  refreshMetrics(): void {
+    this.trimAttempts(this.now());
+    this.updateFailureRatio();
   }
 
   private reject(
@@ -132,13 +221,72 @@ export class Matchmaker {
     attempt.failed = true;
     this.updateFailureRatio();
     this.requests.labels(reason).inc();
-    this.duration.labels(reason).observe((performance.now() - startedAt) / 1_000);
-    this.log({ level: "warn", event: "find_game_rejected", sessionId, nickname, detail: { reason } });
+    this.opsiaRequests.labels(
+      this.identity.namespace,
+      this.identity.resourceKind,
+      this.identity.resourceName,
+      this.identity.service,
+      this.identity.sli,
+      this.identity.symptom,
+      reason,
+    ).inc();
+    const durationMs = performance.now() - startedAt;
+    this.duration.labels(reason).observe(durationMs / 1_000);
+    this.logAdmission({
+      level: "warn",
+      event: "find_game_rejected",
+      outcome: "rejected",
+      reason,
+      durationMs,
+    });
     throw new Error(`find_game_rejected:${reason}`);
   }
 
   private updateFailureRatio(): void {
     const total = this.attempts.length;
-    this.failureRatio.set(total ? this.attempts.filter((entry) => entry.failed).length / total : 0);
+    const ratio = total ? this.attempts.filter((entry) => entry.failed).length / total : 0;
+    this.failureRatio.set(ratio);
+    this.opsiaFailureRatio.labels(
+      this.identity.namespace,
+      this.identity.resourceKind,
+      this.identity.resourceName,
+      this.identity.service,
+      this.identity.sli,
+      this.identity.symptom,
+    ).set(ratio);
+  }
+
+  private logAdmission(input: {
+    level: StructuredLog["level"];
+    event: string;
+    outcome: StructuredLog["outcome"];
+    reason?: string;
+    roomId?: string;
+    durationMs: number;
+  }): void {
+    this.log({
+      level: input.level,
+      event: input.event,
+      timestamp: new Date(this.now()).toISOString(),
+      namespace: this.identity.namespace,
+      resource_kind: this.identity.resourceKind,
+      resource_name: this.identity.resourceName,
+      service: this.identity.service,
+      sli: this.identity.sli,
+      symptom: this.identity.symptom,
+      outcome: input.outcome,
+      ...(input.reason ? { reason: input.reason } : {}),
+      ...(input.roomId ? { room_id: input.roomId } : {}),
+      capacity_per_second: this.maxPerSecond,
+      duration_ms: Number(input.durationMs.toFixed(3)),
+    });
+  }
+
+  private trimAttempts(now: number): void {
+    this.attempts.splice(
+      0,
+      this.attempts.length,
+      ...this.attempts.filter((entry) => entry.at > now - 1_000),
+    );
   }
 }

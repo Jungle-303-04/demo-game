@@ -306,21 +306,21 @@ test("pod failure is capability-gated before mutation and verifies runtime recov
   ]);
 });
 
-test("admission saturation exposes the failure metric and verifies service recovery", async (context) => {
+test("admission saturation is a 40 RPS capacity regression and never arms or exits the API process", async (context) => {
   let loadStatus: AdmissionLoadStatus = {
     jobId: "admission-exact",
     roomId: "room-0",
     phase: "ramping",
     startedAt: "2026-07-20T01:00:00.000Z",
     expiresAt: "2026-07-20T01:03:00.000Z",
-    targetRps: 20,
-    maximumRps: 120,
-    requests: 20,
-    accepted: 20,
+    targetRps: 40,
+    maximumRps: 40,
+    requests: 40,
+    accepted: 40,
     rateLimited: 0,
     rejected: 0,
-    requestRps: 20,
-    acceptedRps: 20,
+    requestRps: 40,
+    acceptedRps: 40,
     rejectedRps: 0,
     successRatePercent: 100,
     failureRatePercent: 0,
@@ -342,13 +342,6 @@ test("admission saturation exposes the failure metric and verifies service recov
   installFetch(context, (url, init) => {
     calls.push(`${init?.method ?? "GET"} ${url}`);
     if (url === "http://bots/bots") return json({ bots: [], minimumBotsPerRoom: 10 });
-    if (url === "http://api-server/ops/failure/admission-overload/arm") {
-      return json({ armed: true, thresholdRequests: 35, windowMs: 1_000 });
-    }
-    if (url === "http://api-server/ops/failure/admission-overload/recover") {
-      admissionHealthy = true;
-      return json({ status: "ok", admissionOverload: { armed: false } });
-    }
     if (url === "http://api-server/healthz") {
       return admissionHealthy ? json({ status: "ok" }) : json({ error: "unavailable" }, 503);
     }
@@ -369,8 +362,13 @@ test("admission saturation exposes the failure metric and verifies service recov
   assert.equal(started.evidence?.failureRatePercent, 0);
   assert.equal(started.evidence?.failureTarget, "api-server");
   assert.equal(started.evidence?.loadPath, "login-gateway");
-  assert.equal(started.evidence?.recoveryOwner, "external-service");
-  assert.equal(controller.admissionFailureRates().get("room-0"), 0);
+  assert.equal(started.evidence?.failureMode, "capacity-regression");
+  assert.equal(started.evidence?.expectedHealthyReplicas, 2);
+  assert.equal(started.evidence?.degradedReplicas, 1);
+  assert.equal(started.evidence?.perReplicaCapacityRps, 25);
+  assert.equal(started.evidence?.targetRps, 40);
+  assert.equal(started.evidence?.recoveryOwner, "gitops-scale");
+  assert.equal(controller.admissionStatus().failureRatePercent, 0);
 
   loadStatus = {
     ...loadStatus,
@@ -388,27 +386,64 @@ test("admission saturation exposes the failure metric and verifies service recov
   assert.equal(incident.rooms[0]?.active?.status, "active");
   assert.equal(incident.rooms[0]?.active?.evidence?.failureRatePercent, 27.5);
   assert.equal(incident.rooms[0]?.active?.evidence?.rejectedRps, 11);
-  assert.equal(controller.admissionFailureRates().get("room-0"), 27.5);
+  assert.equal(controller.admissionStatus().failureRatePercent, 27.5);
   assert.equal(stopped, false);
 
-  admissionHealthy = false;
-  const failedServer = await controller.getState([room], true);
-  assert.equal(failedServer.rooms[0]?.active?.evidence?.admissionServerStatus, "unreachable");
-  assert.equal(failedServer.rooms[0]?.active?.evidence?.phase, "server_failed");
-  assert.equal(failedServer.rooms[0]?.active?.evidence?.existingSessionsExpected, "unaffected");
+  const healthyServer = await controller.getState([room], true);
+  assert.equal(healthyServer.rooms[0]?.active?.evidence?.admissionServerStatus, "healthy");
+  assert.equal(healthyServer.rooms[0]?.active?.evidence?.phase, "saturated");
+  assert.equal(healthyServer.rooms[0]?.active?.evidence?.existingSessionsExpected, "unaffected");
 
+  await assert.rejects(
+    controller.recover(record, room, "admission-storm"),
+    /admission_capacity_recovery_not_verified/,
+  );
+  assert.equal(stopped, false);
+
+  const recoveredUnderSustainedLoad: AdmissionLoadStatus = {
+    ...loadStatus,
+    successRatePercent: 100,
+    failureRatePercent: 0,
+    requestRps: 40,
+    acceptedRps: 40,
+    rejectedRps: 0,
+  };
+  const invalidRecoveryStates: AdmissionLoadStatus[] = [
+    { ...recoveredUnderSustainedLoad, phase: "ramping" },
+    { ...recoveredUnderSustainedLoad, phase: "safety_timeout" },
+    { ...recoveredUnderSustainedLoad, phase: "failed" },
+    { ...recoveredUnderSustainedLoad, phase: "stopped" },
+    { ...recoveredUnderSustainedLoad, targetRps: 39 },
+    { ...recoveredUnderSustainedLoad, requestRps: 35.9 },
+    { ...recoveredUnderSustainedLoad, requestRps: 44.1 },
+  ];
+  for (const invalid of invalidRecoveryStates) {
+    loadStatus = invalid;
+    await assert.rejects(
+      controller.recover(record, room, "admission-storm"),
+      /admission_capacity_recovery_not_verified/,
+    );
+    assert.equal(stopped, false);
+  }
+
+  loadStatus = recoveredUnderSustainedLoad;
   const stoppedResult = await controller.recover(record, room, "admission-storm");
   assert.equal(stoppedResult.status, "completed");
-  assert.equal(stoppedResult.evidence?.failureRatePercent, 27.5);
+  assert.equal(stoppedResult.evidence?.failureRatePercent, 0);
   assert.equal(stoppedResult.evidence?.loadStopped, true);
   assert.equal(stoppedResult.evidence?.admissionServerStatus, "healthy");
-  assert.equal(stoppedResult.evidence?.recoveryPerformed, true);
+  assert.equal(stoppedResult.evidence?.recoveryPerformed, false);
   assert.equal(stoppedResult.evidence?.recoveryVerified, true);
-  assert.equal(stoppedResult.evidence?.recoveryOwner, "service-restart-policy");
+  assert.equal(stoppedResult.evidence?.recoveryOwner, "gitops-scale");
   assert.equal(stopped, true);
-  assert.equal(controller.admissionFailureRates().has("room-0"), false);
-  assert.ok(calls.includes("POST http://api-server/ops/failure/admission-overload/arm"));
-  assert.ok(calls.includes("POST http://api-server/ops/failure/admission-overload/recover"));
+  assert.deepEqual(controller.admissionStatus(), {
+    active: false,
+    failureRatePercent: 0,
+    targetRps: 0,
+    requestRps: 0,
+    incidentTriggered: false,
+  });
+  assert.ok(calls.every((call) => !call.includes("/ops/failure/admission-overload/")));
   assert.ok(calls.every((call) => !call.includes("/scale")));
 });
 

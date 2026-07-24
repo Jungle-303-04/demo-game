@@ -97,3 +97,71 @@ test("maximum admission pressure continues through the login gateway until failu
   assert.ok(failed.failureRatePercent >= 20);
   assert.equal(controller.stop(started.jobId).phase, "stopped");
 });
+
+test("presentation admission load holds 40 RPS and has a bounded 30 minute safety TTL", () => {
+  const now = Date.parse("2026-07-24T09:00:00.000Z");
+  const controller = new AdmissionLoadController({
+    endpoint: "http://demo-game-gateway",
+    now: () => now,
+    sleep: async () => new Promise<void>(() => undefined),
+  });
+
+  const started = controller.start("room-0");
+
+  assert.equal(started.targetRps, 40);
+  assert.equal(started.maximumRps, 40);
+  assert.equal(started.expiresAt, "2026-07-24T09:30:00.000Z");
+  assert.equal(controller.stop(started.jobId).phase, "stopped");
+});
+
+test("scheduler drops overdue token debt instead of bursting after an event-loop stall", async () => {
+  let now = 0;
+  let sleepCalls = 0;
+  const issuedAt: number[] = [];
+  const controller = new AdmissionLoadController({
+    endpoint: "http://demo-game-gateway",
+    now: () => now,
+    sleep: async () => {
+      sleepCalls += 1;
+      now += sleepCalls === 3 ? 5_000 : 100;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    },
+    fetchImpl: async () => {
+      issuedAt.push(now);
+      return new Response(JSON.stringify({ room: { roomId: "room-0" } }), { status: 200 });
+    },
+  });
+
+  const started = controller.start("room-0");
+  await waitUntil(() => sleepCalls >= 7);
+  controller.stop(started.jobId);
+
+  const callsPerTick = new Map<number, number>();
+  for (const at of issuedAt) callsPerTick.set(at, (callsPerTick.get(at) ?? 0) + 1);
+  assert.ok((callsPerTick.get(5_200) ?? 0) > 0);
+  assert.ok((callsPerTick.get(5_200) ?? 0) <= 4);
+  assert.ok(Math.max(...callsPerTick.values()) <= 4);
+});
+
+test("30 minute absolute TTL stops pressure even if no operator cleanup occurs", async () => {
+  let now = Date.parse("2026-07-24T09:00:00.000Z");
+  let requests = 0;
+  const controller = new AdmissionLoadController({
+    endpoint: "http://demo-game-gateway",
+    now: () => now,
+    sleep: async () => {
+      now += 30 * 60_000;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    },
+    fetchImpl: async () => {
+      requests += 1;
+      return new Response(null, { status: 200 });
+    },
+  });
+
+  const started = controller.start("room-0");
+  await waitUntil(() => controller.status(started.jobId)?.phase === "safety_timeout");
+
+  assert.equal(controller.status(started.jobId)?.phase, "safety_timeout");
+  assert.equal(requests, 0);
+});

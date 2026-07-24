@@ -8,6 +8,7 @@ export type RoomStatus =
 export type MatchPhase = "lobby" | "in_match" | "finished";
 export type GameMode = "Faction 50v50" | "Solo FFA";
 export type EventTone = "info" | "success" | "warning" | "danger";
+export type { LobbyAdmissionStatus } from "../../src/lobby-admission.js";
 
 export interface PlayerTelemetry {
   id: string;
@@ -73,7 +74,6 @@ export interface RoomMetrics {
   websocketCount: number;
   redisOpsPerSecond: number | null;
   telemetryLagMs: number;
-  admissionFailureRatePercent?: number;
   resourceSampleCount?: number;
 }
 

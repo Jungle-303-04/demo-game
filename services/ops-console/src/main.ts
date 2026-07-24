@@ -31,17 +31,6 @@ const failureScenarios = new FailureScenarioController(orchestrator, botRunner);
 const webRoot = resolve(process.env.OPS_CONSOLE_WEB_ROOT ?? fileURLToPath(new URL("../web", import.meta.url)));
 const timeline: TimelineEvent[] = [];
 
-const withAdmissionFailureRates = (rooms: AdminRoom[]): AdminRoom[] => {
-  const rates = failureScenarios.admissionFailureRates();
-  return rooms.map((room) => ({
-    ...room,
-    metrics: {
-      ...room.metrics,
-      admissionFailureRatePercent: rates.get(room.id) ?? 0,
-    },
-  }));
-};
-
 const readJson = async (request: IncomingMessage): Promise<Record<string, unknown>> => {
   const chunks: Buffer[] = [];
   let size = 0;
@@ -97,9 +86,8 @@ const roomRecord = async (roomId: string): Promise<RegistryRoom> => {
 };
 
 const adminRoom = async (roomId: string): Promise<AdminRoom> => {
-  const room = withAdmissionFailureRates(
-    await buildAdminRooms(orchestrator, botRunner),
-  ).find((candidate) => candidate.id === roomId);
+  const room = (await buildAdminRooms(orchestrator, botRunner))
+    .find((candidate) => candidate.id === roomId);
   if (!room) throw new UpstreamError(404, { error: "room_not_found" }, "room_not_found");
   return room;
 };
@@ -253,8 +241,11 @@ const server = createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/admin/rooms") {
       const registryState = await getRegistryState(orchestrator);
       const compact = url.searchParams.get("compact") === "1";
-      const rooms = withAdmissionFailureRates(
-        await buildAdminRooms(orchestrator, botRunner, registryState.rooms, compact),
+      const rooms = await buildAdminRooms(
+        orchestrator,
+        botRunner,
+        registryState.rooms,
+        compact,
       );
       return send(response, 200, {
         rooms: compact
@@ -264,6 +255,7 @@ const server = createServer(async (request, response) => {
           scalingAvailable: registryState.scalingAvailable,
           maxRooms: registryState.maxRooms,
         },
+        admission: failureScenarios.admissionStatus(),
       });
     }
     if (request.method === "GET" && url.pathname === "/api/admin/events") {

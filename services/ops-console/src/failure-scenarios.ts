@@ -105,6 +105,13 @@ const BOT_SURGE_HOLD_MS = 10_000;
 const MALICIOUS_BOT_COUNT = 3;
 const ADMISSION_RECOVERY_ATTEMPTS = 24;
 const ADMISSION_RECOVERY_POLL_MS = 250;
+const ADMISSION_CAPACITY_PER_REPLICA_RPS = 25;
+const ADMISSION_HEALTHY_REPLICAS = 2;
+const ADMISSION_DEGRADED_REPLICAS = 1;
+const ADMISSION_INCIDENT_FAILURE_PERCENT = 20;
+const ADMISSION_TARGET_RPS = 40;
+const ADMISSION_RECOVERY_MIN_REQUEST_RPS = 36;
+const ADMISSION_RECOVERY_MAX_REQUEST_RPS = 44;
 
 export const isFailureScenarioId = (value: string): value is FailureScenarioId =>
   FAILURE_SCENARIO_IDS.some((scenarioId) => scenarioId === value);
@@ -202,14 +209,32 @@ export class FailureScenarioController {
     };
   }
 
-  admissionFailureRates(): ReadonlyMap<string, number> {
-    const rates = new Map<string, number>();
-    for (const [roomId, run] of this.activeRuns) {
+  admissionStatus(): {
+    active: boolean;
+    failureRatePercent: number;
+    targetRps: number;
+    requestRps: number;
+    incidentTriggered: boolean;
+  } {
+    for (const run of this.activeRuns.values()) {
       if (run.scenarioId !== "admission-storm" || !run.jobId) continue;
       const status = this.admissionLoad.status(run.jobId);
-      if (status) rates.set(roomId, status.failureRatePercent);
+      if (!status) continue;
+      return {
+        active: !["stopped", "safety_timeout", "failed"].includes(status.phase),
+        failureRatePercent: status.failureRatePercent,
+        targetRps: status.targetRps,
+        requestRps: status.requestRps,
+        incidentTriggered: status.incidentTriggered,
+      };
     }
-    return rates;
+    return {
+      active: false,
+      failureRatePercent: 0,
+      targetRps: 0,
+      requestRps: 0,
+      incidentTriggered: false,
+    };
   }
 
   async start(
@@ -290,39 +315,24 @@ export class FailureScenarioController {
             activeRoomId !== room.id && active.scenarioId === "admission-storm")) {
             throw new Error("admission_load_already_running");
           }
-          const armed = await fetchJson<{
-            armed: boolean;
-            thresholdRequests: number;
-            windowMs: number;
-          }>(`${this.admissionEndpoint}/ops/failure/admission-overload/arm`, { method: "POST" }, 3_000);
-          let load: AdmissionLoadStatus;
-          try {
-            load = this.admissionLoad.start(room.id);
-          } catch (error) {
-            await fetchJson(
-              `${this.admissionEndpoint}/ops/failure/admission-overload/disarm`,
-              { method: "POST" },
-              2_000,
-            ).catch(() => undefined);
-            throw error;
-          }
+          const load = this.admissionLoad.start(room.id);
           run.jobId = load.jobId;
           run.status = "active";
           run.evidence = {
             ...this.admissionEvidence(load),
-            failureMode: "process-exit-on-real-admission-load",
+            failureMode: "capacity-regression",
             failureTarget: "api-server",
             loadPath: "login-gateway",
-            overloadArmed: armed.armed,
-            overloadThresholdRequests: armed.thresholdRequests,
-            overloadWindowMs: armed.windowMs,
+            expectedHealthyReplicas: ADMISSION_HEALTHY_REPLICAS,
+            degradedReplicas: ADMISSION_DEGRADED_REPLICAS,
+            perReplicaCapacityRps: ADMISSION_CAPACITY_PER_REPLICA_RPS,
             existingSessionsExpected: "unaffected",
-            recoveryOwner: "external-service",
+            recoveryOwner: "gitops-scale",
           };
           return this.started(
             room.id,
             run,
-            "신규 입장 요청을 증가시켜 입장 API 프로세스 장애를 유도하고 있습니다.",
+            "초당 40건의 신규 입장 요청으로 로비 용량 회귀를 재현하고 있습니다.",
           );
         }
         case "process-crash": {
@@ -389,31 +399,52 @@ export class FailureScenarioController {
       case "admission-storm": {
         if (!run.jobId) throw new Error("admission_load_job_not_found");
         run.status = "recovering";
-        const stopped = this.admissionLoad.stop(run.jobId);
-        const recoveryRequested = await this.requestAdmissionRecovery();
-        if (!recoveryRequested) {
+        const verified = this.admissionLoad.status(run.jobId);
+        if (
+          !verified
+          || verified.phase !== "saturated"
+          || !verified.incidentTriggered
+          || verified.targetRps !== ADMISSION_TARGET_RPS
+          || verified.requestRps < ADMISSION_RECOVERY_MIN_REQUEST_RPS
+          || verified.requestRps > ADMISSION_RECOVERY_MAX_REQUEST_RPS
+          || verified.failureRatePercent >= ADMISSION_INCIDENT_FAILURE_PERCENT
+        ) {
+          run.status = "active";
           throw new UpstreamError(
             409,
-            { error: "admission_recovery_not_ready" },
-            "admission_recovery_not_ready",
+            {
+              error: "admission_capacity_recovery_not_verified",
+              failureRatePercent: verified?.failureRatePercent,
+              requiredBelowPercent: ADMISSION_INCIDENT_FAILURE_PERCENT,
+              phase: verified?.phase,
+              targetRps: verified?.targetRps,
+              requiredTargetRps: ADMISSION_TARGET_RPS,
+              requestRps: verified?.requestRps,
+              requiredRequestRps: {
+                minimum: ADMISSION_RECOVERY_MIN_REQUEST_RPS,
+                maximum: ADMISSION_RECOVERY_MAX_REQUEST_RPS,
+              },
+            },
+            "admission_capacity_recovery_not_verified",
           );
         }
         const admissionRecovered = await this.waitForAdmissionServer();
         if (!admissionRecovered) {
+          run.status = "active";
           throw new UpstreamError(
             409,
             { error: "admission_recovery_not_ready" },
             "admission_recovery_not_ready",
           );
         }
-        return this.completeRun(roomId, run, "입장 부하를 중단하고 입장 서버 자동 복구를 확인했습니다.", {
+        const stopped = this.admissionLoad.stop(run.jobId);
+        return this.completeRun(roomId, run, "입장 부하를 중단하고 로비 서버가 계속 정상 동작하는지 확인했습니다.", {
           ...this.admissionEvidence(stopped),
           loadStopped: true,
-          overloadDisarmed: true,
           admissionServerStatus: "healthy",
-          recoveryPerformed: true,
+          recoveryPerformed: false,
           recoveryVerified: true,
-          recoveryOwner: "service-restart-policy",
+          recoveryOwner: "gitops-scale",
         });
       }
       case "process-crash": {
@@ -683,8 +714,7 @@ export class FailureScenarioController {
       ...run.evidence,
       admissionServerStatus: health?.status === "ok" ? "healthy" : "unreachable",
       existingSessionsExpected: "unaffected",
-      recoveryOwner: "external-service",
-      ...(health ? {} : { phase: "server_failed", incidentTriggered: true }),
+      recoveryOwner: "gitops-scale",
     };
     run.status = status.phase === "failed" ? "failed" : "active";
     if (status.phase === "safety_timeout") {
@@ -704,21 +734,6 @@ export class FailureScenarioController {
         600,
       ).catch(() => undefined);
       if (health?.status === "ok") return true;
-      if (attempt + 1 < ADMISSION_RECOVERY_ATTEMPTS) {
-        await new Promise((resolve) => setTimeout(resolve, ADMISSION_RECOVERY_POLL_MS));
-      }
-    }
-    return false;
-  }
-
-  private async requestAdmissionRecovery(): Promise<boolean> {
-    for (let attempt = 0; attempt < ADMISSION_RECOVERY_ATTEMPTS; attempt += 1) {
-      const recovered = await fetchJson<{ status?: string }>(
-        `${this.admissionEndpoint}/ops/failure/admission-overload/recover`,
-        { method: "POST" },
-        600,
-      ).catch(() => undefined);
-      if (recovered?.status === "ok") return true;
       if (attempt + 1 < ADMISSION_RECOVERY_ATTEMPTS) {
         await new Promise((resolve) => setTimeout(resolve, ADMISSION_RECOVERY_POLL_MS));
       }

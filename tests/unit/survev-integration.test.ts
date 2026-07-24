@@ -164,7 +164,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /입장 서버 장애/);
   assert.match(adminUi, /onRecoverAdmissionStorm=\{\(roomId\) => void recoverAdmissionStorm\(roomId\)\}/);
   assert.match(adminUi, /className="is-recovery"/);
-  assert.match(adminUi, /자동 복구/);
+  assert.match(adminUi, /복구 검증/);
   assert.match(compose, /api-server:\s+[\s\S]*?restart: on-failure/);
   assert.match(adminUi, /snapshotCapturedAt > 0/);
   assert.doesNotMatch(adminUi, /ROOM_FORM_DEFAULTS|ManagementTab/);
@@ -195,6 +195,8 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(failureScenarioUi, /events\.filter\(\(event\) => event\.roomId === selectedRoomId\)/);
   assert.match(failureScenarioUi, /inputRejected/);
   assert.match(failureScenarioUi, /function roomPressureProfile/);
+  assert.match(failureScenarioUi, /scenarioRoom\.active\.scenarioId !== "admission-storm"/);
+  assert.match(failureScenarioUi, /로비 입장 실패율/);
   assert.match(failureScenarioUi, /className="scenario-room-carousel"/);
   assert.match(failureScenarioUi, /className="scenario-load-score"/);
   assert.match(failureScenarioUi, /className="scenario-graph-line"/);
@@ -208,13 +210,17 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.doesNotMatch(scenarioRoomCarousel, /room\.map/);
   assert.match(controlPlaneClient, /getFailureScenarios\(\)/);
   assert.match(controlPlaneClient, /\/api\/admin\/scenarios/);
+  assert.match(controlPlaneClient, /normalizeLobbyAdmissionStatus/);
+  assert.match(controlPlaneClient, /admission\?: unknown/);
   assert.doesNotMatch(controlPlaneClient, /survev-admin-token|window\.prompt|authorization: `Bearer/);
   assert.doesNotMatch(adminUi, /withControlPlaneAdminTokenRetry|관리자 토큰/);
   assert.doesNotMatch(failureScenarioUi, /withControlPlaneAdminTokenRetry|관리자 토큰/);
   assert.doesNotMatch(opsConsoleServer, /OPS_ADMIN_TOKEN|REQUIRE_ADMIN_TOKEN|admin_token_required|timingSafeEqual/);
   assert.match(failureScenarios, /new AdmissionLoadController/);
   assert.match(failureScenarios, /process\.env\.ADMISSION_GATEWAY_URL/);
-  assert.match(failureScenarios, /admission-overload\/recover/);
+  assert.doesNotMatch(failureScenarios, /admission-overload\/(?:arm|recover|disarm)/);
+  assert.match(failureScenarios, /failureMode: "capacity-regression"/);
+  assert.match(failureScenarios, /admission_capacity_recovery_not_verified/);
   assert.doesNotMatch(failureScenarios, /api-server\/scale/);
   assert.match(failureScenarioUi, /function AdmissionCapacityPanel/);
   assert.match(failureScenarioUi, /failureRatePercent/);
@@ -330,8 +336,6 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminCss, /\.scenario-room-identity/);
   assert.match(adminUi, /function ServerBlock/);
   assert.doesNotMatch(adminUi, /function RoomMapPreviewStrip/);
-  assert.match(adminUi, /const ADMISSION_WARNING_PERCENT = 5/);
-  assert.match(adminUi, /const ADMISSION_INCIDENT_PERCENT = 20/);
   assert.match(adminUi, /const TICK_WARNING_MS = 8/);
   assert.match(adminUi, /const CPU_WARNING_PERCENT = 70/);
   assert.match(adminUi, /const MEMORY_WARNING_PERCENT = 75/);
@@ -341,11 +345,16 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(adminUi, /function smoothStep/);
   assert.match(adminUi, /function healthTone/);
   assert.match(adminUi, /function healthHue/);
-  assert.match(adminUi, /type BorderMetricKey = "admission" \| "tick" \| "resources" \| "latency"/);
-  assert.match(adminUi, /key: "admission", label: "입장 실패율"/);
+  assert.match(adminUi, /type BorderMetricKey = "tick" \| "resources" \| "latency"/);
+  assert.doesNotMatch(adminUi, /key: "admission", label: "입장 실패율"/);
   assert.match(adminUi, /key: "tick", label: "틱 P95"/);
   assert.match(adminUi, /key: "resources", label: "CPU \/ 메모리"/);
   assert.match(adminUi, /key: "latency", label: "지연 P95"/);
+  assert.match(adminUi, /className=\{`lobby-admission-status is-\$\{lobbyAdmission\.tone\}`\}/);
+  assert.match(adminUi, /로비 입장/);
+  assert.match(adminUi, /lobbyAdmission\.failureRatePercent\.toFixed\(1\)/);
+  assert.doesNotMatch(opsConsoleServer, /withAdmissionFailureRates/);
+  assert.match(opsConsoleServer, /admission: failureScenarios\.admissionStatus\(\)/);
   assert.match(adminUi, /room\.metrics\.resourceSampleCount \?\? RESOURCE_STABLE_SAMPLE_COUNT/);
   assert.match(adminUi, /stateLabel: "수집 중"/);
   assert.match(adminUi, /function percentile95/);
@@ -464,6 +473,14 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   const publishImagesWorkflow = await readFile(join(process.cwd(), ".github/workflows/publish-images.yml"), "utf8");
   const botRunner = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRunner.ts"), "utf8");
   const botRouting = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRouting.ts"), "utf8");
+  const admissionProbe = await readFile(
+    join(process.cwd(), "scripts/check-admission-capacity.mjs"),
+    "utf8",
+  );
+  const admissionSmoke = await readFile(
+    join(process.cwd(), "scripts/k8s-admission-capacity-smoke.sh"),
+    "utf8",
+  );
 
   assert.match(gameServer, /z\.enum\(\["faction", "desert", "snow", "main", "woods"\]\)/);
   assert.match(gameServer, /process\.env\.OPSIA_MAP_NAME \?\? "faction"/);
@@ -504,14 +521,33 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.match(management, /ADMISSION_GATEWAY_URL, value: http:\/\/login-gateway/);
   assert.doesNotMatch(management, /- name: api-server\r?\n/);
   assert.match(baseKustomization, /- api-server\.yaml/);
-  assert.match(apiServer, /name: api-server[\s\S]*replicas: 1/);
+  assert.doesNotMatch(baseKustomization, /monitoring\.yaml|alertmanager\.yaml/);
+  assert.match(apiServer, /name: api-server[\s\S]*replicas: 2/);
   assert.match(apiServer, /MAX_FIND_GAME_PER_SECOND, value: "25"/);
-  assert.match(apiServer, /ADMISSION_FAILURE_STATE_FILE/);
+  assert.match(apiServer, /prometheus\.io\/scrape: "true"/);
+  assert.match(apiServer, /prometheus\.io\/path: "\/metrics"/);
+  assert.match(apiServer, /prometheus\.io\/port: "8081"/);
+  assert.doesNotMatch(
+    apiServer,
+    /ADMISSION_OVERLOAD_|ADMISSION_FAILURE_STATE_FILE|admission-failure-state/,
+  );
+  assert.doesNotMatch(
+    compose,
+    /ADMISSION_OVERLOAD_|ADMISSION_FAILURE_STATE_FILE|opsia-admission-overload/,
+  );
   assert.match(apiServer, /publishNotReadyAddresses: true/);
-  assert.match(apiServer, /emptyDir: \{\}/);
   assert.match(apiServer, /kind: Service[\s\S]*name: login-gateway-api/);
   assert.match(rbac, /resources: \["deployments", "replicasets"\][\s\S]*verbs: \["get", "list", "patch"\]/);
-  assert.match(monitoring, /sum\(rate\(find_game_requests_total\{outcome!="accepted"\}\[1m\]\)\)/);
+  assert.match(monitoring, /OPTIONAL LEGACY MONITORING/);
+  assert.doesNotMatch(monitoring, /DemoGameJoinStorm|opsia_sli_failure_ratio|root_category/);
+  assert.match(admissionProbe, /const TARGET_RPS = 40/);
+  assert.match(admissionProbe, /durationSeconds < 21/);
+  assert.match(admissionProbe, /failureRatio < 0\.2/);
+  assert.match(admissionProbe, /failureRatio > 0\.2/);
+  assert.match(admissionSmoke, /--replicas=2/);
+  assert.match(admissionSmoke, /scale_and_wait 2[\s\S]*scale_and_wait 1[\s\S]*scale_and_wait 2/);
+  assert.match(admissionSmoke, /--expect healthy/);
+  assert.match(admissionSmoke, /--expect degraded/);
   assert.match(management, /key: maxRooms/);
   assert.match(rbac, /resources: \["services"\][\s\S]*verbs: \["get", "list"\]/);
   assert.match(management, /GAME_DEPLOYMENT_PREFIX, value: game-room/);
