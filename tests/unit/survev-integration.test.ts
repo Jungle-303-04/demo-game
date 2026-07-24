@@ -547,6 +547,25 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.match(apiServer, /prometheus\.io\/scrape: "true"/);
   assert.match(apiServer, /prometheus\.io\/path: "\/metrics"/);
   assert.match(apiServer, /prometheus\.io\/port: "8081"/);
+  assert.match(apiServer, /opsia\.dev\/service: api-server/);
+  assert.match(apiServer, /opsia\.dev\/sli: admission/);
+  assert.match(apiServer, /opsia\.dev\/symptom: admission_failure/);
+  assert.match(
+    apiServer,
+    /name: OPSIA_WORKLOAD_NAME[\s\S]*fieldPath: "metadata\.labels\['app'\]"/,
+  );
+  assert.match(
+    apiServer,
+    /name: OPSIA_SERVICE_NAME[\s\S]*fieldPath: "metadata\.labels\['opsia\.dev\/service'\]"/,
+  );
+  assert.match(
+    apiServer,
+    /name: OPSIA_SLI_NAME[\s\S]*fieldPath: "metadata\.labels\['opsia\.dev\/sli'\]"/,
+  );
+  assert.match(
+    apiServer,
+    /name: OPSIA_SLI_SYMPTOM[\s\S]*fieldPath: "metadata\.labels\['opsia\.dev\/symptom'\]"/,
+  );
   assert.doesNotMatch(
     apiServer,
     /ADMISSION_OVERLOAD_|ADMISSION_FAILURE_STATE_FILE|admission-failure-state/,
