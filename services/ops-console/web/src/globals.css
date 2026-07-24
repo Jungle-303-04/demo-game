@@ -1962,6 +1962,67 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+.bot-target-control {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--card);
+}
+
+.bot-target-control label {
+  padding-left: 10px;
+  color: var(--soft);
+  font-size: 11px;
+}
+
+.bot-current-count {
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.bot-target-control input {
+  width: 48px;
+  min-width: 0;
+  height: 32px;
+  padding: 0 5px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 750;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  appearance: textfield;
+}
+
+.bot-target-control input::-webkit-inner-spin-button,
+.bot-target-control input::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+}
+
+.room-actions .bot-target-control .set-bots-button {
+  min-height: 32px;
+  border: 0;
+  border-left: 1px solid rgba(20, 113, 239, 0.2);
+  border-radius: 0;
+  background: #eef6ff;
+  color: var(--blue);
+}
+
+.room-actions .bot-target-control:focus-within {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 2px rgba(20, 113, 239, 0.12);
+}
+
 .room-actions button {
   min-height: 34px;
   padding: 0 12px;

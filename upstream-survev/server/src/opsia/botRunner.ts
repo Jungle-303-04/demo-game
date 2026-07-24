@@ -9,7 +9,9 @@ import {
     decideLightweightCombatIntent,
 } from "./botBrain.ts";
 import { createBotInput, smoothBotAngle } from "./botInput.ts";
+import { parseBotTarget, RoomBotTargets } from "./botPopulation.ts";
 import { botFindGameUrl, botWebsocketUrl, normalizeSessionGatewayUrl } from "./botRouting.ts";
+import { createBotTargetStore } from "./botTargetStore.ts";
 import { controlTokenMatches, readControlToken } from "./controlPlaneAuth.ts";
 
 type BotMode = "normal" | "surge" | "hack";
@@ -36,6 +38,7 @@ type BotJob = {
     intervalMs: number;
     mode: BotMode;
     state: BotJobState;
+    target?: number;
     error?: string;
 };
 
@@ -463,6 +466,8 @@ const minimumBotsPerRoom = Math.max(
     0,
     Math.min(100, Number.parseInt(process.env.OPSIA_MIN_BOTS_PER_ROOM ?? "0", 10) || 0),
 );
+const roomBotTargets = new RoomBotTargets(minimumBotsPerRoom);
+const botTargetStore = createBotTargetStore();
 const reconcileIntervalMs = Math.max(
     1_000,
     Math.min(30_000, Number.parseInt(process.env.OPSIA_BOT_RECONCILE_INTERVAL_MS ?? "2000", 10) || 2_000),
@@ -473,6 +478,10 @@ const reconcileBatchSize = Math.max(
 );
 const reconcileFailures = new Map<string, number>();
 const reconcileRetryAt = new Map<string, number>();
+const targetAdjustmentRevisions = new Map<string, number>();
+const roomTargetVersions = new Map<string, number>();
+let targetAdjustmentRevision = 0;
+const targetUpdateQueues = new Map<string, Promise<void>>();
 let reconciliationPending = false;
 
 const readJson = async (request: IncomingMessage): Promise<Record<string, unknown>> => {
@@ -546,7 +555,13 @@ const spawn = async (
     return created.map((bot) => bot.summary());
 };
 
-const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs: number): Promise<BotJob> => {
+const startJob = async (
+    count: number,
+    roomId: string,
+    mode: BotMode,
+    intervalMs: number,
+    target?: number,
+): Promise<BotJob> => {
     if (!Number.isInteger(count) || count < 1 || count > 500) throw new Error("invalid_bot_count");
     if (!Number.isInteger(intervalMs) || intervalMs < 50 || intervalMs > 5_000) throw new Error("invalid_bot_interval");
     const endpoint = (await rooms()).get(roomId);
@@ -573,20 +588,26 @@ const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs
         intervalMs,
         mode,
         state: "running",
+        ...(target === undefined ? {} : { target }),
     };
     jobs.set(job.jobId, job);
     while (jobs.size > 100) jobs.delete(jobs.keys().next().value!);
     void (async () => {
         try {
-            const spawnOne = async (): Promise<void> => {
-                if (job.state !== "running") return;
+            const spawnOne = async (): Promise<boolean> => {
+                if (job.state !== "running") return false;
+                if (job.target !== undefined && activeTargetBotCount(roomId) >= job.target) return false;
                 const created = await spawn(1, roomId, mode);
                 if (job.state !== "running") {
                     for (const bot of created) bots.get(bot.id)?.stop();
-                    return;
+                    return false;
                 }
                 job.createdBotIds.push(...created.map((bot) => bot.id));
                 job.completed += 1;
+                if (job.target !== undefined && activeTargetBotCount(roomId) > job.target) {
+                    removeTargetBotsAboveTarget(roomId, job.target);
+                }
+                return true;
             };
             // Surge bots must reach the same lobby before the game flips
             // canJoin=false. Normal jobs stay sequential so every rejected
@@ -596,8 +617,9 @@ const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs
                 await Promise.all(Array.from({ length: count }, () => spawnOne()));
             } else {
                 for (let index = 0; index < count; index++) {
-                    await spawnOne();
+                    const created = await spawnOne();
                     if (job.state !== "running") return;
+                    if (!created) break;
                     if (index < count - 1) {
                         await new Promise((resolve) => setTimeout(resolve, intervalMs));
                     }
@@ -613,11 +635,50 @@ const startJob = async (count: number, roomId: string, mode: BotMode, intervalMs
     return job;
 };
 
-const connectedBotCount = (roomId: string): number =>
+const connectedTargetBotCount = (roomId: string): number =>
     [...bots.values()].filter((bot) => {
         const summary = bot.summary();
-        return summary.roomId === roomId && summary.connected;
+        return summary.roomId === roomId && summary.mode === "normal" && summary.connected;
     }).length;
+
+const activeTargetBotCount = (roomId: string): number =>
+    [...bots.values()].filter((bot) => bot.roomId === roomId && bot.mode === "normal").length;
+
+const cancelRoomJobs = (roomId: string): void => {
+    for (const job of jobs.values()) {
+        if (job.roomId === roomId && job.state === "running") job.state = "cancelled";
+    }
+};
+
+const runningRoomJob = (roomId: string): BotJob | undefined =>
+    [...jobs.values()].find((job) => job.roomId === roomId && job.state === "running");
+
+const removeTargetBotsAboveTarget = (roomId: string, target: number): number => {
+    const selected = [...bots.values()].filter((bot) => bot.roomId === roomId && bot.mode === "normal");
+    const removable = Math.max(0, selected.length - target);
+    const removed = selected.slice(Math.max(0, selected.length - removable));
+    removed.forEach((bot) => {
+        bot.stop();
+        bots.delete(bot.id);
+    });
+    return removed.length;
+};
+
+const enqueueTargetUpdate = async <T>(roomId: string, update: () => Promise<T>): Promise<T> => {
+    const previous = targetUpdateQueues.get(roomId) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    targetUpdateQueues.set(roomId, current);
+    await previous.catch(() => undefined);
+    try {
+        return await update();
+    } finally {
+        release();
+        if (targetUpdateQueues.get(roomId) === current) targetUpdateQueues.delete(roomId);
+    }
+};
 
 const warnBotPopulationRetry = (roomId: string | undefined, error: unknown, retryInMs?: number) => {
     console.warn(JSON.stringify({
@@ -640,14 +701,18 @@ const deferBotPopulationRetry = (roomId: string, error: unknown): void => {
 };
 
 const reconcileMinimumBots = async (): Promise<void> => {
-    if (minimumBotsPerRoom <= 0 || reconciliationPending) return;
+    if (reconciliationPending) return;
     reconciliationPending = true;
     try {
         const roomMap = await rooms();
         await Promise.all([...roomMap.entries()].map(async ([roomId, endpoint]) => {
             if ((reconcileRetryAt.get(roomId) ?? 0) > Date.now()) return;
-            const deficit = minimumBotsPerRoom - connectedBotCount(roomId);
+            if (targetAdjustmentRevisions.has(roomId)) return;
+            if (runningRoomJob(roomId)) return;
+            const desiredBots = roomBotTargets.get(roomId);
+            const deficit = desiredBots - activeTargetBotCount(roomId);
             if (deficit <= 0) return;
+            const targetRevision = roomTargetVersions.get(roomId) ?? 0;
             try {
                 const summaryResponse = await fetch(`${endpoint}/summary`, { signal: AbortSignal.timeout(8_000) });
                 if (!summaryResponse.ok) throw new Error(`room_summary_failed:${summaryResponse.status}`);
@@ -655,8 +720,25 @@ const reconcileMinimumBots = async (): Promise<void> => {
                 const capacity = Number(summary.maxPlayers ?? 100);
                 const available = Math.max(0, capacity - Number(summary.players ?? 0));
                 if (available < 1) throw new Error("bot_capacity_exceeded");
+                if (
+                    targetAdjustmentRevisions.has(roomId) ||
+                    roomBotTargets.get(roomId) !== desiredBots ||
+                    targetRevision !== (roomTargetVersions.get(roomId) ?? 0)
+                ) return;
                 const requested = Math.min(deficit, reconcileBatchSize, available);
-                const created = await spawn(requested, roomId, "normal");
+                const created: BotSummary[] = [];
+                for (let index = 0; index < requested; index++) {
+                    if (
+                        targetAdjustmentRevisions.has(roomId) ||
+                        roomBotTargets.get(roomId) !== desiredBots ||
+                        targetRevision !== (roomTargetVersions.get(roomId) ?? 0)
+                    ) break;
+                    created.push(...await spawn(1, roomId, "normal"));
+                }
+                const latestTarget = roomBotTargets.get(roomId);
+                if (activeTargetBotCount(roomId) > latestTarget) {
+                    removeTargetBotsAboveTarget(roomId, latestTarget);
+                }
                 reconcileFailures.delete(roomId);
                 reconcileRetryAt.delete(roomId);
                 console.log(JSON.stringify({
@@ -665,8 +747,8 @@ const reconcileMinimumBots = async (): Promise<void> => {
                     detail: {
                         roomId,
                         created: created.length,
-                        connected: connectedBotCount(roomId),
-                        desiredMinimum: minimumBotsPerRoom,
+                        connected: connectedTargetBotCount(roomId),
+                        desiredMinimum: desiredBots,
                     },
                 }));
             } catch (error) {
@@ -703,6 +785,30 @@ const server = createServer(async (request, response) => {
             return reply(response, 200, {
                 bots: [...bots.values()].map((bot) => bot.summary()),
                 minimumBotsPerRoom,
+                desiredBotsPerRoom: Object.fromEntries(roomBotTargets.entries()),
+            });
+        }
+        const targetDeleteMatch = pathname.match(/^\/bots\/target\/([^/]+)$/);
+        if (request.method === "DELETE" && targetDeleteMatch) {
+            const roomId = decodeURIComponent(targetDeleteMatch[1]!);
+            await enqueueTargetUpdate(roomId, async () => {
+                const revision = ++targetAdjustmentRevision;
+                targetAdjustmentRevisions.set(roomId, revision);
+                try {
+                    await botTargetStore.delete(roomId);
+                    roomBotTargets.delete(roomId);
+                    roomTargetVersions.set(roomId, revision);
+                    cancelRoomJobs(roomId);
+                } finally {
+                    if (targetAdjustmentRevisions.get(roomId) === revision) {
+                        targetAdjustmentRevisions.delete(roomId);
+                    }
+                }
+            });
+            return reply(response, 200, {
+                roomId,
+                target: roomBotTargets.get(roomId),
+                deleted: true,
             });
         }
         const jobMatch = pathname.match(/^\/bots\/jobs\/([^/]+)$/);
@@ -749,6 +855,58 @@ const server = createServer(async (request, response) => {
             const job = await startJob(Number(body.count), roomId, mode, Number(body.intervalMs ?? 300));
             return reply(response, 202, job);
         }
+        if (request.method === "PUT" && pathname === "/bots/target") {
+            const body = await readJson(request);
+            const roomId = String(body.room ?? "");
+            const target = parseBotTarget(body.target);
+            const intervalMs = body.intervalMs === undefined ? 100 : body.intervalMs;
+            if (
+                typeof intervalMs !== "number" ||
+                !Number.isInteger(intervalMs) ||
+                intervalMs < 50 ||
+                intervalMs > 5_000
+            ) {
+                throw new Error("invalid_bot_interval");
+            }
+            const roomMap = await rooms();
+            if (!roomMap.has(roomId)) throw new Error("unknown_room");
+
+            const result = await enqueueTargetUpdate(roomId, async () => {
+                const revision = ++targetAdjustmentRevision;
+                targetAdjustmentRevisions.set(roomId, revision);
+                try {
+                    await botTargetStore.set(roomId, target);
+                    roomBotTargets.set(roomId, target);
+                    roomTargetVersions.set(roomId, revision);
+                    cancelRoomJobs(roomId);
+                    const before = activeTargetBotCount(roomId);
+                    let job: BotJob | undefined;
+                    if (target < before) {
+                        removeTargetBotsAboveTarget(roomId, target);
+                    } else if (target > before) {
+                        try {
+                            job = await startJob(target - before, roomId, "normal", intervalMs, target);
+                        } catch (error) {
+                            deferBotPopulationRetry(roomId, error);
+                        }
+                    }
+                    const current = connectedTargetBotCount(roomId);
+                    return {
+                        target,
+                        current,
+                        pending: Math.max(0, target - current),
+                        ...(job ? { jobId: job.jobId } : {}),
+                    };
+                } finally {
+                    if (targetAdjustmentRevisions.get(roomId) === revision) {
+                        targetAdjustmentRevisions.delete(roomId);
+                    }
+                }
+            });
+            return reply(response, result.jobId ? 202 : 200, {
+                ...result,
+            });
+        }
         if (request.method === "POST" && pathname === "/bots/spawn") {
             const body = await readJson(request);
             const mode: BotMode = body.mode === "hack"
@@ -777,8 +935,11 @@ const server = createServer(async (request, response) => {
                 throw new Error("invalid_bot_count");
             }
             if (!id) {
-                for (const job of jobs.values()) {
-                    if (job.state === "running" && (!roomId || job.roomId === roomId)) job.state = "cancelled";
+                if (roomId) cancelRoomJobs(roomId);
+                else {
+                    for (const job of jobs.values()) {
+                        if (job.state === "running") job.state = "cancelled";
+                    }
                 }
             }
             const selected = id
@@ -788,7 +949,7 @@ const server = createServer(async (request, response) => {
                 ? selected.length
                 : Math.min(
                     requestedCount,
-                    Math.max(0, selected.length - (roomId ? minimumBotsPerRoom : 0)),
+                    Math.max(0, selected.length - (roomId ? roomBotTargets.get(roomId) : 0)),
                 );
             const removed = selected.slice(Math.max(0, selected.length - removableCount));
             removed.forEach((bot) => {
@@ -799,6 +960,7 @@ const server = createServer(async (request, response) => {
                 killed: removed.length,
                 remaining: selected.length - removed.length,
                 minimumBotsPerRoom,
+                ...(roomId ? { desiredBots: roomBotTargets.get(roomId) } : {}),
             });
         }
         return reply(response, 404, { error: "not_found" });
@@ -807,21 +969,34 @@ const server = createServer(async (request, response) => {
     }
 });
 
-server.listen(Number(process.env.PORT ?? 8084), () => {
-    console.log(
-        JSON.stringify({
-            level: "info",
-            event: "bot_runner_listening",
-            detail: {
-                protocol: "survev",
-                port: Number(process.env.PORT ?? 8084),
-                minimumBotsPerRoom,
-                reconcileIntervalMs,
-            },
-        }),
-    );
-    if (minimumBotsPerRoom > 0) {
+const start = async (): Promise<void> => {
+    await botTargetStore.connect();
+    roomBotTargets.hydrate(await botTargetStore.load());
+    server.listen(Number(process.env.PORT ?? 8084), () => {
+        console.log(
+            JSON.stringify({
+                level: "info",
+                event: "bot_runner_listening",
+                detail: {
+                    protocol: "survev",
+                    port: Number(process.env.PORT ?? 8084),
+                    minimumBotsPerRoom,
+                    persistedTargets: roomBotTargets.entries().length,
+                    reconcileIntervalMs,
+                },
+            }),
+        );
         setTimeout(() => void reconcileMinimumBots(), 500);
         setInterval(() => void reconcileMinimumBots(), reconcileIntervalMs);
-    }
+    });
+};
+
+void start().catch(async (error) => {
+    console.error(JSON.stringify({
+        level: "error",
+        event: "bot_runner_start_failed",
+        detail: { message: error instanceof Error ? error.message : String(error) },
+    }));
+    await botTargetStore.close().catch(() => undefined);
+    process.exit(1);
 });

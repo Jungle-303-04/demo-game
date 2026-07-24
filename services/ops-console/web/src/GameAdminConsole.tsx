@@ -46,7 +46,7 @@ type SpectatorFrameWindow = Window & {
 
 const POLL_INTERVAL_MS = 400;
 const BOT_BATCH_SIZE = 10;
-const MINIMUM_VISIBLE_BOTS = 1;
+const MINIMUM_BOT_TARGET = 0;
 const MAP_BACKGROUND_OPACITY_KEY = "opsia.map-background-opacity";
 const MAP_BACKGROUND_BLUR_KEY = "opsia.map-background-blur";
 
@@ -1117,8 +1117,7 @@ function RoomViewer({
   botPending,
   resetPending,
   onBack,
-  onAddBots,
-  onRemoveBots,
+  onSetBots,
   onResetRoom,
   onSelectPlayer,
   onClearPlayer,
@@ -1129,8 +1128,7 @@ function RoomViewer({
   botPending: boolean;
   resetPending: boolean;
   onBack: () => void;
-  onAddBots: () => void;
-  onRemoveBots: () => void;
+  onSetBots: (target: number) => void;
   onResetRoom: () => void;
   onSelectPlayer: (playerId: string) => void;
   onClearPlayer: () => void;
@@ -1142,7 +1140,10 @@ function RoomViewer({
   const [pipSession, setPipSession] = useState<PictureInPictureSession | null>(null);
   const [isInlinePip, setIsInlinePip] = useState(false);
   const [spectatorViewCount, setSpectatorViewCount] = useState<SpectatorViewCount>(1);
+  const [botTargetDraft, setBotTargetDraft] = useState("");
+  const [botTargetFocused, setBotTargetFocused] = useState(false);
   const { bots, humans } = playerCounts(room);
+  const maximumBotTarget = Math.max(MINIMUM_BOT_TARGET, room.maxPlayers - humans);
   const connectedPlayers = bots + humans;
   const displayName = roomDisplayName(room);
   const currentPodName = roomCurrentPodName(room);
@@ -1155,6 +1156,19 @@ function RoomViewer({
     () => spectatorRoster.filter((player) => player.health > 0),
     [spectatorRoster],
   );
+
+  useEffect(() => {
+    if (!botTargetFocused && !botPending) setBotTargetDraft(String(room.desiredBots));
+  }, [botPending, botTargetFocused, room.desiredBots, room.id]);
+
+  const requestBotTarget = (target: number) => {
+    if (!Number.isInteger(target) || target < MINIMUM_BOT_TARGET || target > maximumBotTarget) {
+      onError(`봇 수는 ${MINIMUM_BOT_TARGET}~${maximumBotTarget} 사이의 정수여야 합니다.`);
+      return;
+    }
+    setBotTargetDraft(String(target));
+    onSetBots(target);
+  };
 
   const selectAdjacentPlayer = useCallback((reverse = false) => {
     if (alivePlayers.length === 0) return;
@@ -1363,17 +1377,53 @@ function RoomViewer({
         </div>
         <div className="room-actions">
           <span>사용자 <strong>{humans}</strong></span>
-          <span>봇 <strong>{bots}</strong></span>
-          <button disabled={botPending || resetPending} onClick={onAddBots} type="button">
-            {botPending ? "투입 중" : `봇 +${BOT_BATCH_SIZE}`}
+          <form
+            className="bot-target-control"
+            onSubmit={(event) => {
+              event.preventDefault();
+              requestBotTarget(Number(botTargetDraft));
+            }}
+          >
+            <label htmlFor={`bot-target-${room.id}`}>봇</label>
+            <span className="bot-current-count" title="현재 연결된 봇 수">
+              현재 {bots}
+            </span>
+            <input
+              aria-label="목표 봇 수"
+              disabled={botPending || resetPending}
+              id={`bot-target-${room.id}`}
+              inputMode="numeric"
+              max={maximumBotTarget}
+              min={MINIMUM_BOT_TARGET}
+              onBlur={() => setBotTargetFocused(false)}
+              onChange={(event) => setBotTargetDraft(event.target.value)}
+              onFocus={() => setBotTargetFocused(true)}
+              step={1}
+              type="number"
+              value={botTargetDraft}
+            />
+            <button
+              className="set-bots-button"
+              disabled={botPending || resetPending || botTargetDraft.trim() === ""}
+              type="submit"
+            >
+              {botPending ? "적용 중" : "Set"}
+            </button>
+          </form>
+          <button
+            disabled={botPending || resetPending || room.desiredBots >= maximumBotTarget}
+            onClick={() => requestBotTarget(Math.min(maximumBotTarget, room.desiredBots + BOT_BATCH_SIZE))}
+            type="button"
+          >
+            {`봇 +${BOT_BATCH_SIZE}`}
           </button>
           <button
             className="remove-bots-button"
-            disabled={botPending || resetPending || bots <= MINIMUM_VISIBLE_BOTS}
-            onClick={onRemoveBots}
+            disabled={botPending || resetPending || room.desiredBots <= MINIMUM_BOT_TARGET}
+            onClick={() => requestBotTarget(Math.max(MINIMUM_BOT_TARGET, room.desiredBots - BOT_BATCH_SIZE))}
             type="button"
           >
-            {botPending ? "조정 중" : `봇 -${BOT_BATCH_SIZE}`}
+            {`봇 -${BOT_BATCH_SIZE}`}
           </button>
           <button
             className="reset-map-button"
@@ -1524,37 +1574,18 @@ export function GameAdminConsole() {
     }
   }, [playerSpectating, selectedPlayer, selectedPlayerId, selectedRoom]);
 
-  async function addBots() {
+  async function setBots(target: number) {
     if (!selectedRoom || botPending) return;
     setBotPending(true);
     setError("");
     try {
-      await controlPlaneClient.addBots(selectedRoom.id, {
-        count: BOT_BATCH_SIZE,
-        intervalMs: 100,
-      });
+      const result = await controlPlaneClient.setBots(selectedRoom.id, target);
+      setRooms((current) => current.map((room) => (
+        room.id === selectedRoom.id ? { ...room, desiredBots: result.target } : room
+      )));
       await refresh(true);
-    } catch (addError) {
-      setError(errorMessage(addError));
-    } finally {
-      setBotPending(false);
-    }
-  }
-
-  async function removeBots() {
-    if (!selectedRoom || botPending) return;
-    const removableBots = Math.min(
-      BOT_BATCH_SIZE,
-      Math.max(0, playerCounts(selectedRoom).bots - MINIMUM_VISIBLE_BOTS),
-    );
-    if (removableBots < 1) return;
-    setBotPending(true);
-    setError("");
-    try {
-      await controlPlaneClient.removeBots(selectedRoom.id, removableBots);
-      await refresh(true);
-    } catch (removeError) {
-      setError(errorMessage(removeError));
+    } catch (setErrorValue) {
+      setError(errorMessage(setErrorValue));
     } finally {
       setBotPending(false);
     }
@@ -1683,8 +1714,7 @@ export function GameAdminConsole() {
         <RoomViewer
           botPending={botPending}
           resetPending={resetPendingRoomId === selectedRoom.id}
-          onAddBots={() => void addBots()}
-          onRemoveBots={() => void removeBots()}
+          onSetBots={(target) => void setBots(target)}
           onResetRoom={() => void resetMap()}
           onBack={() => {
             setSelectedRoomId(null);

@@ -10,6 +10,7 @@ import type {
   OpsEvent,
   RemoveBotsResult,
   RoomCommand,
+  SetBotsResult,
 } from "./control-plane.js";
 import { normalizeLobbyAdmissionStatus } from "../../src/lobby-admission.js";
 
@@ -162,6 +163,13 @@ export const controlPlaneClient = {
     return request<AddBotsResult>(roomPath(roomId, "/bots"), {
       method: "POST",
       body: JSON.stringify(input),
+    });
+  },
+
+  async setBots(roomId: string, target: number): Promise<SetBotsResult> {
+    return request<SetBotsResult>(roomPath(roomId, "/bots"), {
+      method: "PUT",
+      body: JSON.stringify({ target, intervalMs: 100 }),
     });
   },
 

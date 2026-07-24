@@ -45,13 +45,17 @@ test("admin room projection uses real map dimensions, live player fields, and bo
         createdAt: new Date().toISOString(),
       },
     }] });
-    if (url === "http://bots/bots") return json({ bots: [{
+    if (url === "http://bots/bots") return json({
+      minimumBotsPerRoom: 60,
+      desiredBotsPerRoom: { "room-0": 25 },
+      bots: [{
       id: "bot-1",
       sessionId: "session-bot-1",
       roomId: "room-0",
       mode: "normal",
       connected: true,
-    }] });
+      }],
+    });
     if (url === "http://game-0/summary") return json({
       roomId: "room-0",
       status: "running",
@@ -148,6 +152,7 @@ test("admin room projection uses real map dimensions, live player fields, and bo
   assert.equal(room.mode, "Faction 50v50");
   assert.equal(room.map, "Faction Island");
   assert.equal(room.maxPlayers, 100);
+  assert.equal(room.desiredBots, 25);
   assert.equal(room.joinLocked, true);
   assert.equal(room.serviceUrl, "/play/room-0/");
   assert.equal(room.players.length, 1);

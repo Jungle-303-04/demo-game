@@ -121,13 +121,14 @@ services:
     build: { context: ., dockerfile: services/bot-runner/Dockerfile }
     environment:
       <<: *control-environment
+      REDIS_URL: redis://redis:6379/0
       OPSIA_ROOM_DIRECTORY_URL: http://room-orchestrator:8082
       SESSION_GATEWAY_INTERNAL_URL: http://session-gateway:8083
       OPSIA_MIN_BOTS_PER_ROOM: "${OPSIA_MIN_BOTS_PER_ROOM:-1}"
       OPSIA_BOT_TACTICAL_BRAIN: "${OPSIA_BOT_TACTICAL_BRAIN:-false}"
       OPSIA_BOT_LIGHTWEIGHT_COMBAT: "${OPSIA_BOT_LIGHTWEIGHT_COMBAT:-true}"
     ports: ["8084:8084"]
-    depends_on: { room-orchestrator: { condition: service_started }, session-gateway: { condition: service_started } }
+    depends_on: { redis: { condition: service_healthy }, room-orchestrator: { condition: service_started }, session-gateway: { condition: service_started } }
   ops-console:
     build: { context: ., dockerfile: services/ops-console/Dockerfile }
     environment:

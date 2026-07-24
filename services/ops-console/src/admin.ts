@@ -189,6 +189,7 @@ export interface AdminRoom {
   map: string;
   mode: GameMode;
   maxPlayers: number;
+  desiredBots: number;
   status: "running" | "provisioning" | "stopped" | "recovering" | "degraded";
   matchPhase: "lobby" | "in_match" | "finished";
   players: AdminPlayer[];
@@ -379,7 +380,11 @@ export async function buildAdminRooms(
   const registryRooms = records ?? await listRegistryRooms(orchestrator);
   const sessionGateway = process.env.SESSION_GATEWAY_INTERNAL_URL ?? "http://session-gateway:8083";
   const [botResponse, latencyResponse] = await Promise.all([
-    optionalJson<{ bots: BotSummary[] }>(`${botRunner}/bots`),
+    optionalJson<{
+      bots: BotSummary[];
+      minimumBotsPerRoom?: number;
+      desiredBotsPerRoom?: Record<string, number>;
+    }>(`${botRunner}/bots`),
     optionalJson<{ sessions: GatewayLatencySummary[] }>(`${sessionGateway}/internal/latencies`),
   ]);
   const connectedBots = new Set((botResponse?.bots ?? []).filter((bot) => bot.connected).map((bot) => `${bot.roomId}:${bot.sessionId}`));
@@ -463,6 +468,9 @@ export async function buildAdminRooms(
       map: runtimeProfile.map,
       mode: summary?.mode ?? runtimeProfile.mode,
       maxPlayers: summary?.maxPlayers ?? snapshot?.map?.maxPlayers ?? runtimeProfile.maxPlayers,
+      desiredBots: botResponse?.desiredBotsPerRoom?.[record.roomId]
+        ?? botResponse?.minimumBotsPerRoom
+        ?? players.filter((player) => player.isBot).length,
       status,
       matchPhase: players.length > 0 ? "in_match" : status === "stopped" ? "finished" : "lobby",
       players,
