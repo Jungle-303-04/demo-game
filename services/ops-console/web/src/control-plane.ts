@@ -87,6 +87,7 @@ export interface GameRoom {
   map: string;
   mode: GameMode;
   maxPlayers: number;
+  desiredBots: number;
   status: RoomStatus;
   matchPhase: MatchPhase;
   players: PlayerTelemetry[];
@@ -186,6 +187,13 @@ export interface AddBotsResult {
   accepted: number;
 }
 
+export interface SetBotsResult {
+  target: number;
+  current: number;
+  pending: number;
+  jobId?: string;
+}
+
 export interface RemoveBotsResult {
   killed: number;
   remaining: number;
@@ -214,6 +222,7 @@ export interface GameControlPlane {
   commandRoom(roomId: string, command: RoomCommand): Promise<void>;
   resetRoom(roomId: string): Promise<void>;
   addBots(roomId: string, input: AddBotsInput): Promise<AddBotsResult>;
+  setBots(roomId: string, target: number): Promise<SetBotsResult>;
   cancelBotLoad(roomId: string, jobId: string): Promise<void>;
   removeBots(roomId: string, count: number): Promise<RemoveBotsResult>;
   setJoinLocked(roomId: string, locked: boolean): Promise<void>;

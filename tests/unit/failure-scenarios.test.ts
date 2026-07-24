@@ -68,6 +68,7 @@ const adminRoom = (overrides: Partial<AdminRoom> = {}): AdminRoom => ({
   map: "Faction Island",
   mode: "Faction 50v50",
   maxPlayers: 100,
+  desiredBots: 60,
   status: "running",
   matchPhase: "in_match",
   players: [],

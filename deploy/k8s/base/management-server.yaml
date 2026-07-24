@@ -56,6 +56,7 @@ spec:
           image: ghcr.io/jungle-303-04/demo-game/bot-runner:stable
           imagePullPolicy: Always
           env:
+            - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: OPSIA_ROOM_DIRECTORY_URL, value: http://127.0.0.1:8082 }
             - { name: SESSION_GATEWAY_INTERNAL_URL, value: http://session-gateway:8083 }
             - { name: OPSIA_MIN_BOTS_PER_ROOM, value: "60" }

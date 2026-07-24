@@ -11,6 +11,7 @@ spec:
         - name: bot-runner
           image: ghcr.io/jungle-303-04/demo-game/bot-runner:stable
           env:
+            - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: OPSIA_ROOM_DIRECTORY_URL, value: http://room-orchestrator:8082 }
             - { name: SESSION_GATEWAY_INTERNAL_URL, value: http://session-gateway:8083 }
             - { name: OPSIA_BOT_TACTICAL_BRAIN, value: "false" }

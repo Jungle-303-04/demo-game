@@ -278,6 +278,15 @@ const server = createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/admin/rooms") {
       const input = await readJson(request);
       const created = await jsonRequest<{ room: RegistryRoom }>(`${orchestrator}/rooms/create`, "POST", input);
+      try {
+        await jsonRequest(
+          `${botRunner}/bots/target/${encodeURIComponent(created.room.roomId)}`,
+          "DELETE",
+        );
+      } catch (error) {
+        await jsonRequest(`${orchestrator}/rooms/${created.room.roomId}`, "DELETE").catch(() => undefined);
+        throw error;
+      }
       recordEvent("ROOM_CREATED", created.room.roomId, "orchestrator", `${created.room.spec?.name ?? created.room.roomId} 생성`, "success");
       const initialBots = Number(input.initialBots ?? 0);
       if (initialBots > 0) {
@@ -306,6 +315,16 @@ const server = createServer(async (request, response) => {
     if (roomMatch && request.method === "DELETE") {
       const roomId = roomMatch[1]!;
       await jsonRequest(`${orchestrator}/rooms/${roomId}`, "DELETE");
+      await jsonRequest(
+        `${botRunner}/bots/target/${encodeURIComponent(roomId)}`,
+        "DELETE",
+      ).catch((error) => {
+        console.error(JSON.stringify({
+          level: "error",
+          event: "bot_target_cleanup_failed",
+          detail: { roomId, message: error instanceof Error ? error.message : String(error) },
+        }));
+      });
       recordEvent("ROOM_DELETED", roomId, "orchestrator", "게임 방과 registry 레코드 삭제", "warning");
       return send(response, 200, { deleted: roomId });
     }
@@ -369,6 +388,44 @@ const server = createServer(async (request, response) => {
       }, 10_000);
       recordEvent("BOT_LOAD_STARTED", roomId, "load-generator", `LoadBot ${job.total}명 투입 시작`, "info", { jobId: job.jobId });
       return send(response, 202, { jobId: job.jobId, accepted: job.total });
+    }
+    if (botsMatch && request.method === "PUT") {
+      const roomId = botsMatch[1]!;
+      const body = await readJson(request);
+      if (typeof body.target !== "number" || !Number.isInteger(body.target)) {
+        throw new Error("invalid_bot_target");
+      }
+      if (
+        body.intervalMs !== undefined
+        && (typeof body.intervalMs !== "number" || !Number.isInteger(body.intervalMs))
+      ) {
+        throw new Error("invalid_bot_interval");
+      }
+      const target = body.target;
+      const result = await jsonRequest<{
+        target: number;
+        current: number;
+        pending: number;
+        jobId?: string;
+      }>(
+        `${botRunner}/bots/target`,
+        "PUT",
+        {
+          room: roomId,
+          target,
+          intervalMs: body.intervalMs ?? 100,
+        },
+        10_000,
+      );
+      recordEvent(
+        "BOT_TARGET_SET",
+        roomId,
+        "load-generator",
+        `봇 목표 인원을 ${result.target}명으로 설정`,
+        "info",
+        { target: result.target, current: result.current, pending: result.pending },
+      );
+      return send(response, result.pending > 0 ? 202 : 200, result);
     }
     if (botsMatch && request.method === "DELETE") {
       const roomId = botsMatch[1]!;
