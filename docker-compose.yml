@@ -2,7 +2,7 @@ x-control-environment: &control-environment
   REQUIRE_CONTROL_TOKEN: "true"
   OPS_CONTROL_TOKEN: "${OPS_CONTROL_TOKEN:-demo-game-local-control-token}"
   OPSIA_SNAPSHOT_INTERVAL_MS: "${OPSIA_SNAPSHOT_INTERVAL_MS:-5000}"
-  OPSIA_BOT_STARTER_GUNS: "${OPSIA_BOT_STARTER_GUNS:-mp5,mac10,vector,hk416,ak47,scar,mosin,m870,m9}"
+  OPSIA_BOT_STARTER_GUNS: "${OPSIA_BOT_STARTER_GUNS:-mp5,mac10,vector,hk416,ak47,scar,mosin,m870,mp220,saiga,spas12,m9}"
 x-session-gateway-environment: &session-gateway-environment
   SESSION_GATEWAY_SHARED_SECRET: "${SESSION_GATEWAY_SHARED_SECRET:-demo-game-local-gateway-secret-change-me-32-bytes}"
 

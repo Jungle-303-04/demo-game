@@ -58,7 +58,7 @@ spec:
             - { name: POD_UID, valueFrom: { fieldRef: { fieldPath: metadata.uid } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
-            - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,m9" }
+            - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,mp220,saiga,spas12,m9" }
             - { name: OPSIA_INFINITE, value: "true" }
             - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
             - { name: REQUIRE_SESSION_GATEWAY, value: "true" }
@@ -133,7 +133,7 @@ spec:
             - { name: POD_UID, valueFrom: { fieldRef: { fieldPath: metadata.uid } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
-            - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,m9" }
+            - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,mp220,saiga,spas12,m9" }
             - { name: OPSIA_INFINITE, value: "true" }
             - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
             - { name: REQUIRE_SESSION_GATEWAY, value: "true" }
@@ -208,7 +208,7 @@ spec:
             - { name: POD_UID, valueFrom: { fieldRef: { fieldPath: metadata.uid } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
-            - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,m9" }
+            - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,mp220,saiga,spas12,m9" }
             - { name: OPSIA_INFINITE, value: "true" }
             - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
             - { name: REQUIRE_SESSION_GATEWAY, value: "true" }
@@ -283,7 +283,7 @@ spec:
             - { name: POD_UID, valueFrom: { fieldRef: { fieldPath: metadata.uid } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
-            - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,m9" }
+            - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,mp220,saiga,spas12,m9" }
             - { name: OPSIA_INFINITE, value: "true" }
             - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
             - { name: REQUIRE_SESSION_GATEWAY, value: "true" }
@@ -358,7 +358,7 @@ spec:
             - { name: POD_UID, valueFrom: { fieldRef: { fieldPath: metadata.uid } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
-            - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,m9" }
+            - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,mp220,saiga,spas12,m9" }
             - { name: OPSIA_INFINITE, value: "true" }
             - { name: SURVEV_CLIENT_DIR, value: /app/upstream-survev/client/dist }
             - { name: REQUIRE_SESSION_GATEWAY, value: "true" }

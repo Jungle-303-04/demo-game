@@ -7,6 +7,9 @@ export const DEFAULT_OPSIA_BOT_STARTER_GUNS = [
     "scar",
     "mosin",
     "m870",
+    "mp220",
+    "saiga",
+    "spas12",
     "m9",
 ] as const;
 
