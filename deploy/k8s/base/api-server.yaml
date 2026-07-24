@@ -58,5 +58,5 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata: { name: api-server, namespace: sandbox }
 spec:
-  minAvailable: 1
+  minAvailable: 2
   selector: { matchLabels: { app: api-server } }
