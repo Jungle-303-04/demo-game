@@ -11,7 +11,7 @@ images:
   - name: ghcr.io/jungle-303-04/demo-game/game-server
     newTag: 276977d3628e8cc5c7ce8c362add3b4111c7883e
   - name: ghcr.io/jungle-303-04/demo-game/api-server
-    newTag: 276977d3628e8cc5c7ce8c362add3b4111c7883e
+    newTag: 63f728c2c1a4c3345a24f91c40c922ff3941c344
   - name: ghcr.io/jungle-303-04/demo-game/bot-runner
     newTag: 276977d3628e8cc5c7ce8c362add3b4111c7883e
   - name: ghcr.io/jungle-303-04/demo-game/ops-console

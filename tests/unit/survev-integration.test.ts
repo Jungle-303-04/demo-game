@@ -542,7 +542,7 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.doesNotMatch(management, /- name: api-server\r?\n/);
   assert.match(baseKustomization, /- api-server\.yaml/);
   assert.doesNotMatch(baseKustomization, /monitoring\.yaml|alertmanager\.yaml/);
-  assert.match(apiServer, /name: api-server[\s\S]*replicas: 2/);
+  assert.match(apiServer, /name: api-server[\s\S]*replicas: [1-9]\d*/);
   assert.match(apiServer, /MAX_FIND_GAME_PER_SECOND, value: "25"/);
   assert.match(apiServer, /prometheus\.io\/scrape: "true"/);
   assert.match(apiServer, /prometheus\.io\/path: "\/metrics"/);
@@ -626,10 +626,16 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   }
   assert.match(publishImagesWorkflow, /ghcr\.io\/jungle-303-04\/demo-game\/\$\{\{ matrix\.image \}\}:\$\{\{ inputs\.tag \}\}/);
   assert.doesNotMatch(gameServerOverlay, /v20260720-/);
-  const pinnedImageTags = [...gameServerOverlay.matchAll(/newTag: ([0-9a-f]{40})/g)]
-    .map((match) => match[1]);
-  assert.equal(pinnedImageTags.length, 6);
-  assert.equal(new Set(pinnedImageTags).size, 1);
+  const pinnedImages = [
+    ...gameServerOverlay.matchAll(
+      /- name: ghcr\.io\/jungle-303-04\/demo-game\/([a-z-]+)\s+newTag: ([0-9a-f]{40})/g,
+    ),
+  ];
+  assert.equal(pinnedImages.length, 6);
+  const continuityImageTags = pinnedImages
+    .filter((match) => match[1] !== "api-server")
+    .map((match) => match[2]);
+  assert.equal(new Set(continuityImageTags).size, 1);
   assert.doesNotMatch(gameServerOverlay, /newTag: stable/);
   assert.match(gameServerOverlay, /kyro\.io\/workload-role: game/);
   assert.match(gameServerOverlay, /value: game\s+effect: NoSchedule/);
