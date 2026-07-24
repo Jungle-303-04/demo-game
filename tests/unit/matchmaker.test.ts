@@ -120,11 +120,11 @@ test("matchmaker metrics count every rejected admission and expose capacity", as
   );
   assert.match(
     metrics,
-    /opsia_sli_requests_total\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure",outcome="accepted"\} 1/,
+    /opsia_sli_requests_total\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure",outcome="success"\} 1/,
   );
   assert.match(
     metrics,
-    /opsia_sli_requests_total\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure",outcome="rate_limited"\} 1/,
+    /opsia_sli_requests_total\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure",outcome="failure"\} 1/,
   );
   assert.doesNotMatch(metrics, /root_category=/);
 });

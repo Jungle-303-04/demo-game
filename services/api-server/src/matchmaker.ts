@@ -186,10 +186,10 @@ export class Matchmaker {
         this.identity.namespace,
         this.identity.resourceKind,
         this.identity.resourceName,
-        this.identity.service,
-        this.identity.sli,
-        this.identity.symptom,
-        "accepted",
+      this.identity.service,
+      this.identity.sli,
+      this.identity.symptom,
+      "success",
       ).inc();
       const durationMs = performance.now() - startedAt;
       this.duration.labels("accepted").observe(durationMs / 1_000);
@@ -228,7 +228,7 @@ export class Matchmaker {
       this.identity.service,
       this.identity.sli,
       this.identity.symptom,
-      reason,
+      "failure",
     ).inc();
     const durationMs = performance.now() - startedAt;
     this.duration.labels(reason).observe(durationMs / 1_000);
