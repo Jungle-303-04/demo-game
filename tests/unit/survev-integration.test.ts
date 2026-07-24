@@ -631,4 +631,7 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.equal(pinnedImageTags.length, 6);
   assert.equal(new Set(pinnedImageTags).size, 1);
   assert.doesNotMatch(gameServerOverlay, /newTag: stable/);
+  assert.match(gameServerOverlay, /kyro\.io\/workload-role: game/);
+  assert.match(gameServerOverlay, /value: game\s+effect: NoSchedule/);
+  assert.match(gameServerOverlay, /name: management-server[\s\S]*kyro\.io\/workload-role: infra/);
 });
