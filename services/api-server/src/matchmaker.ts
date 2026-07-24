@@ -108,6 +108,17 @@ export class Matchmaker {
 
   constructor(private readonly directory: RoomDirectory, private readonly maxPerSecond = 25, private readonly now: () => number = Date.now, private readonly log: (entry: StructuredLog) => void = () => undefined) {
     this.capacity.set(maxPerSecond);
+    for (const outcome of ["success", "failure"] as const) {
+      this.opsiaRequests.labels(
+        this.identity.namespace,
+        this.identity.resourceKind,
+        this.identity.resourceName,
+        this.identity.service,
+        this.identity.sli,
+        this.identity.symptom,
+        outcome,
+      ).inc(0);
+    }
   }
 
   async findGame(sessionId: string, nickname: string, requestedRoomId?: string): Promise<RoomRegistryRecord> {

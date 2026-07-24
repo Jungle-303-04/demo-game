@@ -126,6 +126,15 @@ test("matchmaker metrics count every rejected admission and expose capacity", as
   assert.doesNotMatch(metrics, /root_category=/);
 });
 
+test("standard SLI initializes both outcome series before traffic starts", async () => {
+  const matchmaker = new Matchmaker({ list: async () => [] });
+  const metrics = await matchmaker.registry.metrics();
+
+  assert.match(metrics, /opsia_sli_requests_total\{[^}]+outcome="success"\} 0/);
+  assert.match(metrics, /opsia_sli_requests_total\{[^}]+outcome="failure"\} 0/);
+  assert.doesNotMatch(metrics, /opsia_sli_failure_ratio/);
+});
+
 test("matchmaker emits generic structured admission facts for Loki correlation", async () => {
   const directory: RoomDirectory = {
     list: async () => [{ ...recordForOrdinal(0), status: "running", players: 0 }],
