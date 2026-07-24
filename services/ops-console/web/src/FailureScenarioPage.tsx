@@ -199,7 +199,7 @@ function AdmissionCapacityPanel({ evidence }: { evidence?: FailureScenarioEviden
   return (
     <div className={`admission-capacity-panel ${incident && !stopped ? "is-incident" : ""}`}>
       <div className="admission-success-rate">
-        <span>신규 입장 실패율</span>
+        <span>신규 입장 실패율 · 최근 1분</span>
         <strong>{failureRate.toFixed(1)}<small>%</small></strong>
         <b>{stopped ? "측정 종료" : failureRate >= 20 ? "장애" : "정상 범위"}</b>
       </div>
@@ -209,6 +209,7 @@ function AdmissionCapacityPanel({ evidence }: { evidence?: FailureScenarioEviden
         <div><dt>거절</dt><dd>{evidenceNumber(evidence, "rejectedRps").toFixed(1)} req/s</dd></div>
         <div><dt>응답 P95</dt><dd>{evidenceNumber(evidence, "responseP95Ms").toFixed(1)} ms</dd></div>
         <div><dt>성공률</dt><dd>{evidenceNumber(evidence, "successRatePercent").toFixed(1)}%</dd></div>
+        <div><dt>관측 기준</dt><dd>Kyro SLI와 동일한 1분 창</dd></div>
         <div><dt>장애 기준</dt><dd>실패율 20%</dd></div>
       </dl>
     </div>

@@ -92,6 +92,7 @@ const percentile95 = (values: number[]): number => {
 
 const trimSlash = (value: string): string => value.replace(/\/+$/, "");
 const LOAD_LOOP_INTERVAL_MS = 100;
+export const ADMISSION_METRIC_WINDOW_MS = 60_000;
 
 export class AdmissionLoadController implements AdmissionLoadService {
   private readonly endpoint: string;
@@ -124,7 +125,15 @@ export class AdmissionLoadController implements AdmissionLoadService {
     this.rampIntervalMs = boundedInteger(options.rampIntervalMs ?? 5_000, 500, 60_000, "admission_ramp_interval_ms");
     this.maximumRps = boundedInteger(options.maximumRps ?? 40, this.initialRps, 5_000, "admission_maximum_rps");
     this.failureThreshold = options.failureThreshold ?? 0.2;
-    this.metricWindowMs = boundedInteger(options.metricWindowMs ?? 10_000, 1_000, 120_000, "admission_metric_window_ms");
+    // Kyro's canonical SLI recording rule uses
+    // rate(opsia_sli_requests_total[1m]). Matching that interval here keeps
+    // the operator UI and platform evidence on the same observation window.
+    this.metricWindowMs = boundedInteger(
+      options.metricWindowMs ?? ADMISSION_METRIC_WINDOW_MS,
+      1_000,
+      120_000,
+      "admission_metric_window_ms",
+    );
     // Operators normally stop the load after the GitOps scale-out is
     // verified. The mandatory TTL prevents an abandoned presentation from
     // applying admission pressure indefinitely.

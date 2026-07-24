@@ -201,6 +201,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(failureScenarioUi, /function roomPressureProfile/);
   assert.match(failureScenarioUi, /scenarioRoom\.active\.scenarioId !== "admission-storm"/);
   assert.match(failureScenarioUi, /로비 입장 실패율/);
+  assert.match(failureScenarioUi, /Kyro SLI와 동일한 1분 창/);
   assert.match(failureScenarioUi, /className="scenario-room-carousel"/);
   assert.match(failureScenarioUi, /className="scenario-load-score"/);
   assert.match(failureScenarioUi, /className="scenario-graph-line"/);
@@ -459,7 +460,10 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   const liveDeployments = await readFile(join(process.cwd(), "deploy/k8s/base/game.yaml"), "utf8");
   const roomServices = await readFile(join(process.cwd(), "deploy/k8s/base/services.yaml"), "utf8");
   const rbac = await readFile(join(process.cwd(), "deploy/k8s/base/rbac.yaml"), "utf8");
-  const canary = await readFile(join(process.cwd(), "deploy/k8s/base/canary.yaml"), "utf8");
+  const canary = [
+    await readFile(join(process.cwd(), "deploy/k8s/base/canary.yaml"), "utf8"),
+    await readFile(join(process.cwd(), "deploy/k8s/base/canary-support.yaml"), "utf8"),
+  ].join("\n---\n");
   const gateway = await readFile(join(process.cwd(), "deploy/k8s/base/gateway.yaml"), "utf8");
   const policy = await readFile(join(process.cwd(), "deploy/k8s/base/configmap.yaml"), "utf8");
   const management = await readFile(join(process.cwd(), "deploy/k8s/base/management-server.yaml"), "utf8");
@@ -643,5 +647,12 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.doesNotMatch(gameServerOverlay, /newTag: stable/);
   assert.match(gameServerOverlay, /kyro\.io\/workload-role: game/);
   assert.match(gameServerOverlay, /value: game\s+effect: NoSchedule/);
-  assert.match(gameServerOverlay, /name: management-server[\s\S]*kyro\.io\/workload-role: infra/);
+  assert.match(
+    gameServerOverlay,
+    /kind: Deployment\s+namespace: sandbox[\s\S]*kyro\.io\/workload-role: infra/,
+  );
+  assert.match(
+    gameServerOverlay,
+    /kind: StatefulSet\s+namespace: sandbox[\s\S]*kyro\.io\/workload-role: infra/,
+  );
 });

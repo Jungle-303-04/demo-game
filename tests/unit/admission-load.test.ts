@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { AdmissionLoadController } from "../../services/ops-console/src/admission-load.js";
+import {
+  ADMISSION_METRIC_WINDOW_MS,
+  AdmissionLoadController,
+} from "../../services/ops-console/src/admission-load.js";
 
 const waitUntil = async (predicate: () => boolean, timeoutMs = 5_000): Promise<void> => {
   const deadline = Date.now() + timeoutMs;
@@ -112,6 +115,10 @@ test("presentation admission load holds 40 RPS and has a bounded 30 minute safet
   assert.equal(started.maximumRps, 40);
   assert.equal(started.expiresAt, "2026-07-24T09:30:00.000Z");
   assert.equal(controller.stop(started.jobId).phase, "stopped");
+});
+
+test("presentation admission status uses the same one-minute window as the Kyro SLI", () => {
+  assert.equal(ADMISSION_METRIC_WINDOW_MS, 60_000);
 });
 
 test("scheduler drops overdue token debt instead of bursting after an event-loop stall", async () => {

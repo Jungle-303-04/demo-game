@@ -21,6 +21,18 @@ images:
   - name: ghcr.io/jungle-303-04/demo-game/session-gateway
     newTag: 276977d3628e8cc5c7ce8c362add3b4111c7883e
 patches:
+  # All non-game application Deployments belong on the infra node. The next
+  # patch replaces this selector for every labeled game-server Deployment.
+  - target:
+      group: apps
+      version: v1
+      kind: Deployment
+      namespace: sandbox
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value:
+          kyro.io/workload-role: infra
   - target:
       group: apps
       version: v1
@@ -28,7 +40,7 @@ patches:
       labelSelector: app=game-server
       namespace: sandbox
     patch: |-
-      - op: add
+      - op: replace
         path: /spec/template/spec/nodeSelector
         value:
           kyro.io/workload-role: game
@@ -43,8 +55,7 @@ patches:
   - target:
       group: apps
       version: v1
-      kind: Deployment
-      name: management-server
+      kind: StatefulSet
       namespace: sandbox
     patch: |-
       - op: add
