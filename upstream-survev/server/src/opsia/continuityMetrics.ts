@@ -5,11 +5,10 @@ export interface ContinuityMetricIdentity {
     namespace: string;
     resourceKind: string;
     resourceName: string;
-    continuityId: string;
     podUid: string;
 }
 
-type ContinuitySession = Pick<OpsiaSnapshotData["players"][number], "connected" | "sessionId">;
+type ContinuitySnapshot = Pick<OpsiaSnapshotData, "roomId" | "players" | "snapshot">;
 
 const nonEmpty = (value: string | undefined, fallback: string): string => value?.trim() || fallback;
 
@@ -21,12 +20,13 @@ export const readContinuityMetricIdentity = (
         namespace: nonEmpty(env.POD_NAMESPACE, "unknown"),
         resourceKind: nonEmpty(env.OPSIA_RESOURCE_KIND, "unknown"),
         resourceName,
-        continuityId: nonEmpty(env.OPSIA_CONTINUITY_ID, nonEmpty(env.ROOM_ID, resourceName)),
         podUid: nonEmpty(env.POD_UID, nonEmpty(env.POD_NAME, "unknown")),
     };
 };
 
-export const countActiveContinuitySessions = (sessions: readonly ContinuitySession[]): number =>
+export const countActiveContinuitySessions = (
+    sessions: readonly Pick<OpsiaSnapshotData["players"][number], "connected" | "sessionId">[],
+): number =>
     new Set(
         sessions
             .filter((session) => session.connected)
@@ -34,10 +34,19 @@ export const countActiveContinuitySessions = (sessions: readonly ContinuitySessi
             .filter(Boolean),
     ).size;
 
+export const runtimeContinuityId = (snapshot: ContinuitySnapshot): string | undefined => {
+    const roomId = snapshot.roomId.trim();
+    const roomEpoch = snapshot.snapshot.roomEpoch;
+    return roomId && Number.isSafeInteger(roomEpoch) && roomEpoch >= 0
+        ? `${roomId}:epoch:${roomEpoch}`
+        : undefined;
+};
+
 export class OpsiaContinuityMetrics {
     private readonly activeSessions: Gauge<
         "namespace" | "resource_kind" | "resource_name" | "continuity_id" | "pod_uid"
     >;
+    private previousContinuityId: string | undefined;
 
     constructor(
         registry: Registry,
@@ -49,19 +58,27 @@ export class OpsiaContinuityMetrics {
             labelNames: ["namespace", "resource_kind", "resource_name", "continuity_id", "pod_uid"] as const,
             registers: [registry],
         });
-        this.set(0);
     }
 
-    observe(sessions: readonly ContinuitySession[]): void {
-        this.set(countActiveContinuitySessions(sessions));
+    observe(snapshot: ContinuitySnapshot): void {
+        const continuityId = runtimeContinuityId(snapshot);
+        if (this.previousContinuityId && this.previousContinuityId !== continuityId) {
+            this.set(this.previousContinuityId, 0);
+        }
+        if (!continuityId) {
+            this.previousContinuityId = undefined;
+            return;
+        }
+        this.previousContinuityId = continuityId;
+        this.set(continuityId, countActiveContinuitySessions(snapshot.players));
     }
 
-    private set(value: number): void {
+    private set(continuityId: string, value: number): void {
         this.activeSessions.labels(
             this.identity.namespace,
             this.identity.resourceKind,
             this.identity.resourceName,
-            this.identity.continuityId,
+            continuityId,
             this.identity.podUid,
         ).set(value);
     }

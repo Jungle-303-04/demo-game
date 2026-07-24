@@ -213,7 +213,7 @@ class OpsiaMetrics {
     });
 
     observe(snapshot: OpsiaSnapshotData): void {
-        this.continuity.observe(snapshot.players);
+        this.continuity.observe(snapshot);
         this.tickP95.labels(snapshot.roomId).set(snapshot.tickP95Ms);
         this.tickRate.labels(snapshot.roomId).set(snapshot.tickRate);
         this.online.labels(snapshot.roomId).set(snapshot.players.filter((player) => player.connected).length);

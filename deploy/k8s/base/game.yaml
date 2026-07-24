@@ -52,8 +52,6 @@ spec:
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-0 }
             - { name: OPSIA_RESOURCE_KIND, value: Deployment }
-            - name: OPSIA_CONTINUITY_ID
-              valueFrom: { fieldRef: { fieldPath: "metadata.labels['game.opsia.dev/room-id']" } }
             - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
@@ -129,8 +127,6 @@ spec:
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-1 }
             - { name: OPSIA_RESOURCE_KIND, value: Deployment }
-            - name: OPSIA_CONTINUITY_ID
-              valueFrom: { fieldRef: { fieldPath: "metadata.labels['game.opsia.dev/room-id']" } }
             - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
@@ -206,8 +202,6 @@ spec:
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-2 }
             - { name: OPSIA_RESOURCE_KIND, value: Deployment }
-            - name: OPSIA_CONTINUITY_ID
-              valueFrom: { fieldRef: { fieldPath: "metadata.labels['game.opsia.dev/room-id']" } }
             - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
@@ -283,8 +277,6 @@ spec:
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-3 }
             - { name: OPSIA_RESOURCE_KIND, value: Deployment }
-            - name: OPSIA_CONTINUITY_ID
-              valueFrom: { fieldRef: { fieldPath: "metadata.labels['game.opsia.dev/room-id']" } }
             - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
@@ -360,8 +352,6 @@ spec:
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-4 }
             - { name: OPSIA_RESOURCE_KIND, value: Deployment }
-            - name: OPSIA_CONTINUITY_ID
-              valueFrom: { fieldRef: { fieldPath: "metadata.labels['game.opsia.dev/room-id']" } }
             - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
             - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }

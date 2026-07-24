@@ -11,7 +11,12 @@ spec:
   selector: { matchLabels: { app: api-server } }
   template:
     metadata:
-      labels: { app: api-server, app.kubernetes.io/part-of: demo-game }
+      labels:
+        app: api-server
+        app.kubernetes.io/part-of: demo-game
+        opsia.dev/service: api-server
+        opsia.dev/sli: admission
+        opsia.dev/symptom: admission_failure
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/path: "/metrics"
@@ -25,7 +30,15 @@ spec:
             - { name: ORCHESTRATOR_URL, value: http://login-gateway-management:8082 }
             - { name: MAX_FIND_GAME_PER_SECOND, value: "25" }
             - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
-            - { name: OPSIA_WORKLOAD_NAME, value: "api-server" }
+            - { name: OPSIA_RESOURCE_KIND, value: "Deployment" }
+            - name: OPSIA_WORKLOAD_NAME
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['app']" } }
+            - name: OPSIA_SERVICE_NAME
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['opsia.dev/service']" } }
+            - name: OPSIA_SLI_NAME
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['opsia.dev/sli']" } }
+            - name: OPSIA_SLI_SYMPTOM
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['opsia.dev/symptom']" } }
             - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
             - name: OPS_CONTROL_TOKEN
               valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
