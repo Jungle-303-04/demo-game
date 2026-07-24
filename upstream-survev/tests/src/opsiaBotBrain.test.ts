@@ -41,6 +41,40 @@ const snapshot = (overrides: Partial<BotBrainSnapshot> = {}): BotBrainSnapshot =
 });
 
 describe("Opsia protocol bot brain", () => {
+    test("lightweight bots retreat from the outer map margin before choosing combat or loot", () => {
+        const state = createBotBrainState(() => 0.5);
+        const intent = decideLightweightCombatIntent(
+            snapshot({
+                players: [
+                    player({ x: 100, y: 500 }),
+                    player({ sessionId: "enemy", team: "blue", x: 600, y: 500 }),
+                ],
+            }),
+            "self",
+            state,
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("edge");
+        expect(intent.moving).toBe(true);
+        expect(Math.cos(intent.moveAngle)).toBeGreaterThan(0.8);
+    });
+
+    test("tactical bots use the same enlarged map interior margin", () => {
+        const intent = decideBotIntent(
+            snapshot({ players: [player({ x: 100, y: 500 })] }),
+            "self",
+            createBotBrainState(() => 0.5),
+            1_000,
+            () => 0.5,
+        );
+
+        expect(intent.mode).toBe("edge");
+        expect(intent.moving).toBe(true);
+        expect(Math.cos(intent.moveAngle)).toBeGreaterThan(0.8);
+    });
+
     test("lightweight combat shoots a nearby enemy without tactical pathfinding", () => {
         const state = createBotBrainState(() => 0.5);
         const combat = snapshot({ capturedAt: 1_000 });

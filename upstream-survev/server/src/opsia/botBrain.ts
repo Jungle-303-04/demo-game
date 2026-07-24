@@ -1452,6 +1452,31 @@ const distributedDestination = (
     };
 };
 
+const mapInteriorMargin = (snapshot: BotBrainSnapshot): number => {
+    const shortestSide = Math.min(snapshot.map.width, snapshot.map.height);
+    return Math.min(shortestSide * 0.22, Math.max(72, shortestSide * 0.12));
+};
+
+const outsideMapInterior = (
+    snapshot: BotBrainSnapshot,
+    player: Pick<BotBrainPlayer, "x" | "y">,
+    margin = mapInteriorMargin(snapshot),
+): boolean => player.x < margin
+    || player.y < margin
+    || player.x > snapshot.map.width - margin
+    || player.y > snapshot.map.height - margin;
+
+const mapInteriorDestination = (
+    snapshot: BotBrainSnapshot,
+    sessionId: string,
+): NavigationPoint => distributedDestination(
+    sessionId,
+    "map-interior",
+    snapshot.map.width / 2,
+    snapshot.map.height / 2,
+    Math.min(snapshot.map.width, snapshot.map.height) * 0.2,
+);
+
 const updateRoamDestination = (
     snapshot: BotBrainSnapshot,
     self: BotBrainPlayer,
@@ -1474,7 +1499,7 @@ const updateRoamDestination = (
         : Math.min(snapshot.map.width, snapshot.map.height) * 0.34;
     const purpose = `roam:${state.roamSequence}`;
     const destination = distributedDestination(sessionId, purpose, centerX, centerY, maxRadius);
-    const margin = Math.max(28, Math.min(snapshot.map.width, snapshot.map.height) * 0.045);
+    const margin = mapInteriorMargin(snapshot);
     state.roamX = Math.max(margin, Math.min(snapshot.map.width - margin, destination.x));
     state.roamY = Math.max(margin, Math.min(snapshot.map.height - margin, destination.y));
     state.decisionUntil = now + 3_200 + hashUnit(sessionId, `${purpose}:duration`) * 4_600;
@@ -1621,6 +1646,51 @@ export const decideLightweightCombatIntent = (
     const loadedGun = gunSlots.find((slot) => slot.ammo > 0);
     const storedGun = loadedGun ?? gunSlots[0];
     const activeGunHasAmmo = activeKind === "gun" && self.ammo > 0;
+    const edgeMargin = mapInteriorMargin(snapshot);
+    if (outsideMapInterior(snapshot, self, edgeMargin)) {
+        state.targetLootId = undefined;
+        state.targetBreakableId = undefined;
+        const destination = mapInteriorDestination(snapshot, sessionId);
+        const centerAngle = angleTo(self.x, self.y, destination.x, destination.y);
+        state.wanderAngle = centerAngle;
+        state.decisionUntil = Math.max(state.decisionUntil, now + 1_800);
+
+        const profile = weaponProfile(self.weapon);
+        const shouldEquip = activeKind !== "gun"
+            ? storedGun?.equip
+            : self.ammo <= 0 && loadedGun && loadedGun.slot !== self.activeSlot
+            ? loadedGun.equip
+            : undefined;
+        const shouldReload = activeKind === "gun" && self.ammo <= 0 && shouldEquip === undefined;
+        const targetAngle = enemy
+            ? angleTo(self.x, self.y, enemy.player.x, enemy.player.y)
+            : centerAngle;
+        const canShoot = Boolean(
+            enemy
+            && enemy.distance <= 300
+            && activeGunHasAmmo
+            && profile.kind === "gun"
+            && enemy.distance <= profile.effectiveRange
+        );
+        const shoot = Boolean(canShoot && enemy && controlledFire(state, self, enemy, true, now, random));
+        return finishIntent(
+            state,
+            {
+                mode: "edge",
+                moveAngle: centerAngle,
+                aimAngle: targetAngle,
+                aimDistance: enemy ? Math.min(64, Math.max(18, enemy.distance)) : 48,
+                shoot,
+                interact: false,
+                reload: shouldReload,
+                equip: shouldEquip,
+                forceShootStart: shoot,
+            },
+            "force",
+            now,
+            random,
+        );
+    }
     if (enemy && enemy.distance <= 300 && (activeGunHasAmmo || storedGun)) {
         state.targetLootId = undefined;
         state.targetBreakableId = undefined;
@@ -2111,20 +2181,13 @@ export const decideBotIntent = (
         );
     }
 
-    const edgeMargin = Math.max(70, Math.min(snapshot.map.width, snapshot.map.height) * 0.07);
-    const outsideMapCenter = self.x < edgeMargin
-        || self.y < edgeMargin
-        || self.x > snapshot.map.width - edgeMargin
-        || self.y > snapshot.map.height - edgeMargin;
-    if (outsideMapCenter) {
+    const edgeMargin = mapInteriorMargin(snapshot);
+    if (outsideMapInterior(snapshot, self, edgeMargin)) {
         state.healingUntil = 0;
-        const edgeDestination = distributedDestination(
-            sessionId,
-            "map-edge",
-            snapshot.map.width / 2,
-            snapshot.map.height / 2,
-            Math.min(snapshot.map.width, snapshot.map.height) * 0.24,
-        );
+        const edgeDestination = mapInteriorDestination(snapshot, sessionId);
+        state.roamX = edgeDestination.x;
+        state.roamY = edgeDestination.y;
+        state.decisionUntil = Math.max(state.decisionUntil, now + 1_800);
         const centerAngle = navigateTo(
             snapshot,
             self,
