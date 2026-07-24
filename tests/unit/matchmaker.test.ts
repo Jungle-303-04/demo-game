@@ -116,8 +116,17 @@ test("matchmaker metrics count every rejected admission and expose capacity", as
   assert.match(metrics, /find_game_request_duration_seconds_count\{outcome="rate_limited"\} 1/);
   assert.match(
     metrics,
-    /opsia_sli_failure_ratio\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure",root_category="capacity_regression"\} 0\.5/,
+    /opsia_sli_failure_ratio\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure"\} 0\.5/,
   );
+  assert.match(
+    metrics,
+    /opsia_sli_requests_total\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure",outcome="accepted"\} 1/,
+  );
+  assert.match(
+    metrics,
+    /opsia_sli_requests_total\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure",outcome="rate_limited"\} 1/,
+  );
+  assert.doesNotMatch(metrics, /root_category=/);
 });
 
 test("scraping clears a stale failure gauge after the one second admission window", async () => {

@@ -1,3 +1,6 @@
+# OPTIONAL LEGACY MONITORING: this file is intentionally not referenced by
+# base/kustomization.yaml. The Kyro cluster installer owns generic SLI scrape
+# and alert rules; apply this file manually only for the game-only rules below.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata: { name: demo-game, namespace: sandbox }
@@ -26,25 +29,3 @@ spec:
           for: 20s
           labels: { severity: warning, service: game-server }
           annotations: { summary: "rejected game input is elevated" }
-        - alert: DemoGameJoinStorm
-          expr: |
-            max by (
-              namespace,
-              resource_kind,
-              resource_name,
-              service,
-              sli,
-              symptom,
-              root_category
-            ) (
-              opsia_sli_failure_ratio{
-                namespace="sandbox",
-                resource_kind="Deployment",
-                resource_name="api-server",
-                symptom="admission_failure",
-                root_category="capacity_regression"
-              }
-            ) > 0.2
-          for: 20s
-          labels: { severity: warning, service: api-server }
-          annotations: { summary: "matchmaking rejections are elevated" }

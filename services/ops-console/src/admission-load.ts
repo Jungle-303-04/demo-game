@@ -91,6 +91,7 @@ const percentile95 = (values: number[]): number => {
 };
 
 const trimSlash = (value: string): string => value.replace(/\/+$/, "");
+const LOAD_LOOP_INTERVAL_MS = 100;
 
 export class AdmissionLoadController implements AdmissionLoadService {
   private readonly endpoint: string;
@@ -128,7 +129,7 @@ export class AdmissionLoadController implements AdmissionLoadService {
     // verified. The mandatory TTL prevents an abandoned presentation from
     // applying admission pressure indefinitely.
     this.safetyTtlMs = boundedInteger(
-      options.safetyTtlMs ?? 15 * 60_000,
+      options.safetyTtlMs ?? 30 * 60_000,
       10_000,
       30 * 60_000,
       "admission_safety_ttl_ms",
@@ -200,12 +201,26 @@ export class AdmissionLoadController implements AdmissionLoadService {
         }
         const elapsedMs = Math.max(1, now - previous);
         previous = now;
-        carry += job.targetRps * elapsedMs / 1_000;
-        const count = Math.min(100, Math.floor(carry));
+        // Do not replay traffic debt after the event loop stalls. A load
+        // generator that catches up with a large burst would manufacture a
+        // different failure mode than the intended sustained 40 RPS.
+        if (elapsedMs > LOAD_LOOP_INTERVAL_MS * 2.5) carry = 0;
+        const effectiveElapsedMs = elapsedMs > LOAD_LOOP_INTERVAL_MS * 2.5
+          ? LOAD_LOOP_INTERVAL_MS
+          : elapsedMs;
+        const perTickLimit = Math.max(
+          1,
+          Math.ceil(job.targetRps * LOAD_LOOP_INTERVAL_MS / 1_000),
+        );
+        carry = Math.min(
+          perTickLimit,
+          carry + job.targetRps * effectiveElapsedMs / 1_000,
+        );
+        const count = Math.floor(carry);
         carry -= count;
         for (let index = 0; index < count; index += 1) void this.issue(job);
         this.evaluateRamp(job);
-        await this.sleep(100);
+        await this.sleep(LOAD_LOOP_INTERVAL_MS);
       }
     } catch (error) {
       job.phase = "failed";

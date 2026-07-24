@@ -60,7 +60,20 @@ export class Matchmaker {
       "service",
       "sli",
       "symptom",
-      "root_category",
+    ] as const,
+    registers: [this.registry],
+  });
+  private readonly opsiaRequests = new Counter({
+    name: "opsia_sli_requests_total",
+    help: "Standardized workload SLI request count for Opsia/Kyro verification",
+    labelNames: [
+      "namespace",
+      "resource_kind",
+      "resource_name",
+      "service",
+      "sli",
+      "symptom",
+      "outcome",
     ] as const,
     registers: [this.registry],
   });
@@ -83,7 +96,6 @@ export class Matchmaker {
       "api-server",
       "admission",
       "admission_failure",
-      "capacity_regression",
     ).set(0);
   }
 
@@ -138,6 +150,15 @@ export class Matchmaker {
         );
       }
       this.requests.labels("accepted").inc();
+      this.opsiaRequests.labels(
+        process.env.POD_NAMESPACE ?? "sandbox",
+        "Deployment",
+        process.env.OPSIA_WORKLOAD_NAME ?? "api-server",
+        "api-server",
+        "admission",
+        "admission_failure",
+        "accepted",
+      ).inc();
       this.duration.labels("accepted").observe((performance.now() - startedAt) / 1_000);
       return room;
     } finally {
@@ -160,6 +181,15 @@ export class Matchmaker {
     attempt.failed = true;
     this.updateFailureRatio();
     this.requests.labels(reason).inc();
+    this.opsiaRequests.labels(
+      process.env.POD_NAMESPACE ?? "sandbox",
+      "Deployment",
+      process.env.OPSIA_WORKLOAD_NAME ?? "api-server",
+      "api-server",
+      "admission",
+      "admission_failure",
+      reason,
+    ).inc();
     this.duration.labels(reason).observe((performance.now() - startedAt) / 1_000);
     this.log({ level: "warn", event: "find_game_rejected", sessionId, nickname, detail: { reason } });
     throw new Error(`find_game_rejected:${reason}`);
@@ -176,7 +206,6 @@ export class Matchmaker {
       "api-server",
       "admission",
       "admission_failure",
-      "capacity_regression",
     ).set(ratio);
   }
 

@@ -1420,6 +1420,7 @@ export function GameAdminConsole() {
     active: false,
     failureRatePercent: 0,
     targetRps: 0,
+    requestRps: 0,
     incidentTriggered: false,
   });
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);

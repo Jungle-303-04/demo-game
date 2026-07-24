@@ -11,11 +11,18 @@ import type {
   RemoveBotsResult,
   RoomCommand,
 } from "./control-plane.js";
+import { normalizeLobbyAdmissionStatus } from "../../src/lobby-admission.js";
 
 interface RoomsResponse {
   rooms: GameRoom[];
   capabilities: ControlPlaneCapabilities;
   admission: LobbyAdmissionStatus;
+}
+
+interface RawRoomsResponse {
+  rooms: GameRoom[];
+  capabilities: ControlPlaneCapabilities;
+  admission?: unknown;
 }
 
 interface RoomResponse {
@@ -75,7 +82,13 @@ const roomPath = (roomId: string, suffix = "") =>
 
 export const controlPlaneClient = {
   async getState(compact = false): Promise<RoomsResponse> {
-    return request<RoomsResponse>(`/api/admin/rooms${compact ? "?compact=1" : ""}`);
+    const response = await request<RawRoomsResponse>(
+      `/api/admin/rooms${compact ? "?compact=1" : ""}`,
+    );
+    return {
+      ...response,
+      admission: normalizeLobbyAdmissionStatus(response.admission),
+    };
   },
 
   async listEvents(): Promise<OpsEvent[]> {

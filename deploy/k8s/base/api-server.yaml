@@ -26,18 +26,12 @@ spec:
             - { name: MAX_FIND_GAME_PER_SECOND, value: "25" }
             - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
             - { name: OPSIA_WORKLOAD_NAME, value: "api-server" }
-            - { name: ADMISSION_OVERLOAD_THRESHOLD_REQUESTS, value: "35" }
-            - { name: ADMISSION_OVERLOAD_WINDOW_MS, value: "1000" }
-            - { name: ADMISSION_OVERLOAD_EXIT_CODE, value: "70" }
-            - { name: ADMISSION_FAILURE_STATE_FILE, value: "/var/run/opsia/admission-overload.failed" }
             - { name: REQUIRE_CONTROL_TOKEN, value: "true" }
             - name: OPS_CONTROL_TOKEN
               valueFrom: { secretKeyRef: { name: demo-game-control, key: token } }
           ports: [{ name: http, containerPort: 8081 }]
           readinessProbe: { httpGet: { path: /healthz, port: http }, initialDelaySeconds: 2 }
-          volumeMounts: [{ name: admission-failure-state, mountPath: /var/run/opsia }]
           resources: { requests: { cpu: 50m, memory: 64Mi }, limits: { cpu: 250m, memory: 256Mi } }
-      volumes: [{ name: admission-failure-state, emptyDir: {} }]
 ---
 apiVersion: v1
 kind: Service

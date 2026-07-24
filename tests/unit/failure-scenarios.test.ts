@@ -400,13 +400,33 @@ test("admission saturation is a 40 RPS capacity regression and never arms or exi
   );
   assert.equal(stopped, false);
 
-  loadStatus = {
+  const recoveredUnderSustainedLoad: AdmissionLoadStatus = {
     ...loadStatus,
     successRatePercent: 100,
     failureRatePercent: 0,
+    requestRps: 40,
     acceptedRps: 40,
     rejectedRps: 0,
   };
+  const invalidRecoveryStates: AdmissionLoadStatus[] = [
+    { ...recoveredUnderSustainedLoad, phase: "ramping" },
+    { ...recoveredUnderSustainedLoad, phase: "safety_timeout" },
+    { ...recoveredUnderSustainedLoad, phase: "failed" },
+    { ...recoveredUnderSustainedLoad, phase: "stopped" },
+    { ...recoveredUnderSustainedLoad, targetRps: 39 },
+    { ...recoveredUnderSustainedLoad, requestRps: 35.9 },
+    { ...recoveredUnderSustainedLoad, requestRps: 44.1 },
+  ];
+  for (const invalid of invalidRecoveryStates) {
+    loadStatus = invalid;
+    await assert.rejects(
+      controller.recover(record, room, "admission-storm"),
+      /admission_capacity_recovery_not_verified/,
+    );
+    assert.equal(stopped, false);
+  }
+
+  loadStatus = recoveredUnderSustainedLoad;
   const stoppedResult = await controller.recover(record, room, "admission-storm");
   assert.equal(stoppedResult.status, "completed");
   assert.equal(stoppedResult.evidence?.failureRatePercent, 0);
@@ -420,6 +440,7 @@ test("admission saturation is a 40 RPS capacity regression and never arms or exi
     active: false,
     failureRatePercent: 0,
     targetRps: 0,
+    requestRps: 0,
     incidentTriggered: false,
   });
   assert.ok(calls.every((call) => !call.includes("/ops/failure/admission-overload/")));

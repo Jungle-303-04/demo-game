@@ -1,35 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { controlTokenMatches, readControlToken } from "../../control-plane-auth.js";
-import { AdmissionFailureState } from "./admission-failure-state.js";
-import { AdmissionOverloadFuse } from "./admission-overload.js";
+import { readControlToken } from "../../control-plane-auth.js";
 import { HttpRoomDirectory, Matchmaker } from "./matchmaker.js";
 
 const port = Number(process.env.PORT ?? 8081);
 const log = (event: { level: string; event: string; [key: string]: unknown }) => process.stdout.write(`${JSON.stringify(event)}\n`);
 const controlToken = readControlToken();
-const failureState = new AdmissionFailureState(
-  process.env.ADMISSION_FAILURE_STATE_FILE ?? "/tmp/opsia-admission-overload.failed",
-);
-let admissionUnavailable = failureState.failed();
-const overloadExitCode = Number.parseInt(process.env.ADMISSION_OVERLOAD_EXIT_CODE ?? "70", 10);
-if (!Number.isInteger(overloadExitCode) || overloadExitCode < 1 || overloadExitCode > 255) {
-  throw new Error("admission_overload_exit_code_invalid");
-}
-const overloadFuse = new AdmissionOverloadFuse({
-  thresholdRequests: Number.parseInt(process.env.ADMISSION_OVERLOAD_THRESHOLD_REQUESTS ?? "35", 10),
-  windowMs: Number.parseInt(process.env.ADMISSION_OVERLOAD_WINDOW_MS ?? "1000", 10),
-  onTrip: (status) => {
-    failureState.trip();
-    admissionUnavailable = true;
-    log({
-      level: "error",
-      event: "admission_server_overload_failure",
-      detail: { ...status, exitCode: overloadExitCode, recoveryOwner: "external-service" },
-    });
-    const exitTimer = setTimeout(() => process.exit(overloadExitCode), 25);
-    exitTimer.unref();
-  },
-});
 const matchmaker = new Matchmaker(
   new HttpRoomDirectory(process.env.ORCHESTRATOR_URL ?? "http://room-orchestrator:8082", controlToken),
   Number(process.env.MAX_FIND_GAME_PER_SECOND ?? 25),
@@ -62,51 +37,14 @@ const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
   try {
     if (request.method === "GET" && url.pathname === "/healthz") {
-      if (admissionUnavailable) {
-        return send(response, 503, { status: "failed", admissionOverload: overloadFuse.status() });
-      }
-      return send(response, 200, { status: "ok", admissionOverload: overloadFuse.status() });
+      return send(response, 200, { status: "ok" });
     }
     if (request.method === "GET" && url.pathname === "/metrics") {
-      const overload = overloadFuse.status();
       matchmaker.refreshMetrics();
       response.writeHead(200, { "content-type": matchmaker.registry.contentType });
-      return response.end(`${await matchmaker.registry.metrics()}\n# TYPE admission_overload_armed gauge\nadmission_overload_armed ${overload.armed ? 1 : 0}\n# TYPE admission_overload_failed gauge\nadmission_overload_failed ${admissionUnavailable ? 1 : 0}\n# TYPE admission_overload_recent_requests gauge\nadmission_overload_recent_requests ${overload.recentRequests}\n# TYPE admission_overload_threshold_requests gauge\nadmission_overload_threshold_requests ${overload.thresholdRequests}\n`);
-    }
-    if (request.method === "POST" && url.pathname === "/ops/failure/admission-overload/arm") {
-      if (!controlTokenMatches(request.headers.authorization, controlToken)) {
-        response.setHeader("www-authenticate", "Bearer realm=\"demo-game-control\"");
-        return send(response, 401, { error: "unauthorized" });
-      }
-      if (admissionUnavailable) return send(response, 409, { error: "admission_recovery_required" });
-      const status = overloadFuse.arm();
-      log({ level: "warn", event: "admission_overload_armed", detail: status });
-      return send(response, 200, status);
-    }
-    if (request.method === "POST" && url.pathname === "/ops/failure/admission-overload/recover") {
-      if (!controlTokenMatches(request.headers.authorization, controlToken)) {
-        response.setHeader("www-authenticate", "Bearer realm=\"demo-game-control\"");
-        return send(response, 401, { error: "unauthorized" });
-      }
-      failureState.recover();
-      admissionUnavailable = false;
-      const status = overloadFuse.disarm();
-      log({ level: "info", event: "admission_overload_recovered", detail: status });
-      return send(response, 200, { status: "ok", admissionOverload: status });
-    }
-    if (request.method === "POST" && url.pathname === "/ops/failure/admission-overload/disarm") {
-      if (!controlTokenMatches(request.headers.authorization, controlToken)) {
-        response.setHeader("www-authenticate", "Bearer realm=\"demo-game-control\"");
-        return send(response, 401, { error: "unauthorized" });
-      }
-      const status = overloadFuse.disarm();
-      log({ level: "info", event: "admission_overload_disarmed", detail: status });
-      return send(response, 200, status);
+      return response.end(`${await matchmaker.registry.metrics()}\n`);
     }
     if (request.method === "POST" && url.pathname === "/api/find-game") {
-      if (admissionUnavailable) return send(response, 503, { error: "admission_server_failed" });
-      overloadFuse.observeRequest();
-      if (admissionUnavailable) return send(response, 503, { error: "admission_server_failed" });
       const body = await readJson(request); const sessionId = String(body.sessionId ?? ""); const nickname = String(body.nickname ?? "");
       if (!sessionId) return send(response, 400, { error: "sessionId_required" });
       const requestedRoomId = body.roomId === undefined ? undefined : String(body.roomId);
@@ -133,7 +71,4 @@ const server = createServer(async (request, response) => {
     return send(response, status, { error: message });
   }
 });
-if (admissionUnavailable) {
-  log({ level: "warn", event: "admission_server_recovery_required", detail: { recoveryOwner: "operator" } });
-}
 server.listen(port, () => log({ level: "info", event: "api_server_listening", detail: { port } }));

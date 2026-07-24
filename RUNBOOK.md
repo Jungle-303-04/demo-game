@@ -79,7 +79,8 @@ npm run botctl -- spawn --count 1 --room room-0 --mode hack --nickname xX_Speed_
 - 비용 절감이 포함된 잘못된 릴리스 PR에서 `replicas: 2`를 `replicas: 1`로 줄인다.
 - 운영 콘솔의 `입장 서버 장애`는 로비 gateway에 40 RPS를 고정으로 보낸다. 프로세스 종료나 Pod 삭제를 arm하지 않는다.
 - 1 Pod에서는 약 15/40건이 거절되어 실패율이 20% 장애 기준을 넘고, 2 Pod에서는 같은 40 RPS를 모두 처리한다.
-- 부하는 운영자가 검증을 끝내기 전에 잊어도 15분 뒤 자동 종료된다.
+- 운영자가 복구를 확인하고 정상 종료하는 것이 기본 경로다. 부하를 잊은 경우에만 절대 안전 한계인
+  30분 뒤 `safety_timeout`으로 중단되며, 이 상태는 복구 성공으로 인정하지 않는다.
 
 장애 재현 전 토폴로지를 확인한다.
 
@@ -98,21 +99,40 @@ kubectl --context game-server -n sandbox logs deploy/api-server --since=2m \
   | grep find_game_rejected
 kubectl --context game-server -n sandbox port-forward svc/login-gateway-api 18081:8081
 curl -fsS http://127.0.0.1:18081/metrics \
-  | grep -E 'find_game_fail_ratio|opsia_sli_failure_ratio|find_game_capacity_per_second'
+  | grep -E 'find_game_fail_ratio|opsia_sli_failure_ratio|opsia_sli_requests_total|find_game_capacity_per_second'
 ```
 
 정상적인 관측 결과는 다음과 같다.
 
-- 로비 전역 `opsia_sli_failure_ratio`가 0.2를 넘고 `DemoGameJoinStorm`이 firing한다.
+- 로비 전역 `opsia_sli_failure_ratio`가 0.2를 넘고, Kyro 클러스터 설치기가 관리하는 범용 SLI
+  규칙이 firing한다. `deploy/k8s/base/monitoring.yaml`은 base kustomization에 포함되지 않는
+  선택적 게임 전용 규칙이며 로비 장애 감지 계약이 아니다.
+- `opsia_sli_requests_total`의 `outcome="accepted"`와 `outcome="rate_limited"`가 같은 workload
+  identity로 누적된다. 메트릭에는 원인을 하드코딩하지 않으며, RCA는 배포 diff와
+  `find_game_rejected` 로그를 함께 사용해 용량 회귀를 판정한다.
 - `find_game_rejected`의 reason은 `rate_limited`다.
 - `api-server` `/healthz`는 계속 200이고 restart count는 증가하지 않는다.
 - `game-room-0`~`game-room-4`의 Ready 상태와 기존 WebSocket 세션은 그대로다.
 - 게임 운영 화면에서는 룸 카드가 모두 정상이고, 전역 `로비 입장` 배지만 빨간색이다.
 
 복구 PR은 `api-server`를 다시 `replicas: 2`로 올린다. 부하를 먼저 끄지 말고 같은 40 RPS 아래에서
-실패율이 20% 미만으로 내려가는 것을 확인한다. 운영 콘솔의 복구 완료 동작도 이 조건 전에는 409
+시나리오가 `saturated` 상태이고 실제 관측 요청률이 36~44 RPS로 유지되면서 실패율이 20% 미만으로
+내려가는 것을 확인한다. 운영 콘솔의 복구 완료 동작도 이 조건 전에는 409
 `admission_capacity_recovery_not_verified`로 거절된다. 조건을 만족한 뒤 복구 완료를 누르면 부하를
 중단한다.
+
+#### 발표 전 실제 클러스터 용량 스모크
+
+아래 검사는 격리된 발표 사전 점검에서만 실행한다. 스크립트는 실제 Deployment를 2→1→2로 직접
+스케일하고 종료 시 2개로 되돌린다. 발표 본 흐름에서는 이 명령 대신 반드시 GitOps PR을 사용한다.
+각 구간은 20초를 초과해 관측하며 정상 2개는 실패율 20% 미만, 축소 1개는 20% 초과,
+실제 요청률은 36~44 RPS인지 함께 검증한다.
+
+```bash
+ADMISSION_SMOKE_DURATION_SECONDS=25 \
+  ./scripts/k8s-admission-capacity-smoke.sh \
+  game-server https://GAME_GATEWAY_HOST sandbox
+```
 
 ### 08 bad-canary
 

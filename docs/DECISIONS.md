@@ -28,9 +28,12 @@ api-server replicas 조정만 문서화하며, 로그의 세션 식별자를 외
 없고 회귀 상태에서 약 37.5%가 rate limit으로 거절된다. 이 시나리오는 overload fuse를 arm하거나
 프로세스를 종료하지 않는다. 기존 게임 WebSocket과 5개 game-room은 장애 대상이 아니다.
 
-복구 판정은 같은 40 RPS 아래에서 실패율이 20% 미만으로 내려간 뒤에만 가능하며, 안전을 위해 부하는
-15분 뒤 자동 종료된다. 로비 SLI는 workload identity 라벨이 포함된 `opsia_sli_failure_ratio`로
-노출하고, 룸 UI에 전역 실패율을 귀속시키지 않는다.
+복구 판정은 부하가 `saturated`이고 실제 요청률이 36~44 RPS인 같은 40 RPS 아래에서 실패율이
+20% 미만으로 내려간 뒤에만 가능하다. 운영자 종료가 정상 경로이며, 잊힌 부하는 30분 절대 안전 한계에서
+`safety_timeout`으로 중단하되 이를 복구로 인증하지 않는다. 로비 SLI는 workload identity 라벨이
+포함된 `opsia_sli_failure_ratio`와 outcome별 `opsia_sli_requests_total`로 노출한다.
+원인 분류는 메트릭 라벨에 하드코딩하지 않고 Git diff와 로그 evidence로 판단하며, 룸 UI에 전역
+실패율을 귀속시키지 않는다.
 
 ## 2026-07-16: 실제 Game 상태 복원
 

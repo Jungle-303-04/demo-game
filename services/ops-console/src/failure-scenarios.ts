@@ -109,6 +109,9 @@ const ADMISSION_CAPACITY_PER_REPLICA_RPS = 25;
 const ADMISSION_HEALTHY_REPLICAS = 2;
 const ADMISSION_DEGRADED_REPLICAS = 1;
 const ADMISSION_INCIDENT_FAILURE_PERCENT = 20;
+const ADMISSION_TARGET_RPS = 40;
+const ADMISSION_RECOVERY_MIN_REQUEST_RPS = 36;
+const ADMISSION_RECOVERY_MAX_REQUEST_RPS = 44;
 
 export const isFailureScenarioId = (value: string): value is FailureScenarioId =>
   FAILURE_SCENARIO_IDS.some((scenarioId) => scenarioId === value);
@@ -210,6 +213,7 @@ export class FailureScenarioController {
     active: boolean;
     failureRatePercent: number;
     targetRps: number;
+    requestRps: number;
     incidentTriggered: boolean;
   } {
     for (const run of this.activeRuns.values()) {
@@ -220,6 +224,7 @@ export class FailureScenarioController {
         active: !["stopped", "safety_timeout", "failed"].includes(status.phase),
         failureRatePercent: status.failureRatePercent,
         targetRps: status.targetRps,
+        requestRps: status.requestRps,
         incidentTriggered: status.incidentTriggered,
       };
     }
@@ -227,6 +232,7 @@ export class FailureScenarioController {
       active: false,
       failureRatePercent: 0,
       targetRps: 0,
+      requestRps: 0,
       incidentTriggered: false,
     };
   }
@@ -396,7 +402,11 @@ export class FailureScenarioController {
         const verified = this.admissionLoad.status(run.jobId);
         if (
           !verified
+          || verified.phase !== "saturated"
           || !verified.incidentTriggered
+          || verified.targetRps !== ADMISSION_TARGET_RPS
+          || verified.requestRps < ADMISSION_RECOVERY_MIN_REQUEST_RPS
+          || verified.requestRps > ADMISSION_RECOVERY_MAX_REQUEST_RPS
           || verified.failureRatePercent >= ADMISSION_INCIDENT_FAILURE_PERCENT
         ) {
           run.status = "active";
@@ -406,7 +416,14 @@ export class FailureScenarioController {
               error: "admission_capacity_recovery_not_verified",
               failureRatePercent: verified?.failureRatePercent,
               requiredBelowPercent: ADMISSION_INCIDENT_FAILURE_PERCENT,
-              loadRps: verified?.targetRps,
+              phase: verified?.phase,
+              targetRps: verified?.targetRps,
+              requiredTargetRps: ADMISSION_TARGET_RPS,
+              requestRps: verified?.requestRps,
+              requiredRequestRps: {
+                minimum: ADMISSION_RECOVERY_MIN_REQUEST_RPS,
+                maximum: ADMISSION_RECOVERY_MAX_REQUEST_RPS,
+              },
             },
             "admission_capacity_recovery_not_verified",
           );
