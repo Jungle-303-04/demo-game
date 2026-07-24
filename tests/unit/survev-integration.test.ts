@@ -501,8 +501,27 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.equal((liveDeployments.match(/opsia\.dev\/rollout-role: active-candidate/g) ?? []).length, 10);
   assert.equal(
     (liveDeployments.match(/opsia\.dev\/recovery-continuity: protected/g) ?? []).length,
-    5,
+    10,
   );
+  const protectedRoomDeployments = liveDeployments
+    .split(/^---\s*$/m)
+    .filter((document) => /kind: Deployment/.test(document))
+    .filter((document) => /opsia\.dev\/recovery-continuity: protected/.test(document));
+  assert.ok(protectedRoomDeployments.length > 0);
+  for (const deployment of protectedRoomDeployments) {
+    const podTemplate = deployment.slice(deployment.indexOf("  template:"));
+    assert.match(podTemplate, /opsia\.dev\/recovery-continuity: protected/);
+    assert.match(podTemplate, /prometheus\.io\/scrape: "true"/);
+    assert.match(podTemplate, /prometheus\.io\/path: "\/metrics"/);
+    assert.match(podTemplate, /prometheus\.io\/port: "8001"/);
+    assert.match(podTemplate, /name: POD_NAMESPACE[\s\S]*fieldPath: metadata\.namespace/);
+    assert.match(podTemplate, /name: POD_UID[\s\S]*fieldPath: metadata\.uid/);
+    assert.match(podTemplate, /name: OPSIA_RESOURCE_KIND, value: Deployment/);
+    assert.match(
+      podTemplate,
+      /name: OPSIA_CONTINUITY_ID[\s\S]*fieldPath: "metadata\.labels\['game\.opsia\.dev\/room-id'\]"/,
+    );
+  }
   // Each stable room ID labels both its Deployment and the Pod template, so
   // reconciliation can follow a replacement Pod without using its name.
   assert.equal((liveDeployments.match(/game\.opsia\.dev\/room-id: room-[0-4]/g) ?? []).length, 10);

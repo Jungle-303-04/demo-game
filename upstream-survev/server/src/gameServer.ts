@@ -14,6 +14,7 @@ import * as net from "../../shared/net/net.ts";
 import { Config } from "./config.ts";
 import { GameProcessManager, type GameSocketData, ProcState } from "./game/gameProcessManager.ts";
 import type { OpsiaSnapshotData } from "./game/ipcTypes.ts";
+import { OpsiaContinuityMetrics } from "./opsia/continuityMetrics.ts";
 import { controlTokenMatches, readControlToken } from "./opsia/controlPlaneAuth.ts";
 import { decodeGatewayFrame, encodeGatewayOutput } from "./opsia/gatewayWire.ts";
 import {
@@ -103,6 +104,7 @@ const withTimeout = async <T>(operation: Promise<T>, timeoutMs: number, message:
 
 class OpsiaMetrics {
     readonly registry = new Registry();
+    private readonly continuity = new OpsiaContinuityMetrics(this.registry);
     private readonly snapshotCounterBaselines = new Map<
         string,
         { coalescedTotal: number; failuresTotal: number; timeoutsTotal: number }
@@ -211,6 +213,7 @@ class OpsiaMetrics {
     });
 
     observe(snapshot: OpsiaSnapshotData): void {
+        this.continuity.observe(snapshot.players);
         this.tickP95.labels(snapshot.roomId).set(snapshot.tickP95Ms);
         this.tickRate.labels(snapshot.roomId).set(snapshot.tickRate);
         this.online.labels(snapshot.roomId).set(snapshot.players.filter((player) => player.connected).length);

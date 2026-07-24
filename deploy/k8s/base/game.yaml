@@ -29,7 +29,12 @@ spec:
         opsia.dev/room-profile: faction
         opsia.dev/rollout-role: active-candidate
         opsia.dev/game-role: active
-      annotations: { opsia.dev/room-epoch: "1" }
+        opsia.dev/recovery-continuity: protected
+      annotations:
+        opsia.dev/room-epoch: "1"
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8001"
     spec:
       terminationGracePeriodSeconds: 30
       containers:
@@ -46,8 +51,13 @@ spec:
             - { name: OPSIA_GAME_BUILD_REVISION, value: stable }
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-0 }
+            - { name: OPSIA_RESOURCE_KIND, value: Deployment }
+            - name: OPSIA_CONTINUITY_ID
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['game.opsia.dev/room-id']" } }
             - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+            - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+            - { name: POD_UID, valueFrom: { fieldRef: { fieldPath: metadata.uid } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
             - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,m9" }
@@ -97,7 +107,12 @@ spec:
         opsia.dev/room-profile: desert
         opsia.dev/rollout-role: active-candidate
         opsia.dev/game-role: active
-      annotations: { opsia.dev/room-epoch: "1" }
+        opsia.dev/recovery-continuity: protected
+      annotations:
+        opsia.dev/room-epoch: "1"
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8001"
     spec:
       terminationGracePeriodSeconds: 30
       containers:
@@ -113,8 +128,13 @@ spec:
             - { name: OPSIA_GAME_BUILD_REVISION, value: stable }
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-1 }
+            - { name: OPSIA_RESOURCE_KIND, value: Deployment }
+            - name: OPSIA_CONTINUITY_ID
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['game.opsia.dev/room-id']" } }
             - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+            - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+            - { name: POD_UID, valueFrom: { fieldRef: { fieldPath: metadata.uid } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
             - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,m9" }
@@ -164,7 +184,12 @@ spec:
         opsia.dev/room-profile: snow
         opsia.dev/rollout-role: active-candidate
         opsia.dev/game-role: active
-      annotations: { opsia.dev/room-epoch: "1" }
+        opsia.dev/recovery-continuity: protected
+      annotations:
+        opsia.dev/room-epoch: "1"
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8001"
     spec:
       terminationGracePeriodSeconds: 30
       containers:
@@ -180,8 +205,13 @@ spec:
             - { name: OPSIA_GAME_BUILD_REVISION, value: stable }
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-2 }
+            - { name: OPSIA_RESOURCE_KIND, value: Deployment }
+            - name: OPSIA_CONTINUITY_ID
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['game.opsia.dev/room-id']" } }
             - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+            - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+            - { name: POD_UID, valueFrom: { fieldRef: { fieldPath: metadata.uid } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
             - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,m9" }
@@ -231,7 +261,12 @@ spec:
         opsia.dev/room-profile: main
         opsia.dev/rollout-role: active-candidate
         opsia.dev/game-role: active
-      annotations: { opsia.dev/room-epoch: "1" }
+        opsia.dev/recovery-continuity: protected
+      annotations:
+        opsia.dev/room-epoch: "1"
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8001"
     spec:
       terminationGracePeriodSeconds: 30
       containers:
@@ -247,8 +282,13 @@ spec:
             - { name: OPSIA_GAME_BUILD_REVISION, value: stable }
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-3 }
+            - { name: OPSIA_RESOURCE_KIND, value: Deployment }
+            - name: OPSIA_CONTINUITY_ID
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['game.opsia.dev/room-id']" } }
             - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+            - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+            - { name: POD_UID, valueFrom: { fieldRef: { fieldPath: metadata.uid } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
             - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,m9" }
@@ -298,7 +338,12 @@ spec:
         opsia.dev/room-profile: woods
         opsia.dev/rollout-role: active-candidate
         opsia.dev/game-role: active
-      annotations: { opsia.dev/room-epoch: "1" }
+        opsia.dev/recovery-continuity: protected
+      annotations:
+        opsia.dev/room-epoch: "1"
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8001"
     spec:
       terminationGracePeriodSeconds: 30
       containers:
@@ -314,8 +359,13 @@ spec:
             - { name: OPSIA_GAME_BUILD_REVISION, value: stable }
             - { name: ROOM_EPOCH, value: "1" }
             - { name: OPSIA_WORKLOAD_NAME, value: game-room-4 }
+            - { name: OPSIA_RESOURCE_KIND, value: Deployment }
+            - name: OPSIA_CONTINUITY_ID
+              valueFrom: { fieldRef: { fieldPath: "metadata.labels['game.opsia.dev/room-id']" } }
             - { name: REDIS_URL, value: redis://cache:6379/0 }
             - { name: POD_NAME, valueFrom: { fieldRef: { fieldPath: metadata.name } } }
+            - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+            - { name: POD_UID, valueFrom: { fieldRef: { fieldPath: metadata.uid } } }
             - { name: STRICT_MODE, value: "false" }
             - { name: OPSIA_ROOM, value: "true" }
             - { name: OPSIA_BOT_STARTER_GUNS, value: "mp5,mac10,vector,hk416,ak47,scar,mosin,m870,m9" }
