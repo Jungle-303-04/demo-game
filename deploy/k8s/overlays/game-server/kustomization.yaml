@@ -31,7 +31,15 @@ patches:
       - op: add
         path: /spec/template/spec/nodeSelector
         value:
+          kyro.io/workload-role: game
           opsia.dev/game-pool: high-capacity
+      - op: add
+        path: /spec/template/spec/tolerations
+        value:
+          - key: kyro.io/workload-role
+            operator: Equal
+            value: game
+            effect: NoSchedule
   - target:
       group: apps
       version: v1
@@ -42,7 +50,7 @@ patches:
       - op: add
         path: /spec/template/spec/nodeSelector
         value:
-          opsia.dev/game-pool: high-capacity
+          kyro.io/workload-role: infra
   - target:
       version: v1
       kind: ConfigMap
