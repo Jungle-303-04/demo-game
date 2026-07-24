@@ -393,11 +393,11 @@ export class Application {
             this.setAppActive(true);
             const domCanvas = document.querySelector<HTMLCanvasElement>("#cvs")!;
 
-            // Broadcast views are scaled by their containing console surface.
-            // Keep logical game dimensions while cutting fill-rate enough for a
-            // full-HD player view to hold a 60fps frame budget under load.
+            // Multi-view tiles cover the same combined CSS area as the single
+            // view and run at 30fps, so full CSS-pixel resolution is affordable.
+            // The previous 0.28 scale made a PIP quadrant roughly 78x59 pixels.
             const rendererRes = this.opsiaWatch
-                ? this.opsiaWallFps > 0 && this.opsiaWallFps <= 30 ? 0.28 : 0.7
+                ? this.opsiaWallFps > 0 && this.opsiaWallFps <= 30 ? 1 : 0.8
                 : window.devicePixelRatio > 1 ? 2 : 1;
 
             if (device.os == "ios") {

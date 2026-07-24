@@ -38,7 +38,7 @@ interface PictureInPictureSession {
   pipWindow: Window;
 }
 
-type SpectatorViewCount = 1 | 4;
+type SpectatorViewCount = 1 | 2 | 4;
 type SpectatorFrameWindow = Window & {
   __opsiaSetSpectatorFps?: (fps: number) => void;
   __opsiaSetSpectatorVisible?: (visible: boolean) => void;
@@ -938,19 +938,15 @@ function PlayerSpectatorView({
   }, [loadDelayMs]);
 
   useEffect(() => {
-    if (!shouldLoad || loadAttempt >= 2) return undefined;
+    if (!shouldLoad || frameReady || loadAttempt >= 3) return undefined;
+    // Compose serves each room on a different origin, so contentDocument
+    // inspection cannot be the retry signal. Retry from the readiness message
+    // deadline instead and recover a stalled black tile on every deployment.
     const timer = window.setTimeout(() => {
-      try {
-        const root = iframeRef.current?.contentDocument?.documentElement;
-        if (root && !root.classList.contains("opsia-in-game")) {
-          setLoadAttempt((attempt) => attempt + 1);
-        }
-      } catch {
-        // Cross-origin development clients cannot be inspected or retried here.
-      }
-    }, 20_000);
+      setLoadAttempt((attempt) => attempt + 1);
+    }, 6_000);
     return () => window.clearTimeout(timer);
-  }, [loadAttempt, shouldLoad]);
+  }, [frameReady, loadAttempt, shouldLoad]);
 
   useEffect(() => {
     if (!shouldLoad) return undefined;
@@ -1035,6 +1031,18 @@ function PlayerSpectatorView({
           title={`${player.name} 실시간 관전`}
         />
       )}
+      {shouldLoad && !frameReady && (
+        <button
+          aria-label={`${player.name} 관전 화면 다시 연결`}
+          className="spectator-loading"
+          onClick={() => setLoadAttempt((attempt) => attempt + 1)}
+          type="button"
+        >
+          <i />
+          <strong>{loadAttempt > 0 ? "관전 재연결 중" : "관전 연결 중"}</strong>
+          <span>잠시 후 자동으로 다시 시도합니다</span>
+        </button>
+      )}
       <div className="spectator-label">
         <i style={{ background: player.color }} />
         <strong>{player.name}</strong>
@@ -1045,21 +1053,22 @@ function PlayerSpectatorView({
 }
 
 function SpectatorWall({
+  layout,
   room,
   visiblePlayers,
 }: {
+  layout: Exclude<SpectatorViewCount, 1>;
   room: GameRoom;
   visiblePlayers: PlayerTelemetry[];
 }) {
   return (
-    <div className="spectator-wall" data-layout="4">
+    <div className="spectator-wall" data-layout={layout}>
       {visiblePlayers.map((player, index) => (
         <PlayerSpectatorView
           key={player.id}
-          loadDelayMs={index * 40}
+          loadDelayMs={index * 200}
           player={player}
           room={room}
-          targetFps={60}
           wallFps={30}
         />
       ))}
@@ -1138,13 +1147,13 @@ function RoomViewer({
   const displayName = roomDisplayName(room);
   const currentPodName = roomCurrentPodName(room);
   const podDisplayName = roomPodDisplayName(room);
-  const alivePlayers = useMemo(
-    () =>
-      room.players
-        .filter((player) => player.health > 0)
-        .slice()
-        .sort((left, right) => left.name.localeCompare(right.name, "ko")),
+  const spectatorRoster = useMemo(
+    () => room.players.slice().sort((left, right) => left.name.localeCompare(right.name, "ko")),
     [room.players],
+  );
+  const alivePlayers = useMemo(
+    () => spectatorRoster.filter((player) => player.health > 0),
+    [spectatorRoster],
   );
 
   const selectAdjacentPlayer = useCallback((reverse = false) => {
@@ -1306,12 +1315,12 @@ function RoomViewer({
   }
 
   const isPictureInPicture = Boolean(pipSession) || isInlinePip;
-  const selectedPlayerIndex = alivePlayers.findIndex((player) => player.id === selectedPlayer?.id);
+  const selectedPlayerIndex = spectatorRoster.findIndex((player) => player.id === selectedPlayer?.id);
   const spectatorStartIndex = selectedPlayerIndex >= 0 ? selectedPlayerIndex : 0;
   const visibleSpectators = selectedPlayer
     ? Array.from(
-        { length: Math.min(spectatorViewCount, alivePlayers.length) },
-        (_, offset) => alivePlayers[(spectatorStartIndex + offset) % alivePlayers.length],
+        { length: Math.min(spectatorViewCount, spectatorRoster.length) },
+        (_, offset) => spectatorRoster[(spectatorStartIndex + offset) % spectatorRoster.length],
       ).filter((player): player is PlayerTelemetry => Boolean(player))
     : [];
   const liveStage = (
@@ -1328,6 +1337,7 @@ function RoomViewer({
           <PlayerSpectatorView player={selectedPlayer} room={room} />
         ) : (
           <SpectatorWall
+            layout={spectatorViewCount}
             room={room}
             visiblePlayers={visibleSpectators}
           />
@@ -1375,7 +1385,7 @@ function RoomViewer({
             {resetPending ? "리셋 중…" : "맵 리셋"}
           </button>
           <div className="spectator-count-switch" aria-label="동시 관전 화면 수">
-            {([1, 4] as const).map((count) => (
+            {([1, 2, 4] as const).map((count) => (
               <button
                 aria-label={`${count}명 동시 관전`}
                 aria-pressed={spectatorViewCount === count}

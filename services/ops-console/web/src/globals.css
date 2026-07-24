@@ -2251,6 +2251,49 @@ body.opsia-pip-body .map-viewport {
   opacity: 1;
 }
 
+.player-spectator .spectator-loading {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 100%;
+  padding: 24px;
+  border: 0;
+  border-radius: 0;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(38, 130, 84, 0.2), transparent 34%),
+    linear-gradient(145deg, #09120e, #020403 72%);
+  color: #fff;
+  cursor: pointer;
+}
+
+.player-spectator .spectator-loading i {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #66e49b;
+  border-radius: 50%;
+  animation: spectator-loading-spin 800ms linear infinite;
+}
+
+.player-spectator .spectator-loading strong {
+  font-size: 14px;
+}
+
+.player-spectator .spectator-loading span {
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 11px;
+}
+
+@keyframes spectator-loading-spin {
+  to { transform: rotate(360deg); }
+}
+
 .spectator-label {
   position: absolute;
   z-index: 5;
@@ -2296,6 +2339,11 @@ body.opsia-pip-body .map-viewport {
 .spectator-wall[data-layout="4"] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   grid-template-rows: repeat(2, minmax(0, 1fr));
+}
+
+.spectator-wall[data-layout="2"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .world-stage:fullscreen {
@@ -3675,10 +3723,6 @@ body.opsia-pip-body .map-viewport {
   .scenario-event-panel li > p {
     grid-column: 3;
     white-space: normal;
-  }
-
-  .spectator-count-switch {
-    display: none;
   }
 
   .world-stage {
