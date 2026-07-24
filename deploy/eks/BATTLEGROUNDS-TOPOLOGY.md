@@ -1,20 +1,21 @@
 # Battlegrounds production topology
 
 The `game-server` EKS cluster is presented in Kyro as `battlegrounds-prod`.
-Its application workload contract is exactly two worker nodes:
+Its application workload contract is exactly five worker nodes:
 
 | node role | count | application workloads |
 | --- | ---: | --- |
 | `kyro.io/workload-role=infra` | 1 | Kyro target agent, gateway, Redis, session gateway, management API/orchestrator/bot/console |
-| `kyro.io/workload-role=game` | 1 | `game-room-*` and `canary-room` only |
+| `kyro.io/workload-role=game` | 4 | `game-room-*` and `canary-room` only |
 
 EKS networking, kube-proxy, CSI, and other required system DaemonSets are
-expected on both nodes and are not application-workload violations.
+expected on all five nodes and are not application-workload violations.
 
-The rendered application requests are 6 vCPU / 12 GiB on the game node and
+The rendered application requests are 3 vCPU / 6 GiB across the game pool and
 1.3 vCPU / 1.4 GiB on the infra node (plus Kubernetes system overhead). The
-fixed `c6i.2xlarge` game node and `m6i.2xlarge` infra node leave capacity for
-one rolling-surge game room without changing the two-node contract.
+four fixed `c6i.2xlarge` game nodes and one `m6i.2xlarge` infra node leave
+capacity for concurrent rolling-surge game rooms without changing the
+five-node contract.
 
 The game node is tainted `kyro.io/workload-role=game:NoSchedule`. Only the
 game room templates have the matching toleration. Every other sandbox

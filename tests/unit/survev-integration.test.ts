@@ -487,6 +487,10 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   const sandboxOverlay = await readFile(join(process.cwd(), "deploy/k8s/overlays/sandbox/kustomization.yaml"), "utf8");
   const gameServerOverlay = await readFile(join(process.cwd(), "deploy/k8s/overlays/game-server/kustomization.yaml"), "utf8");
   const bootstrapSecrets = await readFile(join(process.cwd(), "deploy/k8s/overlays/game-server/bootstrap-secrets.yaml"), "utf8");
+  const gameServerNodeGroups = await readFile(
+    join(process.cwd(), "deploy/eks/game-server-high-capacity.yaml"),
+    "utf8",
+  );
   const publishImagesWorkflow = await readFile(join(process.cwd(), ".github/workflows/publish-images.yml"), "utf8");
   const botRunner = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRunner.ts"), "utf8");
   const botRouting = await readFile(join(process.cwd(), "upstream-survev/server/src/opsia/botRouting.ts"), "utf8");
@@ -515,6 +519,17 @@ test("five room Deployments, isolated canary, and registry discovery match the f
   assert.equal((liveDeployments.match(/replicas: 1/g) ?? []).length, 5);
   assert.equal((liveDeployments.match(/maxSurge: 1/g) ?? []).length, 5);
   assert.equal((liveDeployments.match(/maxUnavailable: 0/g) ?? []).length, 5);
+  assert.equal(
+    (liveDeployments.match(/requests: \{ cpu: 500m, memory: 1Gi \}/g) ?? []).length,
+    5,
+  );
+  assert.equal((canary.match(/requests: \{ cpu: 500m, memory: 1Gi \}/g) ?? []).length, 1);
+  const gameNodeGroup = gameServerNodeGroups.slice(
+    gameServerNodeGroups.indexOf("- name: battlegrounds-game"),
+  );
+  assert.match(gameNodeGroup, /desiredCapacity: 4/);
+  assert.match(gameNodeGroup, /minSize: 4/);
+  assert.match(gameNodeGroup, /maxSize: 4/);
   assert.equal((liveDeployments.match(/opsia\.dev\/rollout-role: active-candidate/g) ?? []).length, 10);
   assert.equal(
     (liveDeployments.match(/opsia\.dev\/recovery-continuity: protected/g) ?? []).length,

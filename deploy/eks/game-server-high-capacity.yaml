@@ -29,9 +29,9 @@ managedNodeGroups:
   - name: battlegrounds-game
     instanceTypes:
       - c6i.2xlarge
-    desiredCapacity: 1
-    minSize: 1
-    maxSize: 1
+    desiredCapacity: 4
+    minSize: 4
+    maxSize: 4
     privateNetworking: true
     availabilityZones:
       - ap-northeast-2d
