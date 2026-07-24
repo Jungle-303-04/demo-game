@@ -82,19 +82,6 @@ export class Matchmaker {
   private readonly identity = telemetryIdentity();
   private readonly requests = new Counter({ name: "find_game_requests_total", help: "Matchmaking requests", labelNames: ["outcome"] as const, registers: [this.registry] });
   private readonly failureRatio = new Gauge({ name: "find_game_fail_ratio", help: "Recent matchmaking failure ratio", registers: [this.registry] });
-  private readonly opsiaFailureRatio = new Gauge({
-    name: "opsia_sli_failure_ratio",
-    help: "Standardized workload SLI failure ratio for Opsia/Kyro correlation",
-    labelNames: [
-      "namespace",
-      "resource_kind",
-      "resource_name",
-      "service",
-      "sli",
-      "symptom",
-    ] as const,
-    registers: [this.registry],
-  });
   private readonly opsiaRequests = new Counter({
     name: "opsia_sli_requests_total",
     help: "Standardized workload SLI request count for Opsia/Kyro verification",
@@ -121,14 +108,6 @@ export class Matchmaker {
 
   constructor(private readonly directory: RoomDirectory, private readonly maxPerSecond = 25, private readonly now: () => number = Date.now, private readonly log: (entry: StructuredLog) => void = () => undefined) {
     this.capacity.set(maxPerSecond);
-    this.opsiaFailureRatio.labels(
-      this.identity.namespace,
-      this.identity.resourceKind,
-      this.identity.resourceName,
-      this.identity.service,
-      this.identity.sli,
-      this.identity.symptom,
-    ).set(0);
   }
 
   async findGame(sessionId: string, nickname: string, requestedRoomId?: string): Promise<RoomRegistryRecord> {
@@ -246,14 +225,6 @@ export class Matchmaker {
     const total = this.attempts.length;
     const ratio = total ? this.attempts.filter((entry) => entry.failed).length / total : 0;
     this.failureRatio.set(ratio);
-    this.opsiaFailureRatio.labels(
-      this.identity.namespace,
-      this.identity.resourceKind,
-      this.identity.resourceName,
-      this.identity.service,
-      this.identity.sli,
-      this.identity.symptom,
-    ).set(ratio);
   }
 
   private logAdmission(input: {
