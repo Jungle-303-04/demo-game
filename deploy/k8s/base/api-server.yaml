@@ -4,7 +4,7 @@ metadata:
   name: api-server
   namespace: sandbox
 spec:
-  replicas: 2
+  replicas: 1
   strategy:
     type: RollingUpdate
     rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
