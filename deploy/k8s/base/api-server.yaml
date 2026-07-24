@@ -4,6 +4,7 @@ metadata:
   name: api-server
   namespace: sandbox
 spec:
+  # Keep the approved pre-release admission capacity as the GitOps baseline.
   replicas: 2
   strategy:
     type: RollingUpdate
