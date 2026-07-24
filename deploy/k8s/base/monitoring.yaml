@@ -28,12 +28,23 @@ spec:
           annotations: { summary: "rejected game input is elevated" }
         - alert: DemoGameJoinStorm
           expr: |
-            (
-              sum(rate(find_game_requests_total{outcome!="accepted"}[1m]))
-              /
-              clamp_min(sum(rate(find_game_requests_total[1m])), 0.001)
+            max by (
+              namespace,
+              resource_kind,
+              resource_name,
+              service,
+              sli,
+              symptom,
+              root_category
+            ) (
+              opsia_sli_failure_ratio{
+                namespace="sandbox",
+                resource_kind="Deployment",
+                resource_name="api-server",
+                symptom="admission_failure",
+                root_category="capacity_regression"
+              }
             ) > 0.2
           for: 20s
           labels: { severity: warning, service: api-server }
           annotations: { summary: "matchmaking rejections are elevated" }
-

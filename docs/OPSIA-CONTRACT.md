@@ -13,9 +13,14 @@ Opsia 내부 메트릭 임계 엔진은 사용하지 않는다. Opsia 원인 룰
 | `tick_duration_ms` | `room` | 게임 tick 처리 시간 histogram이다. |
 | `player_input_rate_total` | `room`, `outcome` | 실제 survev 입력 디코드 훅에서 수락·거절된 입력 수다. |
 | `players_online`, `players_alive` | `room` | 접속·생존 플레이어 수다. |
-| `find_game_fail_ratio` | 없음 | 최근 매치메이킹 실패 비율이다. |
+| `find_game_fail_ratio` | 없음 | 기존 대시보드 호환용 최근 매치메이킹 실패 비율이다. |
+| `opsia_sli_failure_ratio` | `namespace`, `resource_kind`, `resource_name`, `service`, `sli`, `symptom`, `root_category` | Kyro가 장애 SLI와 Kubernetes 복구 대상을 같은 시계열에서 식별하는 표준 실패율이다. |
 
-Alertmanager는 tick p95, 거절 입력률, `find_game_fail_ratio`에 대해 firing을 만들 수 있다. receiver의 bearer token은 `opsia-alertmanager-token` Secret에서만 읽는다.
+join-storm의 표준 시계열은
+`namespace="sandbox"`, `resource_kind="Deployment"`, `resource_name="api-server"`,
+`sli="admission"`, `symptom="admission_failure"`, `root_category="capacity_regression"`을 갖는다.
+Alertmanager는 tick p95, 거절 입력률, `opsia_sli_failure_ratio`에 대해 firing을 만들 수 있다.
+receiver의 bearer token은 `opsia-alertmanager-token` Secret에서만 읽는다.
 
 ## 구조화 로그
 
@@ -39,9 +44,12 @@ Alertmanager는 tick p95, 거절 입력률, `find_game_fail_ratio`에 대해 fir
 | --- | --- | --- |
 | 이미지 롤포워드 | `game` StatefulSet | strict 이미지 배포로 게임 내부 enforcement를 활성화한다. |
 | 이미지 롤백 | `game` StatefulSet | bad-canary를 stable 이미지로 되돌린다. |
-| `deployment_scale` | `api-server` Deployment | join-storm 동안 로비 replicas를 늘린다. |
+| `deployment_scale` | `api-server` Deployment | 잘못된 릴리스의 replicas 1을 정상값 2로 복구한다. |
 
 `services/room-orchestrator/src/recovery.ts`는 위 요청만 workload patch로 변환한다. ConfigMap 동적 패치, 로그에서 유도한 세션 값 주입, 게임의 직접 클러스터 명령 실행은 계약 위반이다.
+
+join-storm 복구 성공은 `/healthz`만으로 판정하지 않는다. 40 RPS를 유지한 상태에서
+`opsia_sli_failure_ratio < 0.2`가 된 뒤에만 시나리오 부하를 중단하고 복구 완료로 기록한다.
 
 ## Ops 이벤트 웹훅
 

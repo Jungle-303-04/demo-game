@@ -117,6 +117,62 @@ button {
   letter-spacing: 0.04em;
 }
 
+.lobby-admission-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 10px;
+  padding: 6px 9px;
+  border: 1px solid rgba(48, 200, 120, 0.28);
+  border-radius: 9px;
+  background: rgba(48, 200, 120, 0.08);
+  color: #187a4a;
+  font-size: 11px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.lobby-admission-status i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 3px rgba(48, 200, 120, 0.13);
+}
+
+.lobby-admission-status strong {
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.lobby-admission-status em {
+  font-size: 9px;
+  font-style: normal;
+  letter-spacing: 0.04em;
+}
+
+.lobby-admission-status.is-warning {
+  border-color: rgba(232, 154, 24, 0.34);
+  background: rgba(232, 154, 24, 0.1);
+  color: #8a5909;
+}
+
+.lobby-admission-status.is-warning i {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px rgba(232, 154, 24, 0.13);
+}
+
+.lobby-admission-status.is-danger {
+  border-color: rgba(255, 90, 85, 0.4);
+  background: rgba(255, 90, 85, 0.1);
+  color: #b72d29;
+}
+
+.lobby-admission-status.is-danger i {
+  background: var(--red);
+  box-shadow: 0 0 0 3px rgba(255, 90, 85, 0.13);
+}
+
 .border-metric-tabs {
   display: flex;
   min-width: 0;
@@ -226,6 +282,14 @@ button {
   align-items: center;
   padding: 5px 9px;
   font-size: 10px;
+}
+
+.console-shell.is-room-directory .lobby-admission-status {
+  gap: 5px;
+  margin-left: 7px;
+  padding: 4px 7px;
+  border-radius: 7px;
+  font-size: 9px;
 }
 
 .console-shell.is-room-directory .border-metric-tabs {
@@ -3262,6 +3326,10 @@ body.opsia-pip-body .map-viewport {
     display: none;
   }
 
+  .lobby-admission-status {
+    margin-left: 8px;
+  }
+
   .border-metric-tabs {
     margin-left: 12px;
   }
@@ -3299,6 +3367,11 @@ body.opsia-pip-body .map-viewport {
 
   .console-brand strong,
   .live-status > span {
+    display: none;
+  }
+
+  .lobby-admission-status span,
+  .lobby-admission-status em {
     display: none;
   }
 
@@ -3633,6 +3706,11 @@ body.opsia-pip-body .map-viewport {
 
   .console-shell.is-room-directory .console-brand strong,
   .console-shell.is-room-directory .live-status > span {
+    display: none;
+  }
+
+  .console-shell.is-room-directory .lobby-admission-status span,
+  .console-shell.is-room-directory .lobby-admission-status em {
     display: none;
   }
 

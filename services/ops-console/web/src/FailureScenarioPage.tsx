@@ -101,10 +101,10 @@ const SCENARIOS: readonly ScenarioDefinition[] = [
   {
     id: "admission-storm",
     code: "04",
-    title: "신규 입장 처리량 포화",
-    summary: "중앙 입장 API의 실제 성공률을 보며 요청량을 높이고 장애 상태를 유지합니다.",
+    title: "로비 용량 회귀",
+    summary: "중앙 입장 API에 40 RPS를 유지해 replicas 2→1 변경의 용량 부족을 재현합니다.",
     symptom: "신규 입장 성공률 하락 · 기존 게임 세션 유지",
-    recovery: "입장 부하 중단 후 서비스 자동 재시작과 건강 상태 확인",
+    recovery: "replicas 1→2 복구 후 같은 40 RPS에서 실패율 정상화 확인",
     tone: "danger",
   },
   {
@@ -238,7 +238,12 @@ function roomPressureProfile(
   scenarioRoom: FailureScenarioRoomState | undefined,
   index: number,
 ) {
-  const activePenalty = scenarioRoom?.active ? 22 : 0;
+  // admission-storm targets the shared lobby Deployment. It must not make the
+  // selected game room look unhealthy while existing matches keep running.
+  const activePenalty =
+    scenarioRoom?.active && scenarioRoom.active.scenarioId !== "admission-storm"
+      ? 22
+      : 0;
   const statusPenalty =
     room.status === "degraded" ? 16 :
       room.status === "recovering" ? 10 :
@@ -355,8 +360,10 @@ export function FailureScenarioPage({
   const selectedCounts = selectedRoom ? playerCounts(selectedRoom) : undefined;
   const inputAccepted = selectedRoom?.metrics.inputAccepted ?? 0;
   const inputRejected = selectedRoom?.metrics.inputRejected ?? 0;
-  const admissionFailureRate = selectedRoom?.metrics.admissionFailureRatePercent ?? 0;
   const activeScenario = selectedScenarioRoom?.active;
+  const admissionFailureRate = activeScenario?.scenarioId === "admission-storm"
+    ? evidenceNumber(activeScenario.evidence, "failureRatePercent")
+    : 0;
   const roomControllable =
     selectedRoom?.status === "running" || selectedRoom?.status === "degraded";
 
@@ -525,7 +532,7 @@ export function FailureScenarioPage({
               <div className={inputRejected > 0 ? "is-danger" : ""}><span>INPUT REJECTED</span><strong>{inputRejected.toLocaleString("ko-KR")}<small> / accepted {inputAccepted.toLocaleString("ko-KR")}</small></strong></div>
               <div><span>SERVER TICK</span><strong>{selectedRoom.tickRate.toFixed(1)}<small> Hz</small></strong></div>
               <div className={admissionFailureRate >= 20 ? "is-danger" : ""}>
-                <span>입장 실패율</span>
+                <span>로비 입장 실패율</span>
                 <strong>{admissionFailureRate.toFixed(1)}<small>%</small></strong>
               </div>
               <div><span>GAME CPU</span><strong>{selectedRoom.metrics.cpuPercent.toFixed(1)}<small>%</small></strong></div>
@@ -553,7 +560,15 @@ export function FailureScenarioPage({
                 (scenario.id === "process-crash" || scenario.id === "pod-failure") &&
                 (selectedRoom.status !== "running" || !selectedRoom.podHealthy),
               );
-              const recoveryReady = !runtimeRecoveryWaiting;
+              const admissionRecoveryWaiting = Boolean(
+                activeForCard &&
+                scenario.id === "admission-storm" &&
+                (
+                  evidenceNumber(activeScenario?.evidence, "failureRatePercent") >= 20
+                  || activeScenario?.evidence?.incidentTriggered !== true
+                ),
+              );
+              const recoveryReady = !runtimeRecoveryWaiting && !admissionRecoveryWaiting;
               const startDisabled = Boolean(
                 pending || anotherScenarioActive || activeForCard || podCapabilityMissing
                 || stateUnavailable || !roomControllable,
@@ -624,7 +639,9 @@ export function FailureScenarioPage({
                         {pendingForCard && pending?.action === "recover"
                           ? "복구 요청 중"
                           : scenario.id === "admission-storm"
-                            ? "자동 복구"
+                            ? admissionRecoveryWaiting
+                              ? "40 RPS 복구 검증 대기"
+                              : "복구 검증 완료"
                           : runtimeRecoveryWaiting
                             ? "런타임 자동 복구 대기"
                             : "복구 실행"}

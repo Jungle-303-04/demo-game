@@ -4,13 +4,18 @@ metadata:
   name: api-server
   namespace: sandbox
 spec:
-  replicas: 1
+  replicas: 2
   strategy:
     type: RollingUpdate
     rollingUpdate: { maxUnavailable: 0, maxSurge: 1 }
   selector: { matchLabels: { app: api-server } }
   template:
-    metadata: { labels: { app: api-server, app.kubernetes.io/part-of: demo-game } }
+    metadata:
+      labels: { app: api-server, app.kubernetes.io/part-of: demo-game }
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "8081"
     spec:
       containers:
         - name: api-server
@@ -19,6 +24,8 @@ spec:
           env:
             - { name: ORCHESTRATOR_URL, value: http://login-gateway-management:8082 }
             - { name: MAX_FIND_GAME_PER_SECOND, value: "25" }
+            - { name: POD_NAMESPACE, valueFrom: { fieldRef: { fieldPath: metadata.namespace } } }
+            - { name: OPSIA_WORKLOAD_NAME, value: "api-server" }
             - { name: ADMISSION_OVERLOAD_THRESHOLD_REQUESTS, value: "35" }
             - { name: ADMISSION_OVERLOAD_WINDOW_MS, value: "1000" }
             - { name: ADMISSION_OVERLOAD_EXIT_CODE, value: "70" }

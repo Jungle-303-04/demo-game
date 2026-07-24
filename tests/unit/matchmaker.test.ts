@@ -69,6 +69,33 @@ test("matchmaker reserves its rate-limit slot before concurrent directory probes
   await Promise.all([first, second]);
 });
 
+test("40 RPS fits two 25 RPS lobby replicas but exceeds one replica by 15 requests", async () => {
+  const directory: RoomDirectory = {
+    list: async () => [{ ...recordForOrdinal(0), status: "running", players: 0 }],
+  };
+  const twoReplicas = [
+    new Matchmaker(directory, 25, () => 1_000),
+    new Matchmaker(directory, 25, () => 1_000),
+  ];
+  let twoReplicaFailures = 0;
+  for (let request = 0; request < 40; request += 1) {
+    await twoReplicas[request % twoReplicas.length]!
+      .findGame(`healthy-${request}`, "Ada")
+      .catch(() => { twoReplicaFailures += 1; });
+  }
+  assert.equal(twoReplicaFailures, 0);
+
+  const oneReplica = new Matchmaker(directory, 25, () => 1_000);
+  let oneReplicaFailures = 0;
+  for (let request = 0; request < 40; request += 1) {
+    await oneReplica
+      .findGame(`degraded-${request}`, "Grace")
+      .catch(() => { oneReplicaFailures += 1; });
+  }
+  assert.equal(oneReplicaFailures, 15);
+  assert.ok(oneReplicaFailures / 40 > 0.2);
+});
+
 test("matchmaker metrics count every rejected admission and expose capacity", async () => {
   const directory: RoomDirectory = {
     list: async () => [{ ...recordForOrdinal(0), status: "running", players: 0 }],
@@ -87,6 +114,30 @@ test("matchmaker metrics count every rejected admission and expose capacity", as
   assert.match(metrics, /find_game_inflight 0/);
   assert.match(metrics, /find_game_capacity_per_second 1/);
   assert.match(metrics, /find_game_request_duration_seconds_count\{outcome="rate_limited"\} 1/);
+  assert.match(
+    metrics,
+    /opsia_sli_failure_ratio\{namespace="sandbox",resource_kind="Deployment",resource_name="api-server",service="api-server",sli="admission",symptom="admission_failure",root_category="capacity_regression"\} 0\.5/,
+  );
+});
+
+test("scraping clears a stale failure gauge after the one second admission window", async () => {
+  let now = 1_000;
+  const directory: RoomDirectory = {
+    list: async () => [{ ...recordForOrdinal(0), status: "running", players: 0 }],
+  };
+  const matchmaker = new Matchmaker(directory, 1, () => now);
+  await matchmaker.findGame("session-a", "Ada");
+  await assert.rejects(
+    matchmaker.findGame("session-b", "Grace"),
+    /find_game_rejected:rate_limited/,
+  );
+
+  now += 1_001;
+  matchmaker.refreshMetrics();
+  const metrics = await matchmaker.registry.metrics();
+
+  assert.match(metrics, /find_game_fail_ratio 0(?:\n|$)/);
+  assert.match(metrics, /opsia_sli_failure_ratio\{[^}]+\} 0(?:\n|$)/);
 });
 
 test("HTTP room directory authenticates and bounds its orchestrator request", async (context) => {

@@ -114,18 +114,25 @@ export class AdmissionLoadController implements AdmissionLoadService {
       throw new Error("admission_load_endpoint_invalid");
     }
     this.endpoint = trimSlash(endpoint.toString());
-    this.initialRps = boundedInteger(options.initialRps ?? 20, 1, 1_000, "admission_initial_rps");
+    // The presentation incident is deliberately a capacity regression, not a
+    // process crash. One api-server Pod admits 25 requests/s, so a fixed 40
+    // requests/s yields a visible rejection ratio; the normal two-Pod Service
+    // has 50 requests/s of aggregate capacity and remains healthy.
+    this.initialRps = boundedInteger(options.initialRps ?? 40, 1, 1_000, "admission_initial_rps");
     this.rampStepRps = boundedInteger(options.rampStepRps ?? 10, 1, 1_000, "admission_ramp_step_rps");
     this.rampIntervalMs = boundedInteger(options.rampIntervalMs ?? 5_000, 500, 60_000, "admission_ramp_interval_ms");
-    this.maximumRps = boundedInteger(options.maximumRps ?? 120, this.initialRps, 5_000, "admission_maximum_rps");
+    this.maximumRps = boundedInteger(options.maximumRps ?? 40, this.initialRps, 5_000, "admission_maximum_rps");
     this.failureThreshold = options.failureThreshold ?? 0.2;
     this.metricWindowMs = boundedInteger(options.metricWindowMs ?? 10_000, 1_000, 120_000, "admission_metric_window_ms");
-    // Demo operators stop the incident explicitly after they have shown the
-    // external scale-out effect. A timeout is available for automated tests
-    // or constrained environments, but is deliberately opt-in.
-    this.safetyTtlMs = options.safetyTtlMs === undefined
-      ? undefined
-      : boundedInteger(options.safetyTtlMs, 10_000, 30 * 60_000, "admission_safety_ttl_ms");
+    // Operators normally stop the load after the GitOps scale-out is
+    // verified. The mandatory TTL prevents an abandoned presentation from
+    // applying admission pressure indefinitely.
+    this.safetyTtlMs = boundedInteger(
+      options.safetyTtlMs ?? 15 * 60_000,
+      10_000,
+      30 * 60_000,
+      "admission_safety_ttl_ms",
+    );
     this.requestTimeoutMs = boundedInteger(options.requestTimeoutMs ?? 3_000, 100, 30_000, "admission_request_timeout_ms");
     if (this.failureThreshold <= 0 || this.failureThreshold >= 1) {
       throw new Error("admission_load_ratio_invalid");

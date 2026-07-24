@@ -21,6 +21,17 @@ Kubernetes 배포에서는 StatefulSet replica 패치 권한만 가진 ServiceAc
 엄격 모드는 `STRICT_MODE` 이미지/StatefulSet spec 값으로만 전환한다. 복구는 이미지 롤포워드/롤백 또는
 api-server replicas 조정만 문서화하며, 로그의 세션 식별자를 외부 정책이나 ConfigMap에 주입하지 않는다.
 
+## 2026-07-24: 로비 용량 회귀 시연
+
+정상 로비는 `api-server` 2개(각 25 RPS)로 50 RPS를 처리한다. 발표의 비용 절감 릴리스만 replicas를
+1개로 줄이며, admission-storm은 정확히 40 RPS를 gateway로 보낸다. 따라서 정상 상태에서는 거절이
+없고 회귀 상태에서 약 37.5%가 rate limit으로 거절된다. 이 시나리오는 overload fuse를 arm하거나
+프로세스를 종료하지 않는다. 기존 게임 WebSocket과 5개 game-room은 장애 대상이 아니다.
+
+복구 판정은 같은 40 RPS 아래에서 실패율이 20% 미만으로 내려간 뒤에만 가능하며, 안전을 위해 부하는
+15분 뒤 자동 종료된다. 로비 SLI는 workload identity 라벨이 포함된 `opsia_sli_failure_ratio`로
+노출하고, 룸 UI에 전역 실패율을 귀속시키지 않는다.
+
 ## 2026-07-16: 실제 Game 상태 복원
 
 Redis 어댑터는 실제 `Game.playerBarn` 투영만 직렬화한다. 투사체는 의도적으로 제외하고, 재접속할 때

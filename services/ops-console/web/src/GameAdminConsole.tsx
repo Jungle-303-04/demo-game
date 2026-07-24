@@ -13,6 +13,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { createPortal } from "react-dom";
 import {
   type GameRoom,
+  type LobbyAdmissionStatus,
   type MapLayoutTelemetry,
   type PlayerTelemetry,
   ROOM_STATUS_LABEL,
@@ -25,7 +26,7 @@ import { compactPodName } from "./room-display.js";
 
 type StyleWithVariables = CSSProperties & Record<`--${string}`, string | number>;
 type ConnectionState = "connecting" | "connected" | "degraded";
-type BorderMetricKey = "admission" | "tick" | "resources" | "latency";
+type BorderMetricKey = "tick" | "resources" | "latency";
 type HealthTone = "unknown" | "healthy" | "warning" | "danger";
 
 interface DocumentPictureInPictureController {
@@ -54,7 +55,6 @@ const BORDER_METRIC_OPTIONS: ReadonlyArray<{
   label: string;
   threshold: string;
 }> = [
-  { key: "admission", label: "입장 실패율", threshold: "경고 5% · 장애 20%" },
   { key: "tick", label: "틱 P95", threshold: "경고 8ms · 장애 16ms" },
   { key: "resources", label: "CPU / 메모리", threshold: "CPU 70/90% · 메모리 75/90%" },
   { key: "latency", label: "지연 P95", threshold: "경고 100ms · 장애 200ms" },
@@ -241,10 +241,10 @@ function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
-const ADMISSION_WARNING_PERCENT = 5;
-const ADMISSION_INCIDENT_PERCENT = 20;
 const TICK_WARNING_MS = 8;
 const TICK_INCIDENT_MS = 16;
+const ADMISSION_WARNING_PERCENT = 5;
+const ADMISSION_INCIDENT_PERCENT = 20;
 const CPU_WARNING_PERCENT = 70;
 const CPU_INCIDENT_PERCENT = 90;
 const MEMORY_WARNING_PERCENT = 75;
@@ -436,15 +436,6 @@ function roomBorderProfile(room: GameRoom, metric: BorderMetricKey): RoomBorderP
         : unknownMetricSample(latencyLabel, "ms");
       return borderProfile(latencyLabel, sample);
     }
-    default:
-      return borderProfile("입장 실패율", metricSample(
-        "입장 실패율",
-        clamp(Number(room.metrics.admissionFailureRatePercent ?? 0), 0, 100),
-        ADMISSION_WARNING_PERCENT,
-        ADMISSION_INCIDENT_PERCENT,
-        "%",
-        1,
-      ));
   }
 }
 
@@ -697,7 +688,7 @@ function ServerBlock({
               role="menuitem"
               type="button"
             >
-              {scenarioPending && scenarioActive ? "자동 복구 중…" : "자동 복구"}
+              {scenarioPending && scenarioActive ? "복구 검증 중…" : "복구 검증"}
             </button>
           </div>
         ) : null}
@@ -1424,7 +1415,13 @@ function RoomViewer({
 /** The UI renders only authoritative control-plane snapshots and live players. */
 export function GameAdminConsole() {
   const [rooms, setRooms] = useState<GameRoom[]>([]);
-  const [borderMetric, setBorderMetric] = useState<BorderMetricKey>("admission");
+  const [borderMetric, setBorderMetric] = useState<BorderMetricKey>("resources");
+  const [lobbyAdmissionStatus, setLobbyAdmissionStatus] = useState<LobbyAdmissionStatus>({
+    active: false,
+    failureRatePercent: 0,
+    targetRps: 0,
+    incidentTriggered: false,
+  });
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null);
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
   const [selectedPlayerId, setSelectedPlayerId] = useState("");
@@ -1445,12 +1442,21 @@ export function GameAdminConsole() {
     (player) => player.id === selectedPlayerId,
   );
   const totalPlayers = rooms.reduce((total, room) => total + room.players.length, 0);
+  const lobbyAdmission = {
+    ...lobbyAdmissionStatus,
+    tone: healthTone(
+      lobbyAdmissionStatus.failureRatePercent,
+      ADMISSION_WARNING_PERCENT,
+      ADMISSION_INCIDENT_PERCENT,
+    ),
+  };
 
   const refresh = useCallback(async (quiet = false) => {
     if (requestPendingRef.current) return;
     requestPendingRef.current = true;
     try {
       const state = await controlPlaneClient.getState(hasMapLayoutsRef.current);
+      setLobbyAdmissionStatus(state.admission);
       if (scenarioTrackingRef.current) {
         const scenarioState = await controlPlaneClient.getFailureScenarios();
         const activeAdmissionRoom = scenarioState.rooms.find(
@@ -1624,6 +1630,16 @@ export function GameAdminConsole() {
           <span>게임 서버</span>
           <strong>{rooms.length} ROOMS</strong>
         </span>
+        <div
+          aria-label={`로비 입장 실패율 ${lobbyAdmission.failureRatePercent.toFixed(1)}%`}
+          className={`lobby-admission-status is-${lobbyAdmission.tone}`}
+          role="status"
+        >
+          <i />
+          <span>로비 입장</span>
+          <strong>{lobbyAdmission.failureRatePercent.toFixed(1)}%</strong>
+          <em>{lobbyAdmission.tone === "danger" ? "장애" : lobbyAdmission.tone === "warning" ? "주의" : "정상"}</em>
+        </div>
         <div className="border-metric-tabs" role="tablist" aria-label="방 테두리 상태 기준">
           {BORDER_METRIC_OPTIONS.map((option) => (
             <button

@@ -225,7 +225,6 @@ export interface AdminRoom {
     telemetryLagMs: number;
     inputAccepted: number;
     inputRejected: number;
-    admissionFailureRatePercent?: number;
     resourceSampleCount?: number;
   };
 }

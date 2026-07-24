@@ -73,8 +73,14 @@ export interface RoomMetrics {
   websocketCount: number;
   redisOpsPerSecond: number | null;
   telemetryLagMs: number;
-  admissionFailureRatePercent?: number;
   resourceSampleCount?: number;
+}
+
+export interface LobbyAdmissionStatus {
+  active: boolean;
+  failureRatePercent: number;
+  targetRps: number;
+  incidentTriggered: boolean;
 }
 
 export interface GameRoom {

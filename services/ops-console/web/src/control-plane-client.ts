@@ -6,6 +6,7 @@ import type {
   FailureScenarioId,
   FailureScenarioState,
   GameRoom,
+  LobbyAdmissionStatus,
   OpsEvent,
   RemoveBotsResult,
   RoomCommand,
@@ -14,6 +15,7 @@ import type {
 interface RoomsResponse {
   rooms: GameRoom[];
   capabilities: ControlPlaneCapabilities;
+  admission: LobbyAdmissionStatus;
 }
 
 interface RoomResponse {

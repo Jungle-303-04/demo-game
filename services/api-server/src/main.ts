@@ -69,6 +69,7 @@ const server = createServer(async (request, response) => {
     }
     if (request.method === "GET" && url.pathname === "/metrics") {
       const overload = overloadFuse.status();
+      matchmaker.refreshMetrics();
       response.writeHead(200, { "content-type": matchmaker.registry.contentType });
       return response.end(`${await matchmaker.registry.metrics()}\n# TYPE admission_overload_armed gauge\nadmission_overload_armed ${overload.armed ? 1 : 0}\n# TYPE admission_overload_failed gauge\nadmission_overload_failed ${admissionUnavailable ? 1 : 0}\n# TYPE admission_overload_recent_requests gauge\nadmission_overload_recent_requests ${overload.recentRequests}\n# TYPE admission_overload_threshold_requests gauge\nadmission_overload_threshold_requests ${overload.thresholdRequests}\n`);
     }

@@ -50,6 +50,20 @@ export class Matchmaker {
   private readonly admittedAt: number[] = [];
   private readonly requests = new Counter({ name: "find_game_requests_total", help: "Matchmaking requests", labelNames: ["outcome"] as const, registers: [this.registry] });
   private readonly failureRatio = new Gauge({ name: "find_game_fail_ratio", help: "Recent matchmaking failure ratio", registers: [this.registry] });
+  private readonly opsiaFailureRatio = new Gauge({
+    name: "opsia_sli_failure_ratio",
+    help: "Standardized workload SLI failure ratio for Opsia/Kyro correlation",
+    labelNames: [
+      "namespace",
+      "resource_kind",
+      "resource_name",
+      "service",
+      "sli",
+      "symptom",
+      "root_category",
+    ] as const,
+    registers: [this.registry],
+  });
   private readonly inflight = new Gauge({ name: "find_game_inflight", help: "Matchmaking requests currently executing", registers: [this.registry] });
   private readonly capacity = new Gauge({ name: "find_game_capacity_per_second", help: "Configured admission capacity for this API process", registers: [this.registry] });
   private readonly duration = new Histogram({
@@ -62,6 +76,15 @@ export class Matchmaker {
 
   constructor(private readonly directory: RoomDirectory, private readonly maxPerSecond = 25, private readonly now: () => number = Date.now, private readonly log: (entry: StructuredLog) => void = () => undefined) {
     this.capacity.set(maxPerSecond);
+    this.opsiaFailureRatio.labels(
+      process.env.POD_NAMESPACE ?? "sandbox",
+      "Deployment",
+      process.env.OPSIA_WORKLOAD_NAME ?? "api-server",
+      "api-server",
+      "admission",
+      "admission_failure",
+      "capacity_regression",
+    ).set(0);
   }
 
   async findGame(sessionId: string, nickname: string, requestedRoomId?: string): Promise<RoomRegistryRecord> {
@@ -70,7 +93,7 @@ export class Matchmaker {
     const now = this.now();
     const attempt = { at: now, failed: false };
     this.attempts.push(attempt);
-    this.attempts.splice(0, this.attempts.length, ...this.attempts.filter((entry) => entry.at > now - 1_000));
+    this.trimAttempts(now);
     this.updateFailureRatio();
     try {
       const recentAdmitted = this.admittedAt.filter((at) => at > now - 1_000);
@@ -122,6 +145,11 @@ export class Matchmaker {
     }
   }
 
+  refreshMetrics(): void {
+    this.trimAttempts(this.now());
+    this.updateFailureRatio();
+  }
+
   private reject(
     sessionId: string,
     nickname: string,
@@ -139,6 +167,24 @@ export class Matchmaker {
 
   private updateFailureRatio(): void {
     const total = this.attempts.length;
-    this.failureRatio.set(total ? this.attempts.filter((entry) => entry.failed).length / total : 0);
+    const ratio = total ? this.attempts.filter((entry) => entry.failed).length / total : 0;
+    this.failureRatio.set(ratio);
+    this.opsiaFailureRatio.labels(
+      process.env.POD_NAMESPACE ?? "sandbox",
+      "Deployment",
+      process.env.OPSIA_WORKLOAD_NAME ?? "api-server",
+      "api-server",
+      "admission",
+      "admission_failure",
+      "capacity_regression",
+    ).set(ratio);
+  }
+
+  private trimAttempts(now: number): void {
+    this.attempts.splice(
+      0,
+      this.attempts.length,
+      ...this.attempts.filter((entry) => entry.at > now - 1_000),
+    );
   }
 }

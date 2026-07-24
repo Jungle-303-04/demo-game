@@ -97,3 +97,19 @@ test("maximum admission pressure continues through the login gateway until failu
   assert.ok(failed.failureRatePercent >= 20);
   assert.equal(controller.stop(started.jobId).phase, "stopped");
 });
+
+test("presentation admission load holds 40 RPS and expires after the 15 minute safety TTL", () => {
+  const now = Date.parse("2026-07-24T09:00:00.000Z");
+  const controller = new AdmissionLoadController({
+    endpoint: "http://demo-game-gateway",
+    now: () => now,
+    sleep: async () => new Promise<void>(() => undefined),
+  });
+
+  const started = controller.start("room-0");
+
+  assert.equal(started.targetRps, 40);
+  assert.equal(started.maximumRps, 40);
+  assert.equal(started.expiresAt, "2026-07-24T09:15:00.000Z");
+  assert.equal(controller.stop(started.jobId).phase, "stopped");
+});
