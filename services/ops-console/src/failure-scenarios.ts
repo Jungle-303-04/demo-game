@@ -415,21 +415,7 @@ export class FailureScenarioController {
         return this.completeRun(roomId, run, "정리할 시나리오 봇이 없습니다.", { killed: 0 });
       }
       case "admission-storm": {
-        if (!run.jobId) throw new Error("admission_load_job_not_found");
-        run.status = "recovering";
-        const beforeStop = this.admissionLoad.status(run.jobId);
-        const stopped = this.admissionLoad.stop(run.jobId);
-        return this.completeRun(roomId, run, "입장 부하를 즉시 중단했습니다. 기존 게임 세션은 그대로 유지됩니다.", {
-          ...run.evidence,
-          ...this.admissionEvidence(stopped),
-          loadStopped: true,
-          failureRateAtStopPercent: beforeStop?.failureRatePercent ?? stopped.failureRatePercent,
-          saturationRps: beforeStop?.targetRps ?? stopped.targetRps,
-          incidentObserved: beforeStop?.incidentTriggered ?? stopped.incidentTriggered,
-          recoveryPerformed: false,
-          recoveryVerified: false,
-          recoveryOwner: "gitops-scale",
-        });
+        return this.stopAdmissionLoad(roomId);
       }
       case "process-crash": {
         run.status = "recovering";
@@ -450,6 +436,33 @@ export class FailureScenarioController {
         return this.completeRun(roomId, run, "교체된 Pod와 snapshot 연결이 정상 복구됐습니다.");
       }
     }
+  }
+
+  stopAdmissionLoad(roomId: string): FailureScenarioActionResult {
+    this.expireAutomaticRuns();
+    const run = this.activeRuns.get(roomId);
+    if (!run) {
+      return this.completed(roomId, "admission-storm", "이미 입장 부하가 중지되어 있습니다.", {
+        idempotent: true,
+        loadStopped: true,
+      });
+    }
+    if (run.scenarioId !== "admission-storm") throw scenarioConflict(run);
+    if (!run.jobId) throw new Error("admission_load_job_not_found");
+    run.status = "recovering";
+    const beforeStop = this.admissionLoad.status(run.jobId);
+    const stopped = this.admissionLoad.stop(run.jobId);
+    return this.completeRun(roomId, run, "입장 부하를 즉시 중단했습니다. 기존 게임 세션은 그대로 유지됩니다.", {
+      ...run.evidence,
+      ...this.admissionEvidence(stopped),
+      loadStopped: true,
+      failureRateAtStopPercent: beforeStop?.failureRatePercent ?? stopped.failureRatePercent,
+      saturationRps: beforeStop?.targetRps ?? stopped.targetRps,
+      incidentObserved: beforeStop?.incidentTriggered ?? stopped.incidentTriggered,
+      recoveryPerformed: false,
+      recoveryVerified: false,
+      recoveryOwner: "gitops-scale",
+    });
   }
 
   private publicRun(run: MutableRun): FailureScenarioRun {

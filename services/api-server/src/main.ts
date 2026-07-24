@@ -6,7 +6,11 @@ const port = Number(process.env.PORT ?? 8081);
 const log = (event: { level: string; event: string; [key: string]: unknown }) => process.stdout.write(`${JSON.stringify(event)}\n`);
 const controlToken = readControlToken();
 const matchmaker = new Matchmaker(
-  new HttpRoomDirectory(process.env.ORCHESTRATOR_URL ?? "http://room-orchestrator:8082", controlToken),
+  new HttpRoomDirectory(
+    process.env.ORCHESTRATOR_URL ?? "http://room-orchestrator:8082",
+    controlToken,
+    Number(process.env.ROOM_DIRECTORY_CACHE_MS ?? 250),
+  ),
   Number(process.env.MAX_FIND_GAME_PER_SECOND ?? 25),
   Date.now,
   log,

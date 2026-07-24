@@ -350,6 +350,18 @@ const server = createServer(async (request, response) => {
       if (!isFailureScenarioId(scenarioId)) {
         return send(response, 400, { error: "unsupported_failure_scenario" });
       }
+      if (scenarioId === "admission-storm" && action === "recover") {
+        const result = failureScenarios.stopAdmissionLoad(roomId);
+        recordEvent(
+          "FAILURE_SCENARIO_RECOVERED",
+          roomId,
+          "failure-lab",
+          result.message,
+          "success",
+          { scenarioId, action, evidence: result.evidence },
+        );
+        return send(response, 200, result);
+      }
       const registryState = await getRegistryState(orchestrator);
       const record = registryState.rooms.find((candidate) => candidate.roomId === roomId);
       if (!record) return send(response, 404, { error: "room_not_found" });

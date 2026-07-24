@@ -239,3 +239,31 @@ test("HTTP room directory authenticates and bounds its orchestrator request", as
   assert.equal(new Headers(captured?.headers).get("authorization"), "Bearer service-secret");
   assert.ok(captured?.signal instanceof AbortSignal);
 });
+
+test("HTTP room directory coalesces concurrent admission lookups and refreshes after its TTL", async (context) => {
+  const originalFetch = globalThis.fetch;
+  let now = 1_000;
+  let calls = 0;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = (async (input) => {
+    calls += 1;
+    if (String(input) === "http://orchestrator/rooms") {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return new Response(JSON.stringify({ rooms: [] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    throw new Error(`unexpected_url:${String(input)}`);
+  }) as typeof fetch;
+  const directory = new HttpRoomDirectory("http://orchestrator", "", 250, () => now);
+
+  await Promise.all(Array.from({ length: 50 }, () => directory.list()));
+  assert.equal(calls, 1);
+  await directory.list();
+  assert.equal(calls, 1);
+
+  now += 251;
+  await directory.list();
+  assert.equal(calls, 2);
+});

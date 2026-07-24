@@ -52,8 +52,39 @@ const telemetryIdentity = (): TelemetryIdentity => {
 };
 
 export class HttpRoomDirectory implements RoomDirectory {
-  constructor(private readonly orchestratorUrl: string, private readonly controlToken = "") {}
+  private cached: { expiresAt: number; records: RoomRegistryRecord[] } | undefined;
+  private refresh: Promise<RoomRegistryRecord[]> | undefined;
+
+  constructor(
+    private readonly orchestratorUrl: string,
+    private readonly controlToken = "",
+    private readonly cacheTtlMs = 250,
+    private readonly now: () => number = Date.now,
+  ) {
+    if (!Number.isSafeInteger(cacheTtlMs) || cacheTtlMs < 0 || cacheTtlMs > 5_000) {
+      throw new Error("room_directory_cache_ttl_invalid");
+    }
+  }
+
   async list(): Promise<RoomRegistryRecord[]> {
+    if (this.cached && this.cached.expiresAt > this.now()) {
+      return this.cached.records.map((record) => ({ ...record }));
+    }
+    if (this.refresh) return (await this.refresh).map((record) => ({ ...record }));
+    this.refresh = this.fetchRecords();
+    try {
+      const records = await this.refresh;
+      this.cached = {
+        expiresAt: this.now() + this.cacheTtlMs,
+        records,
+      };
+      return records.map((record) => ({ ...record }));
+    } finally {
+      this.refresh = undefined;
+    }
+  }
+
+  private async fetchRecords(): Promise<RoomRegistryRecord[]> {
     const response = await fetch(`${this.orchestratorUrl}/rooms`, withControlToken({
       signal: AbortSignal.timeout(1_500),
     }, this.controlToken));
