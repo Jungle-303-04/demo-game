@@ -51,7 +51,17 @@ const server = createServer(async (request, response) => {
       if (requestedRoomId !== undefined && !/^room-\d+$/.test(requestedRoomId)) {
         return send(response, 400, { error: "roomId_invalid" });
       }
-      const room = await matchmaker.findGame(sessionId, nickname, requestedRoomId);
+      const safeHeader = (name: string): string | undefined => {
+        const value = request.headers[name];
+        const text = Array.isArray(value) ? value[0] : value;
+        if (!text || text.length > 160 || !/^[a-zA-Z0-9_.:/-]+$/.test(text)) return undefined;
+        return text;
+      };
+      const room = await matchmaker.findGame(sessionId, nickname, requestedRoomId, {
+        correlationId: safeHeader("x-opsia-correlation-id"),
+        scenario: safeHeader("x-opsia-scenario"),
+        syntheticLoad: request.headers["x-opsia-synthetic-load"] === "true",
+      });
       // This service chooses a live room Deployment only. The participant then
       // uses that room's real survev `/api/find_game` + WebSocket protocol.
       const host = String(request.headers["x-forwarded-host"] ?? request.headers.host ?? "localhost");

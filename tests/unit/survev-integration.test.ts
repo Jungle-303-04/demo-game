@@ -174,10 +174,10 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(botRunner, /roomBotTargets\.get\(roomId\)/);
   assert.match(adminUi, /controlPlaneClient\.startFailureScenario\(roomId, "admission-storm"\)/);
   assert.match(adminUi, /onRunAdmissionStorm=\{\(roomId\) => void startAdmissionStorm\(roomId\)\}/);
-  assert.match(adminUi, /입장 서버 장애/);
+  assert.match(adminUi, /입장 부하 시작/);
   assert.match(adminUi, /onRecoverAdmissionStorm=\{\(roomId\) => void recoverAdmissionStorm\(roomId\)\}/);
-  assert.match(adminUi, /className="is-recovery"/);
-  assert.match(adminUi, /복구 검증/);
+  assert.match(adminUi, /scenarioActive \? "is-recovery" : "is-scenario"/);
+  assert.match(adminUi, /입장 부하 중지/);
   assert.match(compose, /api-server:\s+[\s\S]*?restart: on-failure/);
   assert.match(adminUi, /snapshotCapturedAt > 0/);
   assert.doesNotMatch(adminUi, /ROOM_FORM_DEFAULTS|ManagementTab/);
@@ -234,7 +234,7 @@ test("game server executes upstream Game/gameServer and serves the upstream Pixi
   assert.match(failureScenarios, /process\.env\.ADMISSION_GATEWAY_URL/);
   assert.doesNotMatch(failureScenarios, /admission-overload\/(?:arm|recover|disarm)/);
   assert.match(failureScenarios, /failureMode: "capacity-regression"/);
-  assert.match(failureScenarios, /admission_capacity_recovery_not_verified/);
+  assert.match(failureScenarios, /adaptive-ramp-until-failure/);
   assert.doesNotMatch(failureScenarios, /api-server\/scale/);
   assert.match(failureScenarioUi, /function AdmissionCapacityPanel/);
   assert.match(failureScenarioUi, /failureRatePercent/);

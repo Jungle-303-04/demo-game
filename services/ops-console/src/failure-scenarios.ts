@@ -103,15 +103,16 @@ const BOT_SURGE_TARGET_TICK_P95_MS = 60;
 const BOT_SURGE_RAMP_INTERVAL_MS = 3_000;
 const BOT_SURGE_HOLD_MS = 10_000;
 const MALICIOUS_BOT_COUNT = 3;
-const ADMISSION_RECOVERY_ATTEMPTS = 24;
-const ADMISSION_RECOVERY_POLL_MS = 250;
-const ADMISSION_CAPACITY_PER_REPLICA_RPS = 25;
-const ADMISSION_HEALTHY_REPLICAS = 2;
-const ADMISSION_DEGRADED_REPLICAS = 1;
-const ADMISSION_INCIDENT_FAILURE_PERCENT = 20;
-const ADMISSION_TARGET_RPS = 40;
-const ADMISSION_RECOVERY_MIN_REQUEST_RPS = 36;
-const ADMISSION_RECOVERY_MAX_REQUEST_RPS = 44;
+const numberFromEnvironment = (
+  name: string,
+  fallback: number,
+): number => {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) throw new Error(`${name.toLowerCase()}_invalid`);
+  return parsed;
+};
 
 export const isFailureScenarioId = (value: string): value is FailureScenarioId =>
   FAILURE_SCENARIO_IDS.some((scenarioId) => scenarioId === value);
@@ -146,6 +147,13 @@ export class FailureScenarioController {
     this.admissionLoad = admissionLoad ?? new AdmissionLoadController({
       endpoint: admissionLoadEndpoint,
       now,
+      initialRps: numberFromEnvironment("ADMISSION_LOAD_INITIAL_RPS", 40),
+      rampStepRps: numberFromEnvironment("ADMISSION_LOAD_RAMP_STEP_RPS", 40),
+      rampIntervalMs: numberFromEnvironment("ADMISSION_LOAD_RAMP_INTERVAL_MS", 2_000),
+      maximumRps: numberFromEnvironment("ADMISSION_LOAD_MAXIMUM_RPS", 400),
+      failureThreshold: numberFromEnvironment("ADMISSION_LOAD_FAILURE_THRESHOLD", 0.2),
+      failureConfirmations: numberFromEnvironment("ADMISSION_LOAD_FAILURE_CONFIRMATIONS", 2),
+      minimumSamples: numberFromEnvironment("ADMISSION_LOAD_MINIMUM_SAMPLES", 20),
     });
   }
 
@@ -254,7 +262,12 @@ export class FailureScenarioController {
         existing.evidence,
       );
     }
-    else if (existing) throw scenarioConflict(existing);
+    else if (existing) {
+      if (existing.scenarioId === scenarioId) {
+        return this.started(room.id, existing, "이미 같은 장애 시나리오가 실행 중입니다.");
+      }
+      throw scenarioConflict(existing);
+    }
 
     const run: MutableRun = {
       scenarioId,
@@ -323,16 +336,21 @@ export class FailureScenarioController {
             failureMode: "capacity-regression",
             failureTarget: "api-server",
             loadPath: "login-gateway",
-            expectedHealthyReplicas: ADMISSION_HEALTHY_REPLICAS,
-            degradedReplicas: ADMISSION_DEGRADED_REPLICAS,
-            perReplicaCapacityRps: ADMISSION_CAPACITY_PER_REPLICA_RPS,
+            loadStrategy: "adaptive-ramp-until-failure",
+            rootCauseHypothesis: "admission-capacity-reduced-after-deployment",
+            deploymentChangeExpected: "replica-count-reduction",
+            rcaSignals: [
+              "deployment-change",
+              "admission-failure-rate",
+              "find-game-rejected-log",
+            ],
             existingSessionsExpected: "unaffected",
             recoveryOwner: "gitops-scale",
           };
           return this.started(
             room.id,
             run,
-            "초당 40건의 신규 입장 요청으로 로비 용량 회귀를 재현하고 있습니다.",
+            `${load.targetRps} RPS부터 실패가 재현될 때까지 로비 입장 부하를 빠르게 올립니다.`,
           );
         }
         case "process-crash": {
@@ -399,51 +417,17 @@ export class FailureScenarioController {
       case "admission-storm": {
         if (!run.jobId) throw new Error("admission_load_job_not_found");
         run.status = "recovering";
-        const verified = this.admissionLoad.status(run.jobId);
-        if (
-          !verified
-          || verified.phase !== "saturated"
-          || !verified.incidentTriggered
-          || verified.targetRps !== ADMISSION_TARGET_RPS
-          || verified.requestRps < ADMISSION_RECOVERY_MIN_REQUEST_RPS
-          || verified.requestRps > ADMISSION_RECOVERY_MAX_REQUEST_RPS
-          || verified.failureRatePercent >= ADMISSION_INCIDENT_FAILURE_PERCENT
-        ) {
-          run.status = "active";
-          throw new UpstreamError(
-            409,
-            {
-              error: "admission_capacity_recovery_not_verified",
-              failureRatePercent: verified?.failureRatePercent,
-              requiredBelowPercent: ADMISSION_INCIDENT_FAILURE_PERCENT,
-              phase: verified?.phase,
-              targetRps: verified?.targetRps,
-              requiredTargetRps: ADMISSION_TARGET_RPS,
-              requestRps: verified?.requestRps,
-              requiredRequestRps: {
-                minimum: ADMISSION_RECOVERY_MIN_REQUEST_RPS,
-                maximum: ADMISSION_RECOVERY_MAX_REQUEST_RPS,
-              },
-            },
-            "admission_capacity_recovery_not_verified",
-          );
-        }
-        const admissionRecovered = await this.waitForAdmissionServer();
-        if (!admissionRecovered) {
-          run.status = "active";
-          throw new UpstreamError(
-            409,
-            { error: "admission_recovery_not_ready" },
-            "admission_recovery_not_ready",
-          );
-        }
+        const beforeStop = this.admissionLoad.status(run.jobId);
         const stopped = this.admissionLoad.stop(run.jobId);
-        return this.completeRun(roomId, run, "입장 부하를 중단하고 로비 서버가 계속 정상 동작하는지 확인했습니다.", {
+        return this.completeRun(roomId, run, "입장 부하를 즉시 중단했습니다. 기존 게임 세션은 그대로 유지됩니다.", {
+          ...run.evidence,
           ...this.admissionEvidence(stopped),
           loadStopped: true,
-          admissionServerStatus: "healthy",
+          failureRateAtStopPercent: beforeStop?.failureRatePercent ?? stopped.failureRatePercent,
+          saturationRps: beforeStop?.targetRps ?? stopped.targetRps,
+          incidentObserved: beforeStop?.incidentTriggered ?? stopped.incidentTriggered,
           recoveryPerformed: false,
-          recoveryVerified: true,
+          recoveryVerified: false,
           recoveryOwner: "gitops-scale",
         });
       }
@@ -726,21 +710,6 @@ export class FailureScenarioController {
     }
   }
 
-  private async waitForAdmissionServer(): Promise<boolean> {
-    for (let attempt = 0; attempt < ADMISSION_RECOVERY_ATTEMPTS; attempt += 1) {
-      const health = await fetchJson<{ status?: string }>(
-        `${this.admissionEndpoint}/healthz`,
-        undefined,
-        600,
-      ).catch(() => undefined);
-      if (health?.status === "ok") return true;
-      if (attempt + 1 < ADMISSION_RECOVERY_ATTEMPTS) {
-        await new Promise((resolve) => setTimeout(resolve, ADMISSION_RECOVERY_POLL_MS));
-      }
-    }
-    return false;
-  }
-
   private admissionEvidence(
     status: AdmissionLoadStatus,
     source: Record<string, unknown> = {},
@@ -753,9 +722,16 @@ export class FailureScenarioController {
       acceptedRps: status.acceptedRps,
       rejectedRps: status.rejectedRps,
       responseP95Ms: status.responseP95Ms,
+      initialRps: status.initialRps,
       targetRps: status.targetRps,
+      rampStepRps: status.rampStepRps,
+      rampIntervalMs: status.rampIntervalMs,
+      maximumRps: status.maximumRps,
+      failureThresholdPercent: status.failureThresholdPercent,
+      totalRequests: status.requests,
       phase: status.phase,
       incidentTriggered: status.incidentTriggered,
+      saturationReason: status.saturationReason,
       ...(status.expiresAt ? { safetyExpiresAt: status.expiresAt } : {}),
     };
   }

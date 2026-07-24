@@ -103,7 +103,11 @@ test("matchmaker metrics count every rejected admission and expose capacity", as
   const matchmaker = new Matchmaker(directory, 1, () => 1_000);
   await matchmaker.findGame("session-a", "Ada");
   await assert.rejects(
-    matchmaker.findGame("session-b", "Grace"),
+    matchmaker.findGame("session-b", "Grace", "room-0", {
+      correlationId: "admission-job-1",
+      scenario: "admission-storm",
+      syntheticLoad: true,
+    }),
     /find_game_rejected:rate_limited/,
   );
 
@@ -149,7 +153,11 @@ test("matchmaker emits generic structured admission facts for Loki correlation",
 
   await matchmaker.findGame("session-a", "Ada");
   await assert.rejects(
-    matchmaker.findGame("session-b", "Grace"),
+    matchmaker.findGame("session-b", "Grace", "room-0", {
+      correlationId: "admission-job-1",
+      scenario: "admission-storm",
+      syntheticLoad: true,
+    }),
     /find_game_rejected:rate_limited/,
   );
 
@@ -181,6 +189,10 @@ test("matchmaker emits generic structured admission facts for Loki correlation",
     symptom: "admission_failure",
     outcome: "rejected",
     reason: "rate_limited",
+    room_id: "room-0",
+    correlation_id: "admission-job-1",
+    scenario: "admission-storm",
+    synthetic_load: true,
     capacity_per_second: 1,
     duration_ms: entries[1]!.duration_ms,
   });

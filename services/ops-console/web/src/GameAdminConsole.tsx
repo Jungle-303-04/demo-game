@@ -673,22 +673,15 @@ function ServerBlock({
               참가하기
             </button>
             <button
-              className="is-scenario"
-              disabled={scenarioPending || scenarioDisabled || scenarioActive}
-              onClick={() => runAndClose(onScenarioStart)}
+              className={scenarioActive ? "is-recovery" : "is-scenario"}
+              disabled={scenarioPending || scenarioDisabled}
+              onClick={() => runAndClose(scenarioActive ? onScenarioRecover : onScenarioStart)}
               role="menuitem"
               type="button"
             >
-              {scenarioActive ? "입장 서버 장애 실행 중" : "입장 서버 장애"}
-            </button>
-            <button
-              className="is-recovery"
-              disabled={scenarioPending || !scenarioActive}
-              onClick={() => runAndClose(onScenarioRecover)}
-              role="menuitem"
-              type="button"
-            >
-              {scenarioPending && scenarioActive ? "복구 검증 중…" : "복구 검증"}
+              {scenarioPending
+                ? scenarioActive ? "입장 부하 중지 중…" : "입장 부하 시작 중…"
+                : scenarioActive ? "입장 부하 중지" : "입장 부하 시작"}
             </button>
           </div>
         ) : null}

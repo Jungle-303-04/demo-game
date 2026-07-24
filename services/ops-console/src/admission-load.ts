@@ -13,8 +13,12 @@ export interface AdmissionLoadStatus {
   phase: AdmissionLoadPhase;
   startedAt: string;
   expiresAt?: string;
+  initialRps: number;
   targetRps: number;
+  rampStepRps: number;
+  rampIntervalMs: number;
   maximumRps: number;
+  failureThresholdPercent: number;
   requests: number;
   accepted: number;
   rateLimited: number;
@@ -49,14 +53,19 @@ interface AdmissionJob {
   phase: AdmissionLoadPhase;
   startedAtMs: number;
   expiresAtMs?: number;
+  initialRps: number;
   targetRps: number;
+  rampStepRps: number;
+  rampIntervalMs: number;
   maximumRps: number;
+  failureThreshold: number;
   requests: number;
   issued: number;
   accepted: number;
   rateLimited: number;
   rejected: number;
   nextRampAtMs: number;
+  consecutiveFailureWindows: number;
   incidentTriggered: boolean;
   saturationReason?: "failure_threshold" | "maximum_load";
   error?: string;
@@ -71,6 +80,8 @@ export interface AdmissionLoadControllerOptions {
   rampIntervalMs?: number;
   maximumRps?: number;
   failureThreshold?: number;
+  failureConfirmations?: number;
+  minimumSamples?: number;
   metricWindowMs?: number;
   safetyTtlMs?: number;
   requestTimeoutMs?: number;
@@ -101,6 +112,8 @@ export class AdmissionLoadController implements AdmissionLoadService {
   private readonly rampIntervalMs: number;
   private readonly maximumRps: number;
   private readonly failureThreshold: number;
+  private readonly failureConfirmations: number;
+  private readonly minimumSamples: number;
   private readonly metricWindowMs: number;
   private readonly safetyTtlMs: number | undefined;
   private readonly requestTimeoutMs: number;
@@ -116,15 +129,26 @@ export class AdmissionLoadController implements AdmissionLoadService {
       throw new Error("admission_load_endpoint_invalid");
     }
     this.endpoint = trimSlash(endpoint.toString());
-    // The presentation incident is deliberately a capacity regression, not a
-    // process crash. One api-server Pod admits 25 requests/s, so a fixed 40
-    // requests/s yields a visible rejection ratio; the normal two-Pod Service
-    // has 50 requests/s of aggregate capacity and remains healthy.
+    // Ramp through the public login path until the measured failure ratio proves
+    // that admission capacity is saturated. All values can be tuned per
+    // environment; the defaults deliberately avoid any replica-count coupling.
     this.initialRps = boundedInteger(options.initialRps ?? 40, 1, 1_000, "admission_initial_rps");
-    this.rampStepRps = boundedInteger(options.rampStepRps ?? 10, 1, 1_000, "admission_ramp_step_rps");
-    this.rampIntervalMs = boundedInteger(options.rampIntervalMs ?? 5_000, 500, 60_000, "admission_ramp_interval_ms");
-    this.maximumRps = boundedInteger(options.maximumRps ?? 40, this.initialRps, 5_000, "admission_maximum_rps");
+    this.rampStepRps = boundedInteger(options.rampStepRps ?? 40, 1, 1_000, "admission_ramp_step_rps");
+    this.rampIntervalMs = boundedInteger(options.rampIntervalMs ?? 2_000, 500, 60_000, "admission_ramp_interval_ms");
+    this.maximumRps = boundedInteger(options.maximumRps ?? 400, this.initialRps, 5_000, "admission_maximum_rps");
     this.failureThreshold = options.failureThreshold ?? 0.2;
+    this.failureConfirmations = boundedInteger(
+      options.failureConfirmations ?? 2,
+      1,
+      10,
+      "admission_failure_confirmations",
+    );
+    this.minimumSamples = boundedInteger(
+      options.minimumSamples ?? 20,
+      1,
+      100_000,
+      "admission_minimum_samples",
+    );
     // Kyro's canonical SLI recording rule uses
     // rate(opsia_sli_requests_total[1m]). Matching that interval here keeps
     // the operator UI and platform evidence on the same observation window.
@@ -156,6 +180,7 @@ export class AdmissionLoadController implements AdmissionLoadService {
     if (!/^room-\d+$/.test(roomId)) throw new Error("admission_load_room_invalid");
     const active = this.activeJobId ? this.jobs.get(this.activeJobId) : undefined;
     if (active && !["stopped", "safety_timeout", "failed"].includes(active.phase)) {
+      if (active.roomId === roomId) return this.publicStatus(active);
       throw new Error("admission_load_already_running");
     }
     const now = this.now();
@@ -165,14 +190,19 @@ export class AdmissionLoadController implements AdmissionLoadService {
       phase: "ramping",
       startedAtMs: now,
       expiresAtMs: this.safetyTtlMs ? now + this.safetyTtlMs : undefined,
+      initialRps: this.initialRps,
       targetRps: this.initialRps,
+      rampStepRps: this.rampStepRps,
+      rampIntervalMs: this.rampIntervalMs,
       maximumRps: this.maximumRps,
+      failureThreshold: this.failureThreshold,
       requests: 0,
       issued: 0,
       accepted: 0,
       rateLimited: 0,
       rejected: 0,
       nextRampAtMs: now + this.rampIntervalMs,
+      consecutiveFailureWindows: 0,
       incidentTriggered: false,
       samples: [],
       controller: new AbortController(),
@@ -212,7 +242,7 @@ export class AdmissionLoadController implements AdmissionLoadService {
         previous = now;
         // Do not replay traffic debt after the event loop stalls. A load
         // generator that catches up with a large burst would manufacture a
-        // different failure mode than the intended sustained 40 RPS.
+        // different failure mode than the intended sustained target RPS.
         if (elapsedMs > LOAD_LOOP_INTERVAL_MS * 2.5) carry = 0;
         const effectiveElapsedMs = elapsedMs > LOAD_LOOP_INTERVAL_MS * 2.5
           ? LOAD_LOOP_INTERVAL_MS
@@ -252,11 +282,21 @@ export class AdmissionLoadController implements AdmissionLoadService {
         // Each synthetic admission represents a different new client. Closing
         // the connection also lets the Kubernetes Service distribute the same
         // load across a newly added api-server Pod instead of pinning one pool.
-        headers: { "content-type": "application/json", connection: "close" },
-        signal: AbortSignal.timeout(this.requestTimeoutMs),
+        headers: {
+          "content-type": "application/json",
+          connection: "close",
+          "x-opsia-correlation-id": job.jobId,
+          "x-opsia-scenario": "admission-storm",
+          "x-opsia-synthetic-load": "true",
+        },
+        signal: AbortSignal.any([
+          job.controller.signal,
+          AbortSignal.timeout(this.requestTimeoutMs),
+        ]),
         body: JSON.stringify({
           sessionId: `${job.jobId}-${sequence}`,
           nickname: `Admission_${sequence}`,
+          roomId: job.roomId,
         }),
       });
       accepted = response.ok;
@@ -264,6 +304,7 @@ export class AdmissionLoadController implements AdmissionLoadService {
     } catch {
       // A timeout or transport failure is a real rejected admission sample.
     }
+    if (job.controller.signal.aborted) return;
     job.requests += 1;
     if (accepted) job.accepted += 1;
     else if (rateLimited) job.rateLimited += 1;
@@ -279,17 +320,26 @@ export class AdmissionLoadController implements AdmissionLoadService {
   }
 
   private evaluateRamp(job: AdmissionJob): void {
-    if ((job.phase !== "ramping" && job.phase !== "saturated") || this.now() < job.nextRampAtMs) return;
+    if (job.phase !== "ramping" || this.now() < job.nextRampAtMs) return;
     const status = this.publicStatus(job);
-    if (status.failureRatePercent >= this.failureThreshold * 100) {
-      job.phase = "saturated";
-      job.incidentTriggered = true;
-      job.saturationReason = "failure_threshold";
+    const enoughSamples = this.samples(job).length >= this.minimumSamples;
+    if (enoughSamples && status.failureRatePercent >= this.failureThreshold * 100) {
+      job.consecutiveFailureWindows += 1;
+      job.nextRampAtMs = this.now() + this.rampIntervalMs;
+      if (job.consecutiveFailureWindows >= this.failureConfirmations) {
+        // Hold the first load level that reproducibly breaks admission. This
+        // keeps RCA evidence stable and avoids turning a capacity incident into
+        // an unrelated CPU or connection-exhaustion failure.
+        job.phase = "saturated";
+        job.incidentTriggered = true;
+        job.saturationReason = "failure_threshold";
+      }
+      return;
     }
+    job.consecutiveFailureWindows = 0;
     if (job.targetRps >= job.maximumRps) {
-      // Keep maximum pressure applied until the operator explicitly recovers
-      // the scenario. Crossing the first failure threshold is an incident
-      // signal, not a reason to stop increasing pressure.
+      job.phase = "saturated";
+      job.saturationReason = "maximum_load";
       job.nextRampAtMs = this.now() + this.rampIntervalMs;
       return;
     }
@@ -314,8 +364,12 @@ export class AdmissionLoadController implements AdmissionLoadService {
       phase: job.phase,
       startedAt: new Date(job.startedAtMs).toISOString(),
       expiresAt: job.expiresAtMs === undefined ? undefined : new Date(job.expiresAtMs).toISOString(),
+      initialRps: job.initialRps,
       targetRps: job.targetRps,
+      rampStepRps: job.rampStepRps,
+      rampIntervalMs: job.rampIntervalMs,
       maximumRps: job.maximumRps,
+      failureThresholdPercent: Number((job.failureThreshold * 100).toFixed(1)),
       requests: job.requests,
       accepted: job.accepted,
       rateLimited: job.rateLimited,

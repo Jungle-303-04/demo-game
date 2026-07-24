@@ -16,10 +16,19 @@ type StructuredLog = {
   room_id?: string;
   capacity_per_second: number;
   duration_ms: number;
+  correlation_id?: string;
+  scenario?: string;
+  synthetic_load?: boolean;
   detail?: Record<string, unknown>;
 };
 
 export interface RoomDirectory { list(): Promise<RoomRegistryRecord[]>; }
+
+export type AdmissionRequestContext = {
+  correlationId?: string;
+  scenario?: string;
+  syntheticLoad?: boolean;
+};
 
 type TelemetryIdentity = {
   namespace: string;
@@ -121,7 +130,12 @@ export class Matchmaker {
     }
   }
 
-  async findGame(sessionId: string, nickname: string, requestedRoomId?: string): Promise<RoomRegistryRecord> {
+  async findGame(
+    sessionId: string,
+    nickname: string,
+    requestedRoomId?: string,
+    context: AdmissionRequestContext = {},
+  ): Promise<RoomRegistryRecord> {
     const startedAt = performance.now();
     this.inflight.inc();
     const now = this.now();
@@ -133,7 +147,7 @@ export class Matchmaker {
       const recentAdmitted = this.admittedAt.filter((at) => at > now - 1_000);
       this.admittedAt.splice(0, this.admittedAt.length, ...recentAdmitted);
       if (recentAdmitted.length >= this.maxPerSecond) {
-        return this.reject(sessionId, nickname, "rate_limited", attempt, startedAt);
+        return this.reject(sessionId, nickname, "rate_limited", attempt, startedAt, requestedRoomId, context);
       }
 
       // Reserve capacity before the directory probe. Rejected requests remain
@@ -143,7 +157,15 @@ export class Matchmaker {
       try {
         listed = await this.directory.list();
       } catch {
-        return this.reject(sessionId, nickname, "directory_unavailable", attempt, startedAt);
+        return this.reject(
+          sessionId,
+          nickname,
+          "directory_unavailable",
+          attempt,
+          startedAt,
+          requestedRoomId,
+          context,
+        );
       }
       const rooms = listed.filter((room) =>
         room.status === "running"
@@ -157,6 +179,8 @@ export class Matchmaker {
           requestedRoomId ? "room_unavailable" : "no_room",
           attempt,
           startedAt,
+          requestedRoomId,
+          context,
         );
       }
       const room = requestedRoomId
@@ -169,6 +193,8 @@ export class Matchmaker {
           requestedRoomId ? "room_unavailable" : "no_room",
           attempt,
           startedAt,
+          requestedRoomId,
+          context,
         );
       }
       this.requests.labels("accepted").inc();
@@ -189,6 +215,7 @@ export class Matchmaker {
         outcome: "accepted",
         roomId: room.roomId,
         durationMs,
+        context,
       });
       return room;
     } finally {
@@ -207,6 +234,8 @@ export class Matchmaker {
     reason: string,
     attempt: { at: number; failed: boolean },
     startedAt: number,
+    roomId?: string,
+    context: AdmissionRequestContext = {},
   ): never {
     attempt.failed = true;
     this.updateFailureRatio();
@@ -227,7 +256,9 @@ export class Matchmaker {
       event: "find_game_rejected",
       outcome: "rejected",
       reason,
+      roomId,
       durationMs,
+      context,
     });
     throw new Error(`find_game_rejected:${reason}`);
   }
@@ -245,6 +276,7 @@ export class Matchmaker {
     reason?: string;
     roomId?: string;
     durationMs: number;
+    context?: AdmissionRequestContext;
   }): void {
     this.log({
       level: input.level,
@@ -259,6 +291,11 @@ export class Matchmaker {
       outcome: input.outcome,
       ...(input.reason ? { reason: input.reason } : {}),
       ...(input.roomId ? { room_id: input.roomId } : {}),
+      ...(input.context?.correlationId ? { correlation_id: input.context.correlationId } : {}),
+      ...(input.context?.scenario ? { scenario: input.context.scenario } : {}),
+      ...(input.context?.syntheticLoad === undefined
+        ? {}
+        : { synthetic_load: input.context.syntheticLoad }),
       capacity_per_second: this.maxPerSecond,
       duration_ms: Number(input.durationMs.toFixed(3)),
     });

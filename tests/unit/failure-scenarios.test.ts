@@ -307,15 +307,19 @@ test("pod failure is capability-gated before mutation and verifies runtime recov
   ]);
 });
 
-test("admission saturation is a 40 RPS capacity regression and never arms or exits the API process", async (context) => {
+test("admission saturation preserves RCA evidence and the second action always stops load", async (context) => {
   let loadStatus: AdmissionLoadStatus = {
     jobId: "admission-exact",
     roomId: "room-0",
     phase: "ramping",
     startedAt: "2026-07-20T01:00:00.000Z",
     expiresAt: "2026-07-20T01:03:00.000Z",
+    initialRps: 40,
     targetRps: 40,
-    maximumRps: 40,
+    rampStepRps: 40,
+    rampIntervalMs: 2_000,
+    maximumRps: 400,
+    failureThresholdPercent: 20,
     requests: 40,
     accepted: 40,
     rateLimited: 0,
@@ -339,12 +343,11 @@ test("admission saturation is a 40 RPS capacity regression and never arms or exi
     },
   };
   const calls: string[] = [];
-  let admissionHealthy = true;
   installFetch(context, (url, init) => {
     calls.push(`${init?.method ?? "GET"} ${url}`);
     if (url === "http://bots/bots") return json({ bots: [], minimumBotsPerRoom: 10 });
     if (url === "http://api-server/healthz") {
-      return admissionHealthy ? json({ status: "ok" }) : json({ error: "unavailable" }, 503);
+      return json({ status: "ok" });
     }
     return json({ error: `unexpected_url:${url}` }, 500);
   });
@@ -364,9 +367,14 @@ test("admission saturation is a 40 RPS capacity regression and never arms or exi
   assert.equal(started.evidence?.failureTarget, "api-server");
   assert.equal(started.evidence?.loadPath, "login-gateway");
   assert.equal(started.evidence?.failureMode, "capacity-regression");
-  assert.equal(started.evidence?.expectedHealthyReplicas, 2);
-  assert.equal(started.evidence?.degradedReplicas, 1);
-  assert.equal(started.evidence?.perReplicaCapacityRps, 25);
+  assert.equal(started.evidence?.loadStrategy, "adaptive-ramp-until-failure");
+  assert.equal(started.evidence?.rootCauseHypothesis, "admission-capacity-reduced-after-deployment");
+  assert.equal(started.evidence?.deploymentChangeExpected, "replica-count-reduction");
+  assert.deepEqual(started.evidence?.rcaSignals, [
+    "deployment-change",
+    "admission-failure-rate",
+    "find-game-rejected-log",
+  ]);
   assert.equal(started.evidence?.targetRps, 40);
   assert.equal(started.evidence?.recoveryOwner, "gitops-scale");
   assert.equal(controller.admissionStatus().failureRatePercent, 0);
@@ -395,46 +403,14 @@ test("admission saturation is a 40 RPS capacity regression and never arms or exi
   assert.equal(healthyServer.rooms[0]?.active?.evidence?.phase, "saturated");
   assert.equal(healthyServer.rooms[0]?.active?.evidence?.existingSessionsExpected, "unaffected");
 
-  await assert.rejects(
-    controller.recover(record, room, "admission-storm"),
-    /admission_capacity_recovery_not_verified/,
-  );
-  assert.equal(stopped, false);
-
-  const recoveredUnderSustainedLoad: AdmissionLoadStatus = {
-    ...loadStatus,
-    successRatePercent: 100,
-    failureRatePercent: 0,
-    requestRps: 40,
-    acceptedRps: 40,
-    rejectedRps: 0,
-  };
-  const invalidRecoveryStates: AdmissionLoadStatus[] = [
-    { ...recoveredUnderSustainedLoad, phase: "ramping" },
-    { ...recoveredUnderSustainedLoad, phase: "safety_timeout" },
-    { ...recoveredUnderSustainedLoad, phase: "failed" },
-    { ...recoveredUnderSustainedLoad, phase: "stopped" },
-    { ...recoveredUnderSustainedLoad, targetRps: 39 },
-    { ...recoveredUnderSustainedLoad, requestRps: 35.9 },
-    { ...recoveredUnderSustainedLoad, requestRps: 44.1 },
-  ];
-  for (const invalid of invalidRecoveryStates) {
-    loadStatus = invalid;
-    await assert.rejects(
-      controller.recover(record, room, "admission-storm"),
-      /admission_capacity_recovery_not_verified/,
-    );
-    assert.equal(stopped, false);
-  }
-
-  loadStatus = recoveredUnderSustainedLoad;
   const stoppedResult = await controller.recover(record, room, "admission-storm");
   assert.equal(stoppedResult.status, "completed");
-  assert.equal(stoppedResult.evidence?.failureRatePercent, 0);
+  assert.equal(stoppedResult.evidence?.failureRateAtStopPercent, 27.5);
+  assert.equal(stoppedResult.evidence?.saturationRps, 40);
+  assert.equal(stoppedResult.evidence?.incidentObserved, true);
   assert.equal(stoppedResult.evidence?.loadStopped, true);
-  assert.equal(stoppedResult.evidence?.admissionServerStatus, "healthy");
   assert.equal(stoppedResult.evidence?.recoveryPerformed, false);
-  assert.equal(stoppedResult.evidence?.recoveryVerified, true);
+  assert.equal(stoppedResult.evidence?.recoveryVerified, false);
   assert.equal(stoppedResult.evidence?.recoveryOwner, "gitops-scale");
   assert.equal(stopped, true);
   assert.deepEqual(controller.admissionStatus(), {
@@ -446,6 +422,10 @@ test("admission saturation is a 40 RPS capacity regression and never arms or exi
   });
   assert.ok(calls.every((call) => !call.includes("/ops/failure/admission-overload/")));
   assert.ok(calls.every((call) => !call.includes("/scale")));
+
+  const idempotentStop = await controller.recover(record, room, "admission-storm");
+  assert.equal(idempotentStop.status, "completed");
+  assert.equal(idempotentStop.evidence?.idempotent, true);
 });
 
 test("process crash remains recovering until both health and snapshot checks pass", async (context) => {

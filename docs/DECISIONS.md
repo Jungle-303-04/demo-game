@@ -23,14 +23,14 @@ api-server replicas 조정만 문서화하며, 로그의 세션 식별자를 외
 
 ## 2026-07-24: 로비 용량 회귀 시연
 
-정상 로비는 `api-server` 2개(각 25 RPS)로 50 RPS를 처리한다. 발표의 비용 절감 릴리스만 replicas를
-1개로 줄이며, admission-storm은 정확히 40 RPS를 gateway로 보낸다. 따라서 정상 상태에서는 거절이
-없고 회귀 상태에서 약 37.5%가 rate limit으로 거절된다. 이 시나리오는 overload fuse를 arm하거나
-프로세스를 종료하지 않는다. 기존 게임 WebSocket과 5개 game-room은 장애 대상이 아니다.
+비용 절감 릴리스가 로비 replicas를 줄이면 admission-storm은 gateway의 실제 실패율이 20%를
+넘을 때까지 설정 가능한 단계로 RPS를 올린다. 두 관측 구간에서 실패가 재현된 최초 RPS를 유지하므로
+환경별 용량 차이를 하드코딩하지 않는다. 이 시나리오는 overload fuse를 arm하거나 프로세스를
+종료하지 않으며 기존 게임 WebSocket과 5개 game-room은 장애 대상이 아니다.
 
-복구 판정은 부하가 `saturated`이고 실제 요청률이 36~44 RPS인 같은 40 RPS 아래에서 실패율이
-20% 미만으로 내려간 뒤에만 가능하다. 운영자 종료가 정상 경로이며, 잊힌 부하는 30분 절대 안전 한계에서
-`safety_timeout`으로 중단하되 이를 복구로 인증하지 않는다. 로비 SLI는 workload identity 라벨이
+동일 버튼의 두 번째 클릭은 복구 판정과 분리되어 대기 중 요청까지 멱등적으로 취소한다. 복구 효과는
+포화 RPS를 유지한 동안 SLI 실패율이 20% 미만으로 내려가는 것으로 Kyro에서 확인한다. 잊힌 부하는
+30분 절대 안전 한계에서 `safety_timeout`으로 중단한다. 로비 SLI는 workload identity 라벨이
 포함된 `opsia_sli_failure_ratio`와 outcome별 `opsia_sli_requests_total`로 노출한다.
 원인 분류는 메트릭 라벨에 하드코딩하지 않고 Git diff와 로그 evidence로 판단하며, 룸 UI에 전역
 실패율을 귀속시키지 않는다.

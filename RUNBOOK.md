@@ -77,8 +77,10 @@ npm run botctl -- spawn --count 1 --room room-0 --mode hack --nickname xX_Speed_
 - 정상 GitOps 상태는 `api-server` Deployment `replicas: 2`다.
 - 각 로비 Pod의 `MAX_FIND_GAME_PER_SECOND`는 25이므로 정상 총 용량은 50 RPS다.
 - 비용 절감이 포함된 잘못된 릴리스 PR에서 `replicas: 2`를 `replicas: 1`로 줄인다.
-- 운영 콘솔의 `입장 서버 장애`는 로비 gateway에 40 RPS를 고정으로 보낸다. 프로세스 종료나 Pod 삭제를 arm하지 않는다.
-- 1 Pod에서는 약 15/40건이 거절되어 실패율이 20% 장애 기준을 넘고, 2 Pod에서는 같은 40 RPS를 모두 처리한다.
+- 운영 콘솔의 `입장 부하 시작`은 로비 gateway에 40 RPS부터 요청을 보내고 2초마다 40 RPS씩 올린다.
+  실패율 20% 이상이 두 번 연속 확인된 최초 RPS에서 압력을 유지하며 프로세스 종료나 Pod 삭제를 arm하지 않는다.
+- 부하 요청에는 `correlation_id`, `scenario=admission-storm`, `synthetic_load=true`, 대상 room ID가
+  구조화 로그로 남아 Kyro가 배포 diff, SLI 실패율, `find_game_rejected` 로그를 하나의 RCA로 연결할 수 있다.
 - 운영자가 복구를 확인하고 정상 종료하는 것이 기본 경로다. 부하를 잊은 경우에만 절대 안전 한계인
   30분 뒤 `safety_timeout`으로 중단되며, 이 상태는 복구 성공으로 인정하지 않는다.
 
@@ -115,11 +117,10 @@ curl -fsS http://127.0.0.1:18081/metrics \
 - `game-room-0`~`game-room-4`의 Ready 상태와 기존 WebSocket 세션은 그대로다.
 - 게임 운영 화면에서는 룸 카드가 모두 정상이고, 전역 `로비 입장` 배지만 빨간색이다.
 
-복구 PR은 `api-server`를 다시 `replicas: 2`로 올린다. 부하를 먼저 끄지 말고 같은 40 RPS 아래에서
-시나리오가 `saturated` 상태이고 실제 관측 요청률이 36~44 RPS로 유지되면서 실패율이 20% 미만으로
-내려가는 것을 확인한다. 운영 콘솔의 복구 완료 동작도 이 조건 전에는 409
-`admission_capacity_recovery_not_verified`로 거절된다. 조건을 만족한 뒤 복구 완료를 누르면 부하를
-중단한다.
+복구 PR은 `api-server`를 다시 증설한다. RCA와 복구 효과를 확인할 때까지 포화가 발생한 RPS를 그대로
+유지하고 실패율이 20% 미만으로 내려가는지 관측한다. 확인 후 같은 메뉴의 `입장 부하 중지`를 누르면
+대기 중인 요청까지 즉시 취소된다. 중지는 복구 승인과 분리되어 있으므로 언제 눌러도 409 없이
+멱등적으로 완료된다.
 
 #### 발표 전 실제 클러스터 용량 스모크
 

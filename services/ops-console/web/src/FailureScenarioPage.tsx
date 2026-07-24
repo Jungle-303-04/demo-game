@@ -102,9 +102,9 @@ const SCENARIOS: readonly ScenarioDefinition[] = [
     id: "admission-storm",
     code: "04",
     title: "로비 용량 회귀",
-    summary: "중앙 입장 API에 40 RPS를 유지해 replicas 2→1 변경의 용량 부족을 재현합니다.",
+    summary: "중앙 입장 API의 실제 실패가 확인될 때까지 부하를 빠르게 올려 배포 후 용량 부족을 재현합니다.",
     symptom: "신규 입장 성공률 하락 · 기존 게임 세션 유지",
-    recovery: "replicas 1→2 복구 후 같은 40 RPS에서 실패율 정상화 확인",
+    recovery: "같은 버튼으로 부하 즉시 중지 · GitOps 증설 후 실패율 정상화 확인",
     tone: "danger",
   },
   {
@@ -561,15 +561,7 @@ export function FailureScenarioPage({
                 (scenario.id === "process-crash" || scenario.id === "pod-failure") &&
                 (selectedRoom.status !== "running" || !selectedRoom.podHealthy),
               );
-              const admissionRecoveryWaiting = Boolean(
-                activeForCard &&
-                scenario.id === "admission-storm" &&
-                (
-                  evidenceNumber(activeScenario?.evidence, "failureRatePercent") >= 20
-                  || activeScenario?.evidence?.incidentTriggered !== true
-                ),
-              );
-              const recoveryReady = !runtimeRecoveryWaiting && !admissionRecoveryWaiting;
+              const recoveryReady = !runtimeRecoveryWaiting;
               const startDisabled = Boolean(
                 pending || anotherScenarioActive || activeForCard || podCapabilityMissing
                 || stateUnavailable || !roomControllable,
@@ -640,9 +632,7 @@ export function FailureScenarioPage({
                         {pendingForCard && pending?.action === "recover"
                           ? "복구 요청 중"
                           : scenario.id === "admission-storm"
-                            ? admissionRecoveryWaiting
-                              ? "40 RPS 복구 검증 대기"
-                              : "복구 검증 완료"
+                            ? "입장 부하 중지"
                           : runtimeRecoveryWaiting
                             ? "런타임 자동 복구 대기"
                             : "복구 실행"}
