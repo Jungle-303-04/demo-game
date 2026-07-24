@@ -517,10 +517,7 @@ test("five room Deployments, isolated canary, and registry discovery match the f
     assert.match(podTemplate, /name: POD_NAMESPACE[\s\S]*fieldPath: metadata\.namespace/);
     assert.match(podTemplate, /name: POD_UID[\s\S]*fieldPath: metadata\.uid/);
     assert.match(podTemplate, /name: OPSIA_RESOURCE_KIND, value: Deployment/);
-    assert.match(
-      podTemplate,
-      /name: OPSIA_CONTINUITY_ID[\s\S]*fieldPath: "metadata\.labels\['game\.opsia\.dev\/room-id'\]"/,
-    );
+    assert.doesNotMatch(podTemplate, /name: OPSIA_CONTINUITY_ID/);
   }
   // Each stable room ID labels both its Deployment and the Pod template, so
   // reconciliation can follow a replacement Pod without using its name.
