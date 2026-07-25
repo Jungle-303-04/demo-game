@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Game, JoinTokenData } from "../../server/src/game/game.ts";
 import { retainOpsiaStaticMap } from "../../server/src/game/gameProcessManager.ts";
 import type { Player } from "../../server/src/game/objects/player.ts";
@@ -24,6 +24,7 @@ const originalRoomEpoch = process.env.ROOM_EPOCH;
 const originalSourceEpoch = process.env.OPSIA_SOURCE_EPOCH;
 
 afterEach(() => {
+    vi.useRealTimers();
     if (originalRoomId === undefined) delete process.env.ROOM_ID;
     else process.env.ROOM_ID = originalRoomId;
     if (originalRedisUrl === undefined) delete process.env.REDIS_URL;
@@ -309,6 +310,46 @@ describe("Opsia recovery ownership", () => {
         expect(active.handoffStatus()).toMatchObject({ role: "active", roomEpoch: 10, checksum });
         expect(active.acceptsGatewayInput(10)).toBe(true);
         expect(candidate.acceptsGatewayInput(9)).toBe(false);
+
+        await candidate.stop();
+        await active.stop();
+    });
+
+    it("lets an auto candidate recover an abandoned room lease after the active process dies", async () => {
+        vi.useFakeTimers();
+        process.env.ROOM_ID = `room-auto-recovery-${Date.now()}`;
+        process.env.ROOM_EPOCH = "11";
+        delete process.env.REDIS_URL;
+        process.env.OPSIA_ROLE = "active";
+
+        const activeGame = fakeGame();
+        const active = new OpsiaSnapshotStore();
+        await active.start(activeGame);
+        await active.save(activeGame, 120);
+
+        process.env.OPSIA_ROLE = "auto";
+        const candidate = new OpsiaSnapshotStore();
+        await candidate.start(fakeGame());
+        expect(candidate.handoffStatus()).toMatchObject({
+            role: "candidate",
+            ready: true,
+            roomEpoch: 11,
+        });
+
+        const abandoned = active as unknown as { leaseTimer?: NodeJS.Timeout };
+        clearInterval(abandoned.leaseTimer);
+        abandoned.leaseTimer = undefined;
+
+        await vi.advanceTimersByTimeAsync(19_999);
+        expect(candidate.handoffStatus()).toMatchObject({ role: "candidate" });
+        await vi.advanceTimersByTimeAsync(1);
+        expect(candidate.handoffStatus()).toMatchObject({
+            role: "active",
+            ready: true,
+            roomEpoch: 12,
+        });
+        expect(candidate.acceptsGatewayInput(12)).toBe(true);
+        expect(candidate.acceptsGatewayInput(11)).toBe(false);
 
         await candidate.stop();
         await active.stop();
