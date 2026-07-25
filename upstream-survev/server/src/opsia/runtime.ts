@@ -540,6 +540,12 @@ let previousCpuAt = performance.now();
 // for the reconnect overlay, while refreshing well inside the ownership window.
 const leaseTtlSeconds = 10;
 const leaseRefreshMs = 2_000;
+// An `auto` pod normally becomes a Candidate while the old Active still owns
+// the lease. If that process dies before the orchestrator promotes the
+// Candidate, retry only after two full lease windows. This preserves the
+// orchestrated handoff fast path while guaranteeing that an abandoned room
+// cannot remain permanently unready.
+const autoCandidateTakeoverGraceMs = leaseTtlSeconds * 2_000;
 const refreshLeaseScript =
     "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('EXPIRE', KEYS[1], ARGV[2]) end return 0";
 const saveSnapshotScript =
@@ -2005,6 +2011,8 @@ export class OpsiaSnapshotStore {
     private client: RedisClientType | undefined;
     private journal: RoomStateJournal | undefined;
     private leaseTimer: NodeJS.Timeout | undefined;
+    private candidateTakeoverTimer: NodeJS.Timeout | undefined;
+    private candidatePromotionInFlight = false;
     private ready = false;
     private pendingPlayers: LoosePlayerState[] = [];
     private pendingRestoreUntil = 0;
@@ -2078,6 +2086,7 @@ export class OpsiaSnapshotStore {
             jsonLog(this.candidateStatus.ready ? "info" : "warn", "candidate_snapshot_loaded", {
                 ...this.candidateStatus,
             });
+            if (this.configuredRole === "auto") this.scheduleCandidateTakeover();
             return this.candidateStatus.ready;
         }
         // A replacement pod can begin before its predecessor's lease
@@ -2348,12 +2357,17 @@ export class OpsiaSnapshotStore {
             || !this.candidateStatus?.ready
             || this.candidateStatus.checksum !== request.expectedChecksum
         ) throw new Error("candidate_promotion_precondition_failed");
+        this.clearCandidateTakeover();
+        this.candidatePromotionInFlight = true;
         this.roomEpoch = request.nextEpoch;
         try {
             await this.acquireLease();
         } catch (error) {
             this.roomEpoch = this.candidateStatus.roomEpoch ?? request.expectedEpoch;
+            if (this.configuredRole === "auto") this.scheduleCandidateTakeover(leaseRefreshMs);
             throw error;
+        } finally {
+            this.candidatePromotionInFlight = false;
         }
         this.role = "active";
         this.authorityChecksum = request.expectedChecksum;
@@ -2427,6 +2441,7 @@ export class OpsiaSnapshotStore {
 
     async stop(): Promise<void> {
         this.ready = false;
+        this.clearCandidateTakeover();
         await this.writer.flush();
         if (this.leaseTimer) clearInterval(this.leaseTimer);
         this.leaseTimer = undefined;
@@ -2499,6 +2514,61 @@ export class OpsiaSnapshotStore {
                 process.exit(1);
             });
         }, leaseRefreshMs);
+    }
+
+    private scheduleCandidateTakeover(delayMs = autoCandidateTakeoverGraceMs): void {
+        this.clearCandidateTakeover();
+        this.candidateTakeoverTimer = setTimeout(() => {
+            this.candidateTakeoverTimer = undefined;
+            void this.recoverAbandonedLease();
+        }, delayMs);
+    }
+
+    private clearCandidateTakeover(): void {
+        if (this.candidateTakeoverTimer) clearTimeout(this.candidateTakeoverTimer);
+        this.candidateTakeoverTimer = undefined;
+    }
+
+    private async recoverAbandonedLease(): Promise<void> {
+        if (
+            this.configuredRole !== "auto"
+            || this.role !== "candidate"
+            || !this.ready
+            || this.candidatePromotionInFlight
+        ) {
+            if (this.configuredRole === "auto" && this.role === "candidate" && this.ready) {
+                this.scheduleCandidateTakeover(leaseRefreshMs);
+            }
+            return;
+        }
+        const status = this.candidateStatus;
+        if (!status?.ready || !status.checksum) {
+            this.scheduleCandidateTakeover(leaseRefreshMs);
+            return;
+        }
+        try {
+            await this.acquireLease();
+        } catch (error) {
+            if (!(error instanceof Error) || error.message !== "room_lease_not_acquired") throw error;
+            this.scheduleCandidateTakeover(leaseRefreshMs);
+            return;
+        }
+        this.roomEpoch = Math.max(this.roomEpoch, status.roomEpoch ?? this.roomEpoch) + 1;
+        this.role = "active";
+        this.authorityChecksum = status.checksum;
+        this.journal = new RoomStateJournal({
+            roomId: opsiaRoomId(),
+            client: this.client,
+            lease: this.client ? { key: this.leaseKey, owner: this.owner } : undefined,
+            maxEntryBytes: Math.min(64 * 1024 * 1024, this.snapshotConfig.maxPayloadBytes + 64 * 1024),
+            memoryFence: () => this.hasMemoryLease(),
+        });
+        this.candidateStatus = undefined;
+        this.startLeaseRefresh();
+        jsonLog("warn", "room_authority_auto_recovered", {
+            roomEpoch: this.roomEpoch,
+            checksum: this.authorityChecksum,
+        });
     }
 
     private async releaseLeaseOnly(): Promise<void> {
